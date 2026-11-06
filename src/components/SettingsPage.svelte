@@ -149,61 +149,66 @@
       <!-- 1. 通用 -->
       <section class="settings-section" class:active={activeTab === "general"} id="section-general">
         <h2>通用</h2>
-        <div class="field">
-          <label for="target-language-select">默认翻译到</label>
-          <select
-            id="target-language-select"
-            value={settings.targetLanguage}
-            onchange={(e) => {
-              if (settings) {
-                settings.targetLanguage = e.currentTarget.value;
-                void save();
-              }
-            }}
-          >
-            <option value="auto">自动（中文↔英文）</option>
-            {#each LANGUAGES as lang (lang.code)}
-              <option value={lang.code}>{lang.name}</option>
-            {/each}
-          </select>
-        </div>
+        <div class="settings-card">
+          <div class="field">
+            <label for="target-language-select">
+              默认翻译到
+              <span class="sub">未指定目标时气泡首选的翻译语言</span>
+            </label>
+            <select
+              id="target-language-select"
+              value={settings.targetLanguage}
+              onchange={(e) => {
+                if (settings) {
+                  settings.targetLanguage = e.currentTarget.value;
+                  void save();
+                }
+              }}
+            >
+              <option value="auto">自动（中文↔英文）</option>
+              {#each LANGUAGES as lang (lang.code)}
+                <option value={lang.code}>{lang.name}</option>
+              {/each}
+            </select>
+          </div>
 
-        <div class="field">
-          <label for="open-at-login-switch">
-            开机自启
-            <span class="sub">登录后常驻托盘</span>
-          </label>
-          <input
-            id="open-at-login-switch"
-            type="checkbox"
-            class="switch"
-            checked={settings.openAtLogin}
-            onchange={(e) => {
-              if (settings) {
-                settings.openAtLogin = e.currentTarget.checked;
-                void save();
-              }
-            }}
-          />
-        </div>
+          <div class="field">
+            <label for="open-at-login-switch">
+              开机自启
+              <span class="sub">登录后常驻托盘</span>
+            </label>
+            <input
+              id="open-at-login-switch"
+              type="checkbox"
+              class="switch"
+              checked={settings.openAtLogin}
+              onchange={(e) => {
+                if (settings) {
+                  settings.openAtLogin = e.currentTarget.checked;
+                  void save();
+                }
+              }}
+            />
+          </div>
 
-        <div class="field">
-          <label for="auto-hide-switch">
-            失焦自动隐藏
-            <span class="sub">未钉住的气泡失去焦点即隐藏</span>
-          </label>
-          <input
-            id="auto-hide-switch"
-            type="checkbox"
-            class="switch"
-            checked={settings.bubble.autoHide}
-            onchange={(e) => {
-              if (settings) {
-                settings.bubble.autoHide = e.currentTarget.checked;
-                void save();
-              }
-            }}
-          />
+          <div class="field">
+            <label for="auto-hide-switch">
+              失焦自动隐藏
+              <span class="sub">未钉住的气泡失去焦点即隐藏</span>
+            </label>
+            <input
+              id="auto-hide-switch"
+              type="checkbox"
+              class="switch"
+              checked={settings.bubble.autoHide}
+              onchange={(e) => {
+                if (settings) {
+                  settings.bubble.autoHide = e.currentTarget.checked;
+                  void save();
+                }
+              }}
+            />
+          </div>
         </div>
       </section>
 
@@ -222,51 +227,55 @@
           全局快捷键会覆盖其他应用中的相同组合。注册冲突时会自动尝试候选键位，并同步这里显示的当前生效值；激活快捷键按钮可更换，按 Esc 取消。
         </div>
 
-        {#each HOTKEYS as action (action.id)}
-          <div class="field">
-            <label for={`rec-${action.id}`}>
-              {action.label}
-              {#if hotkeyConflicts[action.id]}
-                <span class="conflict">{hotkeyConflicts[action.id]}</span>
-              {/if}
-            </label>
-            <div>
-              <button
-                id={`rec-${action.id}`}
-                type="button"
-                class="rec-input"
-                class:listening={hotkeyListening === action.id}
-                aria-pressed={hotkeyListening === action.id}
-                title="激活后按下新组合键"
-                onclick={() => startHotkeyRecording(action.id)}
-              >
-                {hotkeyListening === action.id ? "按下组合键…" : settings.hotkeys[action.id]}
-              </button>
+        <div class="settings-card">
+          {#each HOTKEYS as action (action.id)}
+            <div class="field">
+              <label for={`rec-${action.id}`}>
+                {action.label}
+                {#if hotkeyConflicts[action.id]}
+                  <span class="conflict">{hotkeyConflicts[action.id]}</span>
+                {/if}
+              </label>
+              <div>
+                <button
+                  id={`rec-${action.id}`}
+                  type="button"
+                  class="rec-input"
+                  class:listening={hotkeyListening === action.id}
+                  aria-pressed={hotkeyListening === action.id}
+                  title="激活后按下新组合键"
+                  onclick={() => startHotkeyRecording(action.id)}
+                >
+                  {hotkeyListening === action.id ? "按下组合键…" : settings.hotkeys[action.id]}
+                </button>
+              </div>
             </div>
-          </div>
-        {/each}
+          {/each}
+        </div>
       </section>
 
       <!-- 4. 命名转换 -->
       <section class="settings-section" class:active={activeTab === "naming"} id="section-naming">
         <h2>命名转换</h2>
-        <div class="field">
-          <label for="auto-split-switch">
-            自动拆分标识符
-            <span class="sub">英文输入自动识别 camelCase / snake_case / kebab-case 并拆词后翻译</span>
-          </label>
-          <input
-            id="auto-split-switch"
-            type="checkbox"
-            class="switch"
-            checked={settings.identifier.autoSplit}
-            onchange={(e) => {
-              if (settings) {
-                settings.identifier.autoSplit = e.currentTarget.checked;
-                void save();
-              }
-            }}
-          />
+        <div class="settings-card">
+          <div class="field">
+            <label for="auto-split-switch">
+              自动拆分标识符
+              <span class="sub">英文输入自动识别 camelCase / snake_case / kebab-case 并拆词后翻译</span>
+            </label>
+            <input
+              id="auto-split-switch"
+              type="checkbox"
+              class="switch"
+              checked={settings.identifier.autoSplit}
+              onchange={(e) => {
+                if (settings) {
+                  settings.identifier.autoSplit = e.currentTarget.checked;
+                  void save();
+                }
+              }}
+            />
+          </div>
         </div>
 
         <fieldset class="copy-formats" aria-describedby="copy-formats-hint">

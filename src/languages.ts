@@ -63,33 +63,33 @@ export const SERVICE_NAMES: Record<string, string> = {
 
 /** Optional notes shown in the translation service settings. */
 export const SERVICE_NOTES: Partial<Record<string, string>> = {
-  baidu: "在百度翻译开放平台开通「通用文本翻译」，再填写控制台里的 APP ID 和密钥。",
-  volcengine: "在火山引擎控制台开通「机器翻译」，并在访问控制中创建有调用权限的 Access Key。",
+  baidu: "凭证来自百度翻译开放平台的「开发者信息」；使用前需开通「通用文本翻译」。",
+  volcengine: "凭证来自火山引擎访问控制；使用前需开通「机器翻译」，并确保该 Access Key 有调用权限。",
 };
 
 /** The credentials each service asks for, by keyring name. */
 export const SERVICE_CREDENTIALS: Record<string, { name: string; label: string; placeholder: string }[]> = {
-  deepl: [{ name: "deepl-key", label: "API Key", placeholder: "DeepL-Auth-Key，免费版以 :fx 结尾" }],
-  openai: [{ name: "openai-key", label: "API Key", placeholder: "sk-..." }],
+  deepl: [{ name: "deepl-key", label: "API Key", placeholder: "免费版以 :fx 结尾" }],
+  openai: [{ name: "openai-key", label: "API Key", placeholder: "sk-…" }],
   baidu: [
-    { name: "baidu-appid", label: "APP ID", placeholder: "百度翻译开放平台" },
-    { name: "baidu-key", label: "密钥", placeholder: "" },
+    { name: "baidu-appid", label: "APP ID", placeholder: "控制台 APP ID" },
+    { name: "baidu-key", label: "密钥", placeholder: "控制台密钥" },
   ],
   volcengine: [
-    { name: "volcengine-access-key", label: "Access Key ID", placeholder: "火山引擎访问控制" },
-    { name: "volcengine-secret-key", label: "Secret Access Key", placeholder: "" },
+    { name: "volcengine-access-key", label: "Access Key ID", placeholder: "AKLT…" },
+    { name: "volcengine-secret-key", label: "Secret Access Key", placeholder: "控制台生成的密钥" },
   ],
   tencent: [
-    { name: "tencent-secretid", label: "SecretId", placeholder: "访问管理的 API 密钥 Id" },
-    { name: "tencent-secretkey", label: "SecretKey", placeholder: "" },
+    { name: "tencent-secretid", label: "SecretId", placeholder: "AKID…" },
+    { name: "tencent-secretkey", label: "SecretKey", placeholder: "控制台密钥" },
   ],
   youdao: [
-    { name: "youdao-appkey", label: "应用 ID", placeholder: "有道智云应用 appKey" },
-    { name: "youdao-secret", label: "应用密钥", placeholder: "" },
+    { name: "youdao-appkey", label: "应用 ID", placeholder: "控制台 appKey" },
+    { name: "youdao-secret", label: "应用密钥", placeholder: "控制台密钥" },
   ],
   azure: [
-    { name: "azure-key", label: "订阅密钥", placeholder: "Translator 资源的 Key 1 或 Key 2" },
-    { name: "azure-region", label: "区域", placeholder: "如 chinaeast2；全局资源留空" },
+    { name: "azure-key", label: "订阅密钥", placeholder: "Key 1 或 Key 2" },
+    { name: "azure-region", label: "区域", placeholder: "如 eastasia" },
   ],
   google: [],
   "index-translate": [],

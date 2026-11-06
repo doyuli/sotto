@@ -484,7 +484,7 @@ func (a *application) showSettings(services bool) {
 		MinWidth:        660,
 		MinHeight:       500,
 		StateKey:        "settings",
-		BackgroundColor: "light-dark(#f6f7f9, #0f1115)",
+		BackgroundColor: "light-dark(#ffffff, #222325)",
 		Page:            mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 	})
 	a.mu.Lock()

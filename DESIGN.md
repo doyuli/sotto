@@ -42,6 +42,26 @@ The panel is the lightest layer; controls recess below it; card title strips sit
 | `--accent-text` | `#1a5fae` | `#7db4ff` | detected-language text |
 | `--clear` | `#c9c9c9` | `#55575b` | clear button |
 
+## Settings surface
+
+The settings window scopes its own ladder on `body[data-route="settings"]`; the token names stay the same in both schemes, only the values flip.
+
+| Token | Light | Dark | Used by |
+|---|---|---|---|
+| `--panel` | `#ffffff` | `#222325` | window body |
+| `--sidebar` | `#fbfcfd` | `#1a1b1d` | navigation rail |
+| `--card` | `#ffffff` | `#26272a` | cards and drawers |
+| `--card-head` | `#f8f9fb` | `#2b2c30` | service title strip |
+| `--field` | `#f4f5f7` | `#1e1f22` | inputs, quota well, security pill |
+| `--control` | `#f1f1f1` | `#2c2d2f` | active nav, secondary buttons |
+| `--pill` | `#e7e7e7` | `#3a3b3d` | quiet badges, usage track |
+| `--badge-ink` | `#5c5c5c` | `#b4b7bb` | quiet badge and order-number text |
+| `--success` | `#15803d` | `#4ade80` | connection-test success text |
+| `--warning` / `--warning-soft` | `#b45309` / 12% | `#fbbf24` / 14% | unconfigured badge |
+| `--on-accent` | `#ffffff` | `#0d1b2b` | label on an accent button |
+
+The title strip is a quiet band, not a second surface: one step deeper than the card in light, one step lighter in dark. Badges are tint-only, with no border, so they never pick up a light hairline in dark mode.
+
 ## Type and shape
 
 - System UI sans; input 14 px / 1.55, card text 15 px / 1.65, labels 13 px, badge 12 px.
