@@ -1,6 +1,6 @@
-# Windows.Media.Ocr over a stdin/stdout line-JSON protocol, for gobob's
-# resident OCR subprocess (research.md §5.6). Windows PowerShell 5.1 only:
-# the WinRT projection does not work in pwsh.
+# Sotto's resident Windows.Media.Ocr worker uses newline-delimited JSON
+# over stdin and stdout. It requires the WinRT projection in Windows
+# PowerShell 5.1.
 #
 # Protocol: one JSON object per line.
 #   in:  {"png":"<base64>","lang":"zh-Hans"}    lang optional

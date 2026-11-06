@@ -157,8 +157,7 @@ body[data-route="bubble"] {
   padding: 2px 12px 12px;
 }
 
-/* The composer is one recessed block: the textarea and its actions share
-   the same surface, as in the reference. */
+/* The textarea and its actions share one recessed surface. */
 .composer {
   display: flex;
   flex-direction: column;
