@@ -13,54 +13,56 @@ Sotto is a quiet, precise Windows utility: it stays out of the way, shows the an
 
 ### Applying the brand
 
-- Start from the panel and three recess levels in the ladder; keep the card-title strip visually deeper than the card body.
+- Start from the shared panel and use each window's surface ladder to separate controls from content.
 - Use the speech-bubble S as the only brand ornament. Do not add a wordmark or a second decorative icon inside app chrome.
 - Give the accent one job per surface: brand mark, selected/detected state, or focus. Never tint a whole region with it.
 - Use 2 px stroke icons at 16 px; never substitute emoji or third-party service marks.
 - Ship light and dark from the same token names, not two hand-tuned palettes.
 
-## Bubble surface
+## Shared tokens
 
-Operate. The translation bubble is a frameless 480 px Windows panel that follows the OS light/dark setting. It applies the brand system above: a white or near-black panel, a recessed composer and language bar, and cards whose title strip is deeper than their body.
-
-## Surface ladder
-
-The panel is the lightest layer; controls recess below it; card title strips sit between the card body and the panel.
+The bubble and settings share these tokens. Both follow the OS color scheme. The screenshot overlay uses the root palette.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
-| `--panel` | `#ffffff` | `#222325` | bubble panel, top bar |
+| `--panel` | `#ffffff` | `#222325` | bubble panel and top bar, settings window |
+| `--control` | `#f1f1f1` | `#2c2d2f` | language bar, active navigation, secondary buttons |
+| `--pill` | `#e7e7e7` | `#3a3b3d` | detected-language and service badges, usage track |
+| `--hover` | `#e9e9e9` | `#3a3b3d` | hover backgrounds |
+| `--fg` | `#202020` | `#f3f4f5` | primary text |
+| `--accent` | `#2f7fe8` | `#7db4ff` | brand mark, focus rings, primary actions |
+| `--accent-text` | `#1a5fae` | `#7db4ff` | detected-language text, active settings navigation |
+
+## Bubble surface
+
+Operate. The translation bubble is a frameless 480 px Windows panel with a recessed composer and language bar. The result card title strip is darker than its body in both schemes.
+
+| Token | Light | Dark | Used by |
+|---|---|---|---|
 | `--composer` | `#f4f4f4` | `#303132` | composer block |
-| `--control` | `#f1f1f1` | `#2c2d2f` | language bar |
 | `--card-head` | `#f1f1f1` | `#2c2d2f` | card title strip |
 | `--card-body` | `#f6f6f6` | `#303132` | card body |
-| `--pill` | `#e7e7e7` | `#3a3b3d` | detected-language badge |
-| `--hover` | `#e9e9e9` | `#3a3b3d` | icon and field hover |
-| `--fg` | `#202020` | `#f3f4f5` | primary text |
-| `--muted` | `#6b6b6b` | `#a0a3a7` | secondary text, icons |
-| `--accent` | `#2f7fe8` | `#7db4ff` | brand mark, focus ring |
-| `--accent-text` | `#1a5fae` | `#7db4ff` | detected-language text |
+| `--muted` | `#5f5f5f` | `#a0a3a7` | secondary text, placeholder, secondary icons |
 | `--clear` | `#c9c9c9` | `#55575b` | clear button |
 
 ## Settings surface
 
-The settings window scopes its own ladder on `body[data-route="settings"]`; the token names stay the same in both schemes, only the values flip.
+The settings window adds a navigation rail, service cards, and recessed fields. These tokens are scoped to `body[data-route="settings"]`.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
-| `--panel` | `#ffffff` | `#222325` | window body |
 | `--sidebar` | `#fbfcfd` | `#1a1b1d` | navigation rail |
 | `--card` | `#ffffff` | `#26272a` | cards and drawers |
 | `--card-head` | `#f8f9fb` | `#2b2c30` | service title strip |
 | `--field` | `#f4f5f7` | `#1e1f22` | inputs, quota well, security pill |
-| `--control` | `#f1f1f1` | `#2c2d2f` | active nav, secondary buttons |
-| `--pill` | `#e7e7e7` | `#3a3b3d` | quiet badges, usage track |
+| `--muted` | `#6b6b6b` | `#a0a3a7` | secondary text and placeholder |
 | `--badge-ink` | `#5c5c5c` | `#b4b7bb` | quiet badge and order-number text |
 | `--success` | `#15803d` | `#4ade80` | connection-test success text |
 | `--warning` / `--warning-soft` | `#b45309` / 12% | `#fbbf24` / 14% | unconfigured badge |
+| `--primary-bg` | `#1a5fae` | `var(--accent)` | primary button background |
 | `--on-accent` | `#ffffff` | `#0d1b2b` | label on an accent button |
 
-The title strip is a quiet band, not a second surface: one step deeper than the card in light, one step lighter in dark. Badges are tint-only, with no border, so they never pick up a light hairline in dark mode.
+The service title strip is darker than the card in light mode and lighter in dark mode. Badges use a borderless tint.
 
 ## Type and shape
 

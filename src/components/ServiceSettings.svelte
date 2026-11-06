@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
+  import { cubicOut } from "svelte/easing";
+  import { MediaQuery } from "svelte/reactivity";
+  import { dragHandle, dragHandleZone, SHADOW_ITEM_MARKER_PROPERTY_NAME, TRIGGERS, type DndEvent } from "svelte-dnd-action";
   import { ConfigSvc, type CredentialStatus, type OpenAIOptions, type Settings } from "../mygo";
   import { SERVICE_CREDENTIALS, SERVICE_NAMES, SERVICE_NOTES } from "../languages";
 
@@ -23,8 +27,6 @@
   let deeplUsageText = $state<string>("额度查询中…");
   let deeplUsagePct = $state<number>(0);
 
-  // The index shown on a service's drag handle; only services with a
-  // credential section appear in the list, so the numbers stay contiguous.
   const credentialNames = $derived(services.order.filter((s) => Object.hasOwn(SERVICE_CREDENTIALS, s)));
 
   // A service is on when it is enabled and has what it needs to run. Those
@@ -37,9 +39,18 @@
   const enabledNames = $derived(credentialNames.filter((name) => serviceOn(name)));
   const disabledNames = $derived(credentialNames.filter((name) => !serviceOn(name)));
 
+  type ServiceItem = { id: string; name: string; [SHADOW_ITEM_MARKER_PROPERTY_NAME]?: boolean };
+
+  const reducedMotion = new MediaQuery("prefers-reduced-motion: reduce");
+  const flipDurationMs = $derived(reducedMotion.current ? 0 : 150);
+  let dragPreview = $state.raw<{ order: string[]; items: ServiceItem[] } | null>(null);
+  const currentPreview = $derived.by(() => {
+    if (!active || !dragPreview || enabledNames.length !== dragPreview.order.length) return null;
+    return dragPreview.order.every((name, index) => name === enabledNames[index]) ? dragPreview : null;
+  });
+  const sortableItems = $derived(currentPreview?.items ?? enabledNames.map((name): ServiceItem => ({ id: name, name })));
   let serviceOrderStatus = $state<string>("");
-  let draggedService = $state<string | null>(null);
-  let dropTarget = $state<{ name: string; after: boolean } | null>(null);
+  let serviceSection: HTMLElement;
 
   let pendingCredentialWrite = Promise.resolve();
   let disposed = false;
@@ -67,7 +78,23 @@
   });
 
   $effect(() => {
-    if (!active) endServiceDrag();
+    // Late events from a cancelled drag must not revive its preview.
+    if (!currentPreview) dragPreview = null;
+  });
+
+  $effect.pre(() => {
+    if (!active || enabledNames.length + disabledNames.length === 0) return;
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLInputElement) || !serviceSection?.contains(focused)) return;
+    const name = focused.dataset.serviceToggle;
+    if (!name) return;
+
+    // Both an optimistic toggle and its rollback can move the switch to another list.
+    void tick().then(() => {
+      if (active && !focused.isConnected && document.activeElement === document.body) {
+        serviceSection.querySelector<HTMLInputElement>(`[data-service-toggle="${name}"]`)?.focus();
+      }
+    });
   });
 
   // Services reordering logic
@@ -86,40 +113,35 @@
     onServicesChange({ ...services, order });
   }
 
-  function endServiceDrag(): void {
-    draggedService = null;
-    dropTarget = null;
+  function previewServiceOrder({ detail: { items, info } }: CustomEvent<DndEvent<ServiceItem>>): void {
+    if (!active) return;
+    if (info.trigger === TRIGGERS.DRAG_STARTED) {
+      dragPreview = { order: enabledNames, items };
+    } else if (currentPreview) {
+      dragPreview = { ...currentPreview, items };
+    }
   }
 
-  function onGripDragStart(e: DragEvent, name: string): void {
-    if (!e.dataTransfer) return;
-    e.dataTransfer.setData("application/x-sotto-service", name);
-    e.dataTransfer.effectAllowed = "move";
-    draggedService = name;
-  }
-
-  function onRowDragOver(e: DragEvent, name: string): void {
-    if (!draggedService || draggedService === name || !e.dataTransfer) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const targetElem = e.currentTarget as HTMLElement;
-    const rect = targetElem.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    dropTarget = { name, after };
-  }
-
-  function onRowDrop(e: DragEvent, name: string): void {
-    e.preventDefault();
-    if (!draggedService) return;
-    const target = dropTarget;
-    const source = draggedService;
-    endServiceDrag();
-    if (target?.name === name) moveService(source, name, target.after);
+  function finalizeServiceOrder({ detail: { items, info } }: CustomEvent<DndEvent<ServiceItem>>): void {
+    const preview = currentPreview;
+    dragPreview = null;
+    if (!preview || info.trigger !== TRIGGERS.DROPPED_INTO_ZONE) return;
+    const from = enabledNames.indexOf(info.id);
+    const to = items.findIndex((item) => item.id === info.id);
+    if (from < 0 || to < 0 || from === to || !enabledNames[to]) return;
+    moveService(info.id, enabledNames[to], to > from);
   }
 
   function onGripKeydown(e: KeyboardEvent, name: string): void {
+    // Keep direct arrow-key moves as the sole keyboard sorting interaction.
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
+    if (currentPreview) return;
     const down = e.key === "ArrowDown";
     const target = enabledNames[enabledNames.indexOf(name) + (down ? 1 : -1)];
     if (!target) return;
@@ -232,7 +254,13 @@
   }
 </script>
 
-<section class="settings-section" class:active id="section-services">
+<section
+  class="settings-section"
+  class:active
+  class:service-drag-preview={currentPreview !== null}
+  id="section-services"
+  bind:this={serviceSection}
+>
   <h2>翻译服务</h2>
   {#if credentials}
     <div class="service-instructions" id="service-order-instructions">
@@ -256,34 +284,22 @@
           ? (keyless ? "无需凭据" : "凭证已保存")
           : (keyless || isConfigured ? "打开开关后参与翻译" : "填写凭证后可启用")}
 
-      <li
-        class="service-row"
-        class:dragging={enabled && draggedService === name}
-        data-drop={enabled && dropTarget?.name === name ? (dropTarget.after ? "after" : "before") : undefined}
-        ondragover={enabled ? (e) => onRowDragOver(e, name) : undefined}
-        ondrop={enabled ? (e) => onRowDrop(e, name) : undefined}
-      >
             <div class="service-card">
               <div class="field service-head">
                 <div class="service-identity">
                   {#if enabled}
-                    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                    <div
+                    <button
+                      type="button"
                       class="service-grip"
-                      draggable="true"
-                      tabindex="0"
-                      role="group"
+                      use:dragHandle
                       title="拖动排序，或按方向键移动"
                       aria-label={`排序${title}，当前第 ${position} 位`}
                       aria-describedby="service-order-instructions"
                       aria-keyshortcuts="ArrowUp ArrowDown"
-                      ondragstart={(e) => onGripDragStart(e, name)}
-                      ondragend={endServiceDrag}
-                      onkeydown={(e) => onGripKeydown(e, name)}
+                      onkeydowncapture={(e) => onGripKeydown(e, name)}
                     >
                       <span aria-hidden="true">{position}</span>
-                    </div>
+                    </button>
                   {/if}
 
                   <div class="service-name">
@@ -322,6 +338,7 @@
                   <input
                     type="checkbox"
                     class="switch"
+                    data-service-toggle={name}
                     aria-label={`启用${title}`}
                     disabled={credentialBusy[name] || (!keyless && !isConfigured)}
                     checked={enabled}
@@ -477,16 +494,41 @@
                 </div>
               {/if}
             </div>
-          </li>
     {/snippet}
 
     <h3 class="service-group-title">
       已启用 <span class="service-group-count">{enabledNames.length}</span>
     </h3>
-    {#if enabledNames.length}
-      <ol class="service-list">
-        {#each enabledNames as name, index (name)}
-          {@render serviceRow(name, true, index + 1)}
+    {#if sortableItems.length}
+      <ol
+        class="service-list"
+        aria-label="已启用的翻译服务"
+        use:dragHandleZone={{
+          items: sortableItems,
+          flipDurationMs,
+          dragDisabled: !active,
+          dropAnimationDisabled: reducedMotion.current || !currentPreview,
+          dropTargetStyle: {},
+          autoAriaDisabled: true,
+          useCursorForDetection: true,
+          morphDisabled: true,
+          transformDraggedElement: (element, _item, index) => {
+            const number = element?.querySelector(".service-grip span");
+            if (number && index !== undefined) number.textContent = String(index + 1);
+          },
+        }}
+        onconsider={previewServiceOrder}
+        onfinalize={finalizeServiceOrder}
+      >
+        {#each sortableItems as item, index (item.id)}
+          <li
+            class="service-row"
+            data-is-dnd-shadow-item-hint={item[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+            inert={item[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+            animate:flip={{ duration: flipDurationMs, easing: cubicOut }}
+          >
+            {@render serviceRow(item.name, true, index + 1)}
+          </li>
         {/each}
       </ol>
     {:else}
@@ -499,7 +541,9 @@
       </h3>
       <ol class="service-list">
         {#each disabledNames as name (name)}
-          {@render serviceRow(name, false, 0)}
+          <li class="service-row">
+            {@render serviceRow(name, false, 0)}
+          </li>
         {/each}
       </ol>
     {/if}

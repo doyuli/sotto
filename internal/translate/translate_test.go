@@ -182,20 +182,6 @@ func TestLanguageMapping(t *testing.T) {
 	if v, _ := mapLanguage("deepl", "zh-HANS"); v != "ZH-HANS" {
 		t.Errorf("deepl zh = %q", v)
 	}
-	// The connection test uses en → zh-HANS. Every service with a language
-	// map must accept that source code; DeepL once sent its target code
-	// (EN-US) and the API answered 400.
-	for _, service := range []string{"deepl", "baidu", "tencent", "youdao", "azure", "google", "volcengine"} {
-		if _, ok := mapSourceLanguage(service, "en"); !ok {
-			t.Errorf("%s has no source mapping for en", service)
-		}
-	}
-	if v, _ := mapSourceLanguage("deepl", "en"); v != "EN" {
-		t.Errorf("deepl source en = %q", v)
-	}
-	if v, _ := mapSourceLanguage("deepl", "zh-HANS"); v != "ZH" {
-		t.Errorf("deepl source zh = %q", v)
-	}
 	if v, _ := mapLanguage("baidu", "ja"); v != "jp" {
 		t.Errorf("baidu ja = %q", v)
 	}

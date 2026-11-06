@@ -92,34 +92,6 @@ var languageMaps = map[string]map[string]string{
 	},
 }
 
-// sourceLanguageMaps holds services whose source and target codes differ.
-// DeepL accepts EN, PT and ZH as sources but EN-US, PT-BR and ZH-HANS as
-// targets; sending a target code as source_lang returns HTTP 400.
-var sourceLanguageMaps = map[string]map[string]string{
-	"deepl": {
-		"zh-HANS": "ZH",
-		"en":      "EN",
-		"ja":      "JA",
-		"ko":      "KO",
-		"fr":      "FR",
-		"de":      "DE",
-		"ru":      "RU",
-		"es":      "ES",
-		"pt":      "PT",
-		"it":      "IT",
-	},
-}
-
-// mapSourceLanguage maps an app-internal source code to the service's
-// source code; services without a separate map share the target map.
-func mapSourceLanguage(service, code string) (string, bool) {
-	if m, ok := sourceLanguageMaps[service]; ok {
-		v, ok := m[code]
-		return v, ok
-	}
-	return mapLanguage(service, code)
-}
-
 // detectedMaps maps a service-reported source language back to an
 // app-internal code.
 var detectedMaps = map[string]map[string]string{
