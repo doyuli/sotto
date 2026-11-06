@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "mygo dev",
     "build": "mygo build",
+    "build:win": "mygo build -platform windows/amd64,windows/arm64",
+    "build:win:x64": "mygo build -platform windows/amd64",
+    "build:win:arm64": "mygo build -platform windows/arm64",
     "generate": "mygo generate",
     "dev:web": "vite",
     "build:web": "tsc --noEmit && vite build",
