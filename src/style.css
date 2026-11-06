@@ -823,36 +823,89 @@ body[data-route="bubble"] {
   overflow-wrap: anywhere;
 }
 
+#section-services > h2 {
+  margin-bottom: 6px;
+  font-size: 18px;
+}
+
+.service-instructions,
+.service-settings-note {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.service-instructions {
+  font-size: 13px;
+}
+
+.service-settings-note {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-order-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .service-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
+  margin: 6px 0 0;
+  list-style: none;
   /* Keep the first and last insertion lines inside the drop area. */
-  padding-block: 7px;
+  padding: 9px 0;
 }
 
 .service-row {
   position: relative;
   border: 1px solid var(--border);
   border-radius: 12px;
+  background: var(--card);
   padding: 10px 14px;
 }
 
 .service-row.dragging {
-  opacity: .55;
+  background: var(--card-soft);
 }
 
+.service-row[data-drop]::before,
 .service-row[data-drop]::after {
   content: "";
   position: absolute;
-  inset-inline: 0;
-  height: 2px;
-  border-radius: 1px;
   background: var(--accent);
   pointer-events: none;
 }
 
+.service-row[data-drop]::before {
+  inset-inline-start: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.service-row[data-drop]::after {
+  inset-inline: 3px 0;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.service-row[data-drop="before"]::before {
+  top: -9px;
+}
+
 .service-row[data-drop="before"]::after {
   top: -7px;
+}
+
+.service-row[data-drop="after"]::before {
+  bottom: -9px;
 }
 
 .service-row[data-drop="after"]::after {
@@ -864,71 +917,172 @@ body[data-route="bubble"] {
   padding: 4px 0;
 }
 
+.service-row .service-head {
+  gap: 12px;
+  padding: 0;
+}
+
 .service-name {
-  font-size: 13px;
+  min-width: 0;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 1.4;
+}
+
+.service-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.service-title {
+  flex-shrink: 0;
+}
+
+.service-tip {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
 }
 
 .service-name .sub {
+  color: var(--muted);
   font-size: 12px;
   font-weight: 400;
 }
 
-.service-identity,
-.service-actions {
+.service-identity {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.service-actions {
+  display: grid;
+  grid-template-columns: auto 30px auto;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.service-actions .switch {
+  grid-column: 3;
+  margin-inline-start: 8px;
 }
 
 .service-grip {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 76%, var(--card));
   border-radius: 6px;
   cursor: grab;
+  user-select: none;
 }
 
 .service-grip:hover,
-.service-order:not(:disabled):hover {
-  background: var(--hover);
+.service-grip:focus-visible,
+.service-configure:not(:disabled):hover {
+  background: var(--card-soft);
   color: var(--fg);
 }
 
 .service-grip:active,
 .dragging .service-grip {
+  background: var(--card);
+  color: var(--fg);
   cursor: grabbing;
 }
 
-.service-configure,
-.service-order {
+.service-configure {
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--fg);
   border-radius: 6px;
   font-size: 12px;
-  min-height: 28px;
+  min-height: 30px;
   padding: 3px 8px;
   cursor: pointer;
 }
 
-.service-order {
-  padding: 3px 5px;
+.service-row-action {
+  grid-column: 1;
+  min-width: 40px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.service-order svg,
-.service-grip svg {
+.service-row-action[aria-expanded] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.service-row-action[aria-expanded]::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.service-row-action[aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.service-row-action:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--card-soft);
+  color: var(--fg);
+}
+
+.service-row-action:active:not(:disabled) {
+  background: var(--border);
+}
+
+.service-order {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.service-order svg {
+  margin-inline: auto;
+}
+
+.service-grip svg,
+.service-order svg {
   display: block;
   width: 16px;
   height: 16px;
   pointer-events: none;
 }
 
+.service-grip svg {
+  fill: color-mix(in srgb, currentColor 38%, var(--card));
+}
+
+.service-grip:is(:hover, :focus-visible, :active) svg,
+.dragging .service-grip svg {
+  fill: currentColor;
+}
+
 .service-configure:disabled,
-.service-order:disabled,
+.service-row-action:disabled,
 .service-row input:disabled {
   opacity: .55;
   cursor: default;
@@ -950,10 +1104,6 @@ body[data-route="bubble"] {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.service-row > .service-note {
-  margin-inline-start: 34px;
 }
 
 .credential-controls,

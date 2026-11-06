@@ -100,6 +100,7 @@ export function disposeSettings(): void {
   pageListeners?.abort();
   pageListeners = undefined;
   serviceList = undefined;
+  serviceOrderStatus = undefined;
   serviceRows.clear();
   settingsRefreshers.length = 0;
   sectionHosts = {};
@@ -211,33 +212,46 @@ function field(label: string, sub: string, control: HTMLElement): HTMLElement {
 
 const serviceRows = new Map<string, { row: HTMLElement; refresh: () => void }>();
 let serviceList: HTMLElement | undefined;
+let serviceOrderStatus: HTMLElement | undefined;
 let draggedService: string | null = null;
 let dropMarker: { row: HTMLElement; edge: "before" | "after" } | undefined;
 
 function renderServices(signal: AbortSignal): void {
   const host = sectionHosts.services!;
-  const list = el("div", "service-list");
+  const list = el("ol", "service-list");
+  const instructions = el("p", "service-instructions", "拖动手柄，或聚焦手柄后按上下方向键，调整翻译结果的显示顺序。");
+  instructions.id = "service-order-instructions";
+  const status = el("p", "service-order-status");
+  status.setAttribute("role", "status");
   serviceList = list;
+  serviceOrderStatus = status;
   host.replaceChildren(
     el("h2", undefined, "翻译服务"),
-    el("p", "hint-bar", "拖动手柄可调整翻译结果的显示顺序。已启用的服务会同时翻译，凭证保存在系统密钥环。"),
+    instructions,
+    el("p", "service-settings-note", "已启用的服务会同时翻译，凭证保存在系统密钥环。"),
+    status,
     list,
   );
   for (const name of settings.services.order) {
     if (Object.hasOwn(SERVICE_CREDENTIALS, name)) serviceRows.set(name, serviceRow(name, signal));
   }
-  list.addEventListener("dragover", (event) => {
+  function markServiceDrop(event: DragEvent): void {
     if (!draggedService || !event.dataTransfer) return;
-    const target = serviceDropTarget(event.clientY);
-    if (!target) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    const target = serviceDropTarget(draggedService, event.clientY);
+    event.dataTransfer.dropEffect = target ? "move" : "none";
+    if (!target) {
+      clearServiceDrop();
+      return;
+    }
     const edge = target.after ? "after" : "before";
     if (dropMarker?.row === target.row && dropMarker.edge === edge) return;
     clearServiceDrop();
     target.row.setAttribute("data-drop", edge);
     dropMarker = { row: target.row, edge };
-  }, { signal });
+  }
+  list.addEventListener("dragenter", markServiceDrop, { signal });
+  list.addEventListener("dragover", markServiceDrop, { signal });
   list.addEventListener("dragleave", (event) => {
     if (!list.contains(event.relatedTarget as Node | null)) clearServiceDrop();
   }, { signal });
@@ -245,7 +259,7 @@ function renderServices(signal: AbortSignal): void {
     const name = draggedService;
     if (!name) return;
     event.preventDefault();
-    const target = serviceDropTarget(event.clientY);
+    const target = serviceDropTarget(name, event.clientY);
     endServiceDrag();
     if (target) moveService(name, target.name, target.after);
   }, { signal });
@@ -263,16 +277,20 @@ function refreshServiceRows(): void {
   }
 }
 
-function serviceDropTarget(y: number): { name: string; row: HTMLElement; after: boolean } | undefined {
+function serviceDropTarget(source: string, y: number): { name: string; row: HTMLElement; after: boolean } | undefined {
   let last: { name: string; row: HTMLElement; after: boolean } | undefined;
   for (const name of settings.services.order) {
     const row = serviceRows.get(name)?.row;
     if (!row) continue;
     const { top, height } = row.getBoundingClientRect();
-    if (y < top + height / 2) return { name, row, after: false };
+    if (y < top + height / 2) {
+      // The two gaps beside the source both leave it in its current position.
+      if (name === source || last?.name === source) return;
+      return { name, row, after: false };
+    }
     last = { name, row, after: true };
   }
-  return last;
+  return last?.name === source ? undefined : last;
 }
 
 function clearServiceDrop(): void {
@@ -298,6 +316,10 @@ function moveService(name: string, target: string, after = false): boolean {
   order.splice(from, 1);
   order.splice(to, 0, name);
   refreshServiceRows();
+  if (serviceOrderStatus) {
+    const position = order.slice(0, to + 1).filter((service) => serviceRows.has(service)).length;
+    serviceOrderStatus.textContent = `${SERVICE_NAMES[name] ?? name} 已移至第 ${position} 位`;
+  }
   void save();
   return true;
 }
@@ -306,33 +328,40 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   const title = SERVICE_NAMES[name] ?? name;
   const fields = SERVICE_CREDENTIALS[name] ?? [];
   const keyless = fields.length === 0;
+  const note = SERVICE_NOTES[name];
   let busy = false;
   let testing = false;
-  const row = el("div", "service-row");
+  const row = el("li", "service-row");
   const head = el("div", "field service-head");
-  const label = el("div", "service-name", title);
+  const label = el("div", "service-name");
+  const titleLine = el("div", "service-title-line");
+  titleLine.append(el("span", "service-title", title));
+  if (keyless) titleLine.append(el("span", "service-tip", "免密钥"));
   const state = el("span", "sub");
   state.setAttribute("aria-live", "polite");
-  label.append(state);
+  label.append(titleLine, state);
 
   const grip = el("div", "service-grip");
   grip.draggable = true;
   grip.tabIndex = 0;
   grip.title = "拖动排序，或按方向键移动";
   grip.setAttribute("role", "group");
-  grip.setAttribute("aria-label", `排序${title}，使用上、下方向键移动`);
+  grip.setAttribute("aria-label", `排序${title}`);
+  grip.setAttribute("aria-describedby", "service-order-instructions");
   grip.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown");
-  grip.innerHTML = `<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-    <circle cx="5.5" cy="3" r="1.5"/><circle cx="10.5" cy="3" r="1.5"/>
-    <circle cx="5.5" cy="8" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/>
-    <circle cx="5.5" cy="13" r="1.5"/><circle cx="10.5" cy="13" r="1.5"/>
+  grip.innerHTML = `<svg viewBox="0 0 16 16" stroke="currentColor" stroke-width=".6" aria-hidden="true">
+    <circle cx="5.5" cy="3" r="1.2"/><circle cx="10.5" cy="3" r="1.2"/>
+    <circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/>
+    <circle cx="5.5" cy="13" r="1.2"/><circle cx="10.5" cy="13" r="1.2"/>
   </svg>`;
+  const identity = el("div", "service-identity");
+  identity.append(grip, label);
   grip.addEventListener("dragstart", (event) => {
     if (!event.dataTransfer) return;
     event.dataTransfer.setData("application/x-sotto-service", name);
     event.dataTransfer.effectAllowed = "move";
-    const { left, top } = head.getBoundingClientRect();
-    event.dataTransfer.setDragImage(head, event.clientX - left, event.clientY - top);
+    const { left, top } = identity.getBoundingClientRect();
+    event.dataTransfer.setDragImage(identity, event.clientX - left, event.clientY - top);
     draggedService = name;
     row.classList.add("dragging");
   }, { signal });
@@ -345,11 +374,8 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
     const target = order[order.indexOf(name) + (down ? 1 : -1)];
     if (target && moveService(name, target, down)) grip.focus();
   }, { signal });
-  const identity = el("div", "service-identity");
-  identity.append(grip, label);
-
   const actions = el("div", "service-actions");
-  const moveToTop = el("button", "service-order");
+  const moveToTop = el("button", "service-row-action service-order");
   moveToTop.title = "置顶";
   moveToTop.setAttribute("aria-label", `置顶${title}`);
   moveToTop.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14m-7 16V8m-5 5 5-5 5 5"/></svg>`;
@@ -367,7 +393,7 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
     refreshServiceRows();
     void save();
   });
-  const configure = el("button", "service-configure", "配置");
+  const configure = el("button", "service-row-action", "配置");
   const panel = el("div", "service-details");
   panel.id = `configure-${name}`;
   panel.hidden = true;
@@ -385,11 +411,7 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   actions.append(moveToTop, toggle);
   head.append(identity, actions);
   row.append(head);
-  const note = SERVICE_NOTES[name];
-  if (keyless) {
-    if (note) row.append(el("p", "service-note", note));
-    return { row, refresh };
-  }
+  if (keyless) return { row, refresh };
 
   const getKey = el("button", "text-btn", "获取凭证");
   getKey.addEventListener("click", () => {
@@ -471,9 +493,11 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   function refresh(): void {
     const configured = credentials.configured.includes(name);
     const enabled = settings.services.enabled.includes(name) && configured;
-    state.textContent = enabled ? "已启用" : keyless ? "已关闭" : configured ? "已配置 · 已关闭" : "未配置";
+    const stateText = enabled ? "已启用" : keyless ? "已关闭" : configured ? "已配置 · 已关闭" : "未配置";
+    if (state.textContent !== stateText) state.textContent = stateText;
     toggle.checked = enabled;
     toggle.disabled = !configured || busy;
+    moveToTop.hidden = !enabled;
     moveToTop.disabled = serviceList?.firstChild === row;
     if (keyless) return;
 

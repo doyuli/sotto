@@ -144,26 +144,44 @@ test("unconfigured and disabled services can be reordered without changing enabl
   draft.value = "unfinished-key";
   draft.emit("input");
 
-  const top = aria("置顶OpenAI");
-  expect(top.disabled).toBe(false);
-  top.emit("click");
+  const [, , openAIGrip, baiduGrip] = root.querySelectorAll(".service-grip");
+  expect(aria("置顶OpenAI").hidden).toBe(true);
+  expect(aria("置顶百度翻译").hidden).toBe(true);
+  openAIGrip!.emit("keydown", { key: "ArrowUp" });
+  openAIGrip!.emit("keydown", { key: "ArrowUp" });
   await tick();
   expect(backend.settings.services.order).toEqual(["openai", "index-translate", "google", "baidu"]);
-  expect(top.disabled).toBe(true);
   expect(aria("启用OpenAI").disabled).toBe(true);
   expect(aria("收起OpenAI配置").attributes.get("aria-expanded")).toBe("true");
   expect(draft.value).toBe("unfinished-key");
 
-  aria("置顶百度翻译").emit("click");
+  baiduGrip!.emit("keydown", { key: "ArrowUp" });
   await tick();
-  expect(backend.settings.services.order).toEqual(["baidu", "openai", "index-translate", "google"]);
-  const grip = root.querySelector(".service-grip")!;
-  expect(doc.activeElement).toBe(grip);
-  grip.emit("keydown", { key: "ArrowDown" });
-  await tick();
-  expect(backend.settings.services.order).toEqual(["openai", "baidu", "index-translate", "google"]);
+  expect(backend.settings.services.order).toEqual(["openai", "index-translate", "baidu", "google"]);
   expect(backend.settings.services.enabled).toEqual(["index-translate", "google"]);
-  expect(doc.activeElement).toBe(grip);
+  expect(doc.activeElement).toBe(baiduGrip!);
+  expect(root.querySelector(".service-order-status")?.textContent).toBe("百度翻译 已移至第 3 位");
+});
+
+test("move to top is visible only while a service is enabled", async () => {
+  const toggle = aria("启用百度翻译");
+  const top = aria("置顶百度翻译");
+  expect(top.hidden).toBe(false);
+  expect(top.title).toBe("置顶");
+  expect(top.innerHTML).toContain("<svg");
+  expect(top.classList.contains("service-row-action")).toBe(true);
+
+  change(toggle, false);
+  await tick();
+  expect(top.hidden).toBe(true);
+  change(toggle, true);
+  await tick();
+  expect(top.hidden).toBe(false);
+  top.emit("click");
+  await tick();
+  expect(backend.settings.services.order[0]).toBe("baidu");
+  expect(top.disabled).toBe(true);
+  expect(doc.activeElement).toBe(root.querySelector(".service-grip"));
 });
 
 test("dropping a service at either end saves its order without changing enablement", async () => {
@@ -174,27 +192,30 @@ test("dropping a service at either end saves its order without changing enableme
   for (const row of rows) {
     const rect = () => ({ left: 0, top: list.children.indexOf(row) * 90, height: 80 });
     Object.assign(row, { getBoundingClientRect: rect });
-    Object.assign(row.querySelector(".service-head")!, { getBoundingClientRect: rect });
+    Object.assign(row.querySelector(".service-identity")!, { getBoundingClientRect: rect });
   }
-  const dataTransfer = { setData() {}, setDragImage() {} };
+  const dataTransfer = { dropEffect: "", setData() {}, setDragImage() {} };
   function dropAt(clientY: number) {
     grip.emit("dragstart", { dataTransfer, clientX: 10, clientY: 10 });
     list.emit("dragover", { dataTransfer, clientY });
+    const marked = rows.find((row) => row.attributes.has("data-drop"));
     list.emit("drop", { dataTransfer, clientY });
+    return marked;
   }
 
-  dropAt(-5);
+  expect(dropAt(-5)).toBe(rows[0]);
   await tick();
   expect(list.firstChild).toBe(moved);
   expect(backend.settings.services.order).toEqual(["openai", "index-translate", "google", "baidu"]);
   expect(moved.classList.contains("dragging")).toBe(false);
   expect(rows[0]!.attributes.has("data-drop")).toBe(false);
 
-  dropAt(-5);
+  expect(dropAt(-5)).toBeUndefined();
+  expect(dropAt(60)).toBeUndefined();
   await tick();
   expect(backend.writes).toHaveLength(1);
 
-  dropAt(355);
+  expect(dropAt(355)).toBe(rows[3]);
   await tick();
   expect(list.children.at(-1)).toBe(moved);
   expect(backend.settings.services.order).toEqual(["index-translate", "google", "baidu", "openai"]);
@@ -207,13 +228,13 @@ test("unmounting settings cancels an active drag and releases its listeners", as
   const list = root.querySelector(".service-list")!;
   const [first, second] = list.querySelectorAll(".service-row");
   const grip = second!.querySelector(".service-grip")!;
-  Object.assign(second!.querySelector(".service-head")!, {
+  Object.assign(second!.querySelector(".service-identity")!, {
     getBoundingClientRect: () => ({ left: 0, top: 80 }),
   });
   Object.assign(first!, { getBoundingClientRect: () => ({ top: 0, height: 80 }) });
   const dataTransfer = { setData() {}, setDragImage() {} };
   grip.emit("dragstart", { dataTransfer, clientX: 10, clientY: 100 });
-  list.emit("dragover", { dataTransfer, clientY: 10 });
+  list.emit("dragenter", { dataTransfer, clientY: 10 });
   expect(second!.classList.contains("dragging")).toBe(true);
   expect(first!.attributes.get("data-drop")).toBe("before");
 
@@ -223,6 +244,7 @@ test("unmounting settings cancels an active drag and releases its listeners", as
   expect(first!.attributes.has("data-drop")).toBe(false);
   expect(grip.listeners.get("dragstart")?.size).toBe(0);
   expect(grip.listeners.get("dragend")?.size).toBe(0);
+  expect(list.listeners.get("dragenter")?.size).toBe(0);
   expect(list.listeners.get("dragover")?.size).toBe(0);
   expect(list.listeners.get("dragleave")?.size).toBe(0);
   expect(list.listeners.get("drop")?.size).toBe(0);
