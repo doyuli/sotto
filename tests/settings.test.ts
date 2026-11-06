@@ -98,31 +98,21 @@ test("Bilibili can be turned off independently of OpenAI", async () => {
   expect(select<HTMLInputElement>(openAIToggle).disabled).toBe(true);
 });
 
-test("keyboard reorder preserves row focus, drafts and enablement", async () => {
+test("dragging a service preserves its drawer, drafts and enablement", async () => {
   page.backend.secrets.set("openai-key", "key");
   page.backend.settings.services.enabled.push("openai");
   await openSettings();
   await expand("openai");
-  const credential = draft("#input-openai-key", "unfinished-key");
-  const openAIGrip = select('[aria-label^="排序OpenAI，"]');
-  const baiduGrip = select('[aria-label^="排序百度翻译，"]');
-
-  openAIGrip.focus();
-  keydown(openAIGrip, "ArrowUp");
-  keydown(openAIGrip, "ArrowUp");
+  draft("#input-openai-key", "unfinished-key");
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, ["index-translate", "google", "openai", "baidu"], "openai");
+  await tick();
+  sortEvent("finalize", TRIGGERS.DROPPED_INTO_ZONE, ["openai", "index-translate", "google", "baidu"], "openai");
   await settle();
   expect(page.backend.settings.services.order).toEqual(["openai", "index-translate", "google", "baidu", "deepl"]);
-  expect(document.activeElement).toBe(openAIGrip);
   expect(select('[aria-controls="configure-openai"]').getAttribute("aria-expanded")).toBe("true");
-  expect(credential.value).toBe("unfinished-key");
-
-  baiduGrip.focus();
-  keydown(baiduGrip, "ArrowUp");
-  await settle();
-  expect(page.backend.settings.services.order).toEqual(["openai", "index-translate", "baidu", "google", "deepl"]);
+  expect(select<HTMLInputElement>("#input-openai-key").value).toBe("unfinished-key");
   expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu", "openai"]);
-  expect(document.activeElement).toBe(baiduGrip);
-  expect(select(".service-order-status").textContent?.trim()).toBe("百度翻译 已移至第 3 位");
+  expect(select(".service-order-status").textContent?.trim()).toBe("OpenAI 已移至第 1 位");
 });
 
 test("moving a service between groups preserves switch focus and updates its drag handle", async () => {
@@ -136,8 +126,15 @@ test("moving a service between groups preserves switch focus and updates its dra
   expect(document.activeElement).toBe(select(baiduToggle));
   change(baiduToggle, true);
   await settle();
-  expect(select(enabledServices).contains(select(grip))).toBe(true);
+  const handle = select(grip);
+  expect(select(enabledServices).contains(handle)).toBe(true);
   expect(document.activeElement).toBe(select(baiduToggle));
+  expect(handle.title).toBe("拖动排序");
+  const unclaimedPress = vi.fn();
+  select("#section-services").addEventListener("mousedown", unclaimedPress);
+  handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  window.dispatchEvent(new MouseEvent("mouseup"));
+  expect(unclaimedPress).not.toHaveBeenCalled();
 });
 
 test("a failed service toggle restores the original switch state and focus", async () => {
@@ -159,12 +156,12 @@ test("a failed service toggle restores the original switch state and focus", asy
   expect(document.activeElement).toBe(select(baiduToggle));
 });
 
-function sortEvent(type: "consider" | "finalize", trigger: TRIGGERS, order: string[]): void {
-  const items = order.map((name) => name === "baidu" && type === "consider"
+function sortEvent(type: "consider" | "finalize", trigger: TRIGGERS, order: string[], id = "baidu"): void {
+  const items = order.map((name) => name === id && type === "consider"
     ? { id: SHADOW_PLACEHOLDER_ITEM_ID, name, [SHADOW_ITEM_MARKER_PROPERTY_NAME]: true }
     : { id: name, name });
   select(enabledServices).dispatchEvent(new CustomEvent(type, {
-    detail: { items, info: { trigger, id: "baidu", source: SOURCES.POINTER } },
+    detail: { items, info: { trigger, id, source: SOURCES.POINTER } },
   }));
 }
 
@@ -280,12 +277,12 @@ test("only one shortcut records and leaving the tab releases keyboard capture", 
   expect(keydown(selection, "ArrowUp")).toBe(false);
   await tab("翻译服务");
   expect(selection.getAttribute("aria-pressed")).toBe("false");
+  expect(keydown(document, "ArrowDown")).toBe(true);
   const grip = select(".service-grip");
   grip.focus();
-  keydown(grip, "ArrowDown");
+  expect(keydown(grip, "ArrowDown")).toBe(true);
   await settle();
-  expect(writes()).toHaveLength(1);
-  expect(page.backend.settings.services.order.slice(0, 2)).toEqual(["google", "index-translate"]);
+  expect(writes()).toHaveLength(0);
 });
 
 test("hotkey checks cannot save an abandoned recording after unmount", async () => {

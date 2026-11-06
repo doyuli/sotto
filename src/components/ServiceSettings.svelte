@@ -132,22 +132,11 @@
     moveService(info.id, enabledNames[to], to > from);
   }
 
-  function onGripKeydown(e: KeyboardEvent, name: string): void {
-    // Keep direct arrow-key moves as the sole keyboard sorting interaction.
+  function suppressKeyboardDrag(e: KeyboardEvent): void {
+    // The library starts a keyboard drag on Space or Enter.
     if (e.key === " " || e.key === "Enter") {
-      e.preventDefault();
       e.stopImmediatePropagation();
-      return;
     }
-    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-    e.preventDefault();
-    if (currentPreview) return;
-    const down = e.key === "ArrowDown";
-    const target = enabledNames[enabledNames.indexOf(name) + (down ? 1 : -1)];
-    if (!target) return;
-    const grip = e.currentTarget as HTMLElement;
-    moveService(name, target, down);
-    void tick().then(() => { if (active && grip.isConnected) grip.focus(); });
   }
 
   function toggleService(name: string, checked: boolean): void {
@@ -265,7 +254,7 @@
   {#if credentials}
     <div class="service-instructions" id="service-order-instructions">
       <p>已启用的服务会同时翻译，序号即结果顺序。</p>
-      <p class="sub">拖动序号或聚焦后按上下方向键调整顺序，凭证保存在系统密钥环。</p>
+      <p class="sub">拖动序号调整顺序，凭证保存在系统密钥环。</p>
     </div>
     <p class="service-order-status" role="status" aria-live="polite">
       {serviceOrderStatus}
@@ -288,18 +277,19 @@
               <div class="field service-head">
                 <div class="service-identity">
                   {#if enabled}
-                    <button
-                      type="button"
+                    <!-- The drag zone ignores events that start on form controls. -->
+                    <span
                       class="service-grip"
                       use:dragHandle
-                      title="拖动排序，或按方向键移动"
+                      role="button"
+                      tabindex="0"
+                      title="拖动排序"
                       aria-label={`排序${title}，当前第 ${position} 位`}
                       aria-describedby="service-order-instructions"
-                      aria-keyshortcuts="ArrowUp ArrowDown"
-                      onkeydowncapture={(e) => onGripKeydown(e, name)}
+                      onkeydowncapture={suppressKeyboardDrag}
                     >
                       <span aria-hidden="true">{position}</span>
-                    </button>
+                    </span>
                   {/if}
 
                   <div class="service-name">
