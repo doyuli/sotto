@@ -171,10 +171,8 @@ func undoLateCopy(saved *clipboardSnapshot, before uint32, fgPID uint32, gen uin
 		if clipboardSeq() == before {
 			continue
 		}
-		// Someone wrote. A newer grab owns the clipboard by now — the
-		// double-click retry starts one within a beat — and its own
-		// save/restore governs; touching it here would replace the
-		// copy that grab is about to read.
+		// If a newer grab owns the clipboard, defer to its own
+		// save/restore so we don't replace the copy it's about to read.
 		if clipboardGen.Load() != gen {
 			return
 		}

@@ -49,13 +49,6 @@ type BubbleSettings struct {
 	AutoHide bool `json:"autoHide"`
 }
 
-// SelectionSettings control the selection grab.
-type SelectionSettings struct {
-	// DoubleClick translates a word on its own after a double click
-	// anywhere, through a global mouse hook.
-	DoubleClick bool `json:"doubleClick"`
-}
-
 // Settings is everything the user can configure.
 type Settings struct {
 	Services       ServiceSettings    `json:"services"`
@@ -64,7 +57,6 @@ type Settings struct {
 	CopyFormats    []string           `json:"copyFormats"`
 	Hotkeys        HotkeySettings     `json:"hotkeys"`
 	Bubble         BubbleSettings     `json:"bubble"`
-	Selection      SelectionSettings  `json:"selection"`
 	OpenAtLogin    bool               `json:"openAtLogin"`
 }
 
@@ -84,8 +76,7 @@ func Default() Settings {
 			Ocr:       "Ctrl+Alt+S",
 			Selection: "Ctrl+Alt+D",
 		},
-		Bubble:    BubbleSettings{AutoHide: true},
-		Selection: SelectionSettings{DoubleClick: true},
+		Bubble: BubbleSettings{AutoHide: true},
 	}
 }
 

@@ -121,10 +121,6 @@ function renderGeneral(): void {
       settings.bubble.autoHide = v;
       void save();
     }),
-    switchField("双击自动翻译", "在任意应用双击选词后自动弹出翻译气泡", settings.selection.doubleClick, (v) => {
-      settings.selection.doubleClick = v;
-      void save();
-    }),
   );
 }
 

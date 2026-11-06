@@ -76,10 +76,6 @@ export interface RunReq {
   targetLang: string;
 }
 
-export interface SelectionSettings {
-  doubleClick: boolean;
-}
-
 export interface ServiceSettings {
   enabled: string[];
   order: string[];
@@ -93,7 +89,6 @@ export interface Settings {
   copyFormats: string[];
   hotkeys: HotkeySettings;
   bubble: BubbleSettings;
-  selection: SelectionSettings;
   openAtLogin: boolean;
 }
 

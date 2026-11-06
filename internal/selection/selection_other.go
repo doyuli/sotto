@@ -16,12 +16,6 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 	return Selection{}, ErrUnsupported
 }
 
-func startDoubleClick(onWord func()) error {
-	return ErrUnsupported
-}
-
-func stopDoubleClick() {}
-
 func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
 	return nil, ErrUnsupported
 }

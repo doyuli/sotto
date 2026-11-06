@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -58,8 +57,6 @@ type application struct {
 	runs        map[string]context.CancelFunc
 	settingsWin *mygo.Window
 	quitting    bool
-	// autoGrab keeps the double-click watch's grabs one at a time.
-	autoGrab atomic.Bool
 
 	bubbles *bubbleManager
 	snip    *snipManager
@@ -113,7 +110,6 @@ func (a *application) ready() {
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
 	}
-	a.applyDoubleClick(cfg.Selection)
 	a.setUpTray()
 	a.mu.Lock()
 	log.Printf("ready: hotkeys in force: %v", a.hotkeys)
@@ -159,9 +155,6 @@ func (a *application) applySettings(s config.Settings) {
 	}
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.setAutoHide(s.Bubble.AutoHide)
-	}
-	if s.Selection != old.Selection {
-		a.applyDoubleClick(s.Selection)
 	}
 	// Hotkey fallbacks may have changed a.cfg after s was applied; send
 	// what is actually in force.
@@ -219,41 +212,10 @@ func (a *application) grabSelection() {
 	a.showSelectionBubble(*sel)
 }
 
-// grabSelectionAuto is the double-click watch's path: a word was just
-// double clicked in some app. The hook sees the press before the app
-// builds its selection, so the grab runs at checkpoints counted from the
-// click itself — not after the previous attempt ends, which a slow
-// attempt would push out of the user's attention — and a miss retries
-// while the selection appears. There is no fallback panel: a double
-// click that selects nothing — on a button, a folder icon — must stay
-// silent.
-func (a *application) grabSelectionAuto() {
-	start := time.Now()
-	for _, at := range []time.Duration{250 * time.Millisecond, 600 * time.Millisecond, 1000 * time.Millisecond} {
-		if d := at - time.Since(start); d > 0 {
-			time.Sleep(d)
-		}
-		sel, ok := a.grabSelectionOnce()
-		if !ok || sel != nil {
-			return
-		}
-	}
-}
-
-// onDoubleClick is the watch's callback, on a goroutine of its own.
-func (a *application) onDoubleClick() {
-	if !a.autoGrab.CompareAndSwap(false, true) {
-		return // a grab is under way; its bubble will cover this click too
-	}
-	defer a.autoGrab.Store(false)
-	a.grabSelectionAuto()
-}
-
 // grabSelectionOnce runs one grab and cleans the text the way OCR text
 // is cleaned — a selection can carry zero-width or control characters
-// from the source app. nil with ok means nothing was selected and a
-// retry would not help; !ok means the grab must not run here at all,
-// our own window being in front.
+// from the source app. A nil selection with ok allows the input panel
+// fallback. !ok means our own window is in front.
 func (a *application) grabSelectionOnce() (*selection.Selection, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -286,17 +248,6 @@ func (a *application) showSelectionBubble(sel selection.Selection) {
 		Source: "selection",
 		Text:   sel.Text,
 	})
-}
-
-// applyDoubleClick enables or disables double-click detection on the mouse hook.
-func (a *application) applyDoubleClick(sel config.SelectionSettings) {
-	if sel.DoubleClick {
-		if err := selection.StartDoubleClick(a.onDoubleClick); err != nil {
-			log.Printf("double-click watch: %v", err)
-		}
-	} else {
-		selection.StopDoubleClick()
-	}
 }
 
 // applyHotkeys switches to the configured shortcuts, falling back when

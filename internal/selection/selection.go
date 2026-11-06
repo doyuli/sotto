@@ -52,15 +52,3 @@ func GrabUIA(ctx context.Context) (Selection, error) {
 func GrabClipboard(ctx context.Context) (Selection, error) {
 	return grabClipboard(ctx)
 }
-
-// StartDoubleClick watches every mouse click and calls onWord on its own
-// goroutine whenever the user double clicks, so a word selected that way
-// can translate itself. It stays on until StopDoubleClick.
-func StartDoubleClick(onWord func()) error {
-	return startDoubleClick(onWord)
-}
-
-// StopDoubleClick turns the double-click watch off.
-func StopDoubleClick() {
-	stopDoubleClick()
-}

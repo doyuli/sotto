@@ -31,7 +31,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌
    - UIA/COM 调用只在专用 MTA 线程（见 internal/selection/uia_windows.go）。
 5. **改 Go 绑定/事件后必须** `bunx mygo generate` → `bun run typecheck`，否则前端调不到新方法。
 6. **纯逻辑包必须有单测**（config/langdetect/naming/translate）；平台包（selection/capture/ocr）用手工清单验收。
-7. **剪贴板纪律**：模拟复制产生的任何写入必须带三个排除伪格式（见 internal/selection/clipboard_windows.go）；禁用剪贴板监听做划词入口。双击触发走 `WH_MOUSE_LL` 鼠标钩子（internal/selection/hook_windows.go），回调必须立即返回。
+7. **剪贴板纪律**：模拟复制产生的任何写入必须带三个排除伪格式（见 internal/selection/clipboard_windows.go）；禁用剪贴板监听做划词入口。气泡外部点击检测走 `WH_MOUSE_LL` 鼠标钩子（internal/selection/hook_windows.go），回调必须立即返回。
 8. **错误处理**：`fmt.Errorf("...: %w", err)` 包装；服务错误映射为用户可读中文文案（见 internal/translate 的 UserMessage）。
 9. 注释对齐现有代码（英文、解释 why）；UI 文案用中文。
 10. 遇到 API 行为与文档冲突或预期外的平台异常：记录现象与源码出处，停下上报，不要绕过。
@@ -52,7 +52,7 @@ internal/keys      # Secrets 封装
 internal/langdetect# Unicode 脚本粗判（纯函数）
 internal/naming    # 标识符拆词 + 5 种命名风格（纯函数）
 internal/translate # Translator 接口 + fan-out + deepl/openai/baidu/tencent/youdao/azure/google/dictionary
-internal/selection # 划词：UIA 主路径 + Ctrl+C 兜底 + 双击鼠标钩子
+internal/selection # 划词：UIA 主路径 + Ctrl+C 兜底；气泡外部点击检测
 internal/capture   # GDI 截屏
 internal/ocr       # PP-OCR（ONNX Runtime 直调）+ Windows.Media.Ocr 兜底
 src/               # 前端：#/bubble（气泡）#/settings（设置）#/snip（OCR 选区）

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -28,15 +27,6 @@ const (
 	wmMButtonDown = 0x0207
 	wmXButtonDown = 0x020B
 	wmQuit        = 0x0012
-)
-
-// llmhfInjected marks an event a program, not a person, produced:
-// synthetic clicks must never read as a user's double click.
-const llmhfInjected = 0x1
-
-const (
-	smCXDoubleClk = 36
-	smCYDoubleClk = 37
 )
 
 // msllHookStruct is what the low-level mouse hook hands over.
@@ -69,31 +59,18 @@ var (
 	procPeekMessageW            = modUser32.NewProc("PeekMessageW")
 	procGetMessageW             = modUser32.NewProc("GetMessageW")
 	procPostThreadMessageW      = modUser32.NewProc("PostThreadMessageW")
-	procGetDoubleClickTime      = modUser32.NewProc("GetDoubleClickTime")
-	procGetSystemMetrics        = modUser32.NewProc("GetSystemMetrics")
 	procWindowFromPhysicalPoint = modUser32.NewProc("WindowFromPhysicalPoint")
 	procGetAncestor             = modUser32.NewProc("GetAncestor")
 )
 
-// clickPair is the last press the hook saw.
-type clickPair struct {
-	down time.Time
-	x, y int32
-}
-
-// mouseWatch shares one hook between double-click translation and outside
-// click dismissal. The hook can read the callbacks without taking startMu.
+// mouseWatch shares one hook across outside-click watchers.
+// The hook can read the callbacks without taking startMu.
 type mouseWatch struct {
 	mu      sync.Mutex
 	handle  uintptr
 	thread  uint32
 	done    chan struct{} // closed once the hook thread has unhooked
-	words   atomic.Value  // func(), nil-able
 	outside atomic.Value  // immutable []*outsideClickWatch
-	click   clickPair
-	// inGrab keeps a second double click during a slow grab from
-	// starting another one on top.
-	inGrab atomic.Bool
 }
 
 type outsideClickWatch struct {
@@ -106,27 +83,6 @@ var watch mouseWatch
 // startMu serializes starts and stops, so two racing starts cannot
 // install two hooks; mu stays for the hook thread's state access.
 var startMu sync.Mutex
-
-// startDoubleClick turns the watch on: onWord runs on its own goroutine
-// whenever the user double clicks outside an injected event. Starting an
-// already running watch only swaps the callback.
-func startDoubleClick(onWord func()) error {
-	startMu.Lock()
-	defer startMu.Unlock()
-	watch.words.Store(onWord)
-	if err := ensureMouseHook(); err != nil {
-		watch.words.Store((func())(nil))
-		return err
-	}
-	return nil
-}
-
-func stopDoubleClick() {
-	startMu.Lock()
-	defer startMu.Unlock()
-	watch.words.Store((func())(nil))
-	stopMouseHookIfIdle()
-}
 
 // WatchOutsideClick calls dismiss on a goroutine when a press lands outside
 // hwnd. The caller guards any in-flight callback after unregistering.
@@ -165,9 +121,8 @@ func ensureMouseHook() error {
 }
 
 func stopMouseHookIfIdle() {
-	words, _ := watch.words.Load().(func())
 	outside, _ := watch.outside.Load().([]*outsideClickWatch)
-	if words != nil || len(outside) != 0 {
+	if len(outside) != 0 {
 		return
 	}
 	watch.mu.Lock()
@@ -224,8 +179,8 @@ func runMouseHook(ready chan<- error) {
 	close(done)
 }
 
-// mouseHookProc is the hook itself: it compares presses and passes
-// everything on untouched, whatever it decides.
+// mouseHookProc dispatches presses for outside-click detection and
+// passes every event on untouched.
 func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 	if code >= 0 {
 		switch wparam {
@@ -233,11 +188,6 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 			h := (*msllHookStruct)(native(lparam))
 			if outside, _ := watch.outside.Load().([]*outsideClickWatch); len(outside) != 0 {
 				go dismissOutside(outside, h.X, h.Y)
-			}
-			if wparam == wmLButtonDown && h.Flags&llmhfInjected == 0 {
-				if f, _ := watch.words.Load().(func()); f != nil {
-					watch.noteClick(h.X, h.Y, f)
-				}
 			}
 		}
 	}
@@ -257,67 +207,4 @@ func dismissOutside(watches []*outsideClickWatch, x, y int32) {
 			w.dismiss()
 		}
 	}
-}
-
-// noteClick fires onWord when this press and the previous one form the
-// double click Windows itself would report: inside the system's time and
-// distance limits. It runs on the hook thread and returns at once; the
-// action runs elsewhere.
-func (w *mouseWatch) noteClick(x, y int32, onWord func()) {
-	w.mu.Lock()
-	previous := w.click
-	w.click = clickPair{down: time.Now(), x: x, y: y}
-	w.mu.Unlock()
-	if !isDoubleClick(previous, x, y) {
-		return
-	}
-	// A third press must not read as the next double click's second half.
-	w.mu.Lock()
-	w.click = clickPair{}
-	w.mu.Unlock()
-	if w.inGrab.CompareAndSwap(false, true) {
-		go func() {
-			defer w.inGrab.Store(false)
-			onWord()
-		}()
-	}
-}
-
-// isDoubleClick reports whether a press at x, y completes a double click
-// started at previous, by the system's own double-click limits.
-func isDoubleClick(previous clickPair, x, y int32) bool {
-	if previous.down.IsZero() {
-		return false
-	}
-	if time.Since(previous.down) > doubleClickWindow() {
-		return false
-	}
-	if abs32(x-previous.x) > doubleClickSlack(smCXDoubleClk) {
-		return false
-	}
-	return abs32(y-previous.y) <= doubleClickSlack(smCYDoubleClk)
-}
-
-// doubleClickWindow is the system's double-click speed, with a little
-// slack for the hook running ahead of the click's own delivery.
-func doubleClickWindow() time.Duration {
-	r, _, _ := procGetDoubleClickTime.Call()
-	return time.Duration(r)*time.Millisecond + 50*time.Millisecond
-}
-
-// doubleClickSlack is the system's double-click rectangle side, in
-// pixels, with the default for a metric that will not load.
-func doubleClickSlack(metric uintptr) int32 {
-	r, _, _ := procGetSystemMetrics.Call(metric)
-	if r == 0 || r > 100 {
-		return 4
-	}
-	return int32(r)
-}
-
-func abs32(v int32) int32 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
