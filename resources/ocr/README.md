@@ -1,7 +1,11 @@
 # PP-OCR resources
 
-The local OCR engine reads these files from the `ocr` directory next to
-`sotto.exe` (in a build) or `resources/ocr` (from a checkout).
+In a checkout, the models and dictionary live in `resources/ocr`.
+The runtime DLLs live in `resources/windows-amd64/ocr` and
+`resources/windows-arm64/ocr`. MyGo merges the shared files and the
+target architecture's DLLs into the `ocr` directory next to `Sotto.exe`.
+`SOTTO_OCR_DIR` can point to a directory containing both the models and
+the DLLs for the running architecture.
 
 | File | What it is |
 |---|---|

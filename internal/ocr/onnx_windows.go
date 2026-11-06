@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -70,8 +71,7 @@ var (
 // the engine chain can fall back to the Windows recognizer.
 func sharedORT() (*ortRuntime, error) {
 	ortOnce.Do(func() {
-		dir := ocrResourceDir()
-		dll := filepath.Join(dir, "onnxruntime.dll")
+		_, dll := ocrResourcePaths()
 		if _, err := os.Stat(dll); err != nil {
 			ortErr = fmt.Errorf("ocr: %s not found", dll)
 			return
@@ -127,16 +127,13 @@ func sharedORT() (*ortRuntime, error) {
 	return ortRT, ortErr
 }
 
-// ocrResourceDir is where the model, dictionary and DLL live: beside the
-// executable in a built app, or the repository's resources directory when
-// running from a test or `go run`.
-func ocrResourceDir() string {
+// ocrResourcePaths returns the model directory and runtime DLL path.
+// MyGo merges both into ocr/ when packaging. A source checkout keeps
+// the DLLs separate so each build gets only its own architecture.
+func ocrResourcePaths() (modelDir, dll string) {
 	if dir := os.Getenv("SOTTO_OCR_DIR"); dir != "" {
-		return dir
+		return dir, filepath.Join(dir, "onnxruntime.dll")
 	}
-	// `mygo build` copies the contents of resources/ next to the
-	// executable (resources/ocr/* becomes <exe>/ocr/*), so look there
-	// first, then at the repository layout for tests and `go run`.
 	var candidates []string
 	if exe, err := os.Executable(); err == nil {
 		base := filepath.Dir(exe)
@@ -150,14 +147,21 @@ func ocrResourceDir() string {
 			filepath.Join(wd, "ocr"))
 	}
 	for _, dir := range candidates {
-		if _, err := os.Stat(filepath.Join(dir, "onnxruntime.dll")); err == nil {
-			return dir
+		if root := filepath.Dir(dir); filepath.Base(root) == "resources" {
+			platformDLL := filepath.Join(root, "windows-"+runtime.GOARCH, "ocr", "onnxruntime.dll")
+			if _, err := os.Stat(platformDLL); err == nil {
+				return dir, platformDLL
+			}
+		}
+		dll := filepath.Join(dir, "onnxruntime.dll")
+		if _, err := os.Stat(dll); err == nil {
+			return dir, dll
 		}
 	}
 	if len(candidates) > 0 {
-		return candidates[0]
+		return candidates[0], filepath.Join(candidates[0], "onnxruntime.dll")
 	}
-	return "."
+	return ".", "onnxruntime.dll"
 }
 
 func (o *ortRuntime) call(slot int, args ...uintptr) uintptr {

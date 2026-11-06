@@ -96,7 +96,7 @@ func ppocrLanguages() []string {
 }
 
 func (p *ppOCR) init() error {
-	dir := ocrResourceDir()
+	dir, _ := ocrResourcePaths()
 	keys, err := loadPPOCRKeys(filepath.Join(dir, "ppocr_keys.txt"))
 	if err != nil {
 		return err
