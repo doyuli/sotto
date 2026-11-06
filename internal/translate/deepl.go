@@ -42,7 +42,7 @@ func (d DeepL) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		"target_lang": target,
 	}
 	if req.SourceLang != "" && req.SourceLang != "auto" {
-		if src, ok := mapLanguage("deepl", req.SourceLang); ok {
+		if src, ok := mapSourceLanguage("deepl", req.SourceLang); ok {
 			payload["source_lang"] = src
 		}
 	}
