@@ -27,22 +27,40 @@ let echoGuard = ""; // what we last saved, to ignore our own broadcast
 let pendingSave = Promise.resolve();
 let pendingCredentialWrite = Promise.resolve();
 let savesInFlight = 0;
+let pageListeners: AbortController | undefined;
+let cancelHotkeyRecording: (() => void) | undefined;
 let sectionHosts: Record<string, HTMLElement> = {};
 let navButtons: Record<string, HTMLButtonElement> = {};
 const settingsRefreshers: (() => void)[] = [];
 
 /** renderSettings mounts the settings page. */
 export async function renderSettings(root: HTMLElement): Promise<void> {
+  disposeSettings();
+  pageListeners = new AbortController();
+  const { signal } = pageListeners;
   const params = new URLSearchParams(location.hash.split("?")[1] ?? "");
   let initialSection: SectionID = params.get("tab") === "services" ? "services" : "general";
   let mounted = false;
-  events.openTranslationSettings.on(() => {
+  const stopOpening = events.openTranslationSettings.on(() => {
     if (mounted) showSection("services");
     else initialSection = "services";
   });
-  [settings, credentials] = await Promise.all([ConfigSvc.get(), ConfigSvc.credentials()]);
+  signal.addEventListener("abort", stopOpening, { once: true });
+  // Read settings after any writes still queued by the previous mount.
+  await Promise.all([pendingSave, pendingCredentialWrite]);
+  if (signal.aborted) return;
+  try {
+    const [loadedSettings, loadedCredentials] = await Promise.all([ConfigSvc.get(), ConfigSvc.credentials()]);
+    if (signal.aborted) return;
+    settings = loadedSettings;
+    credentials = loadedCredentials;
+  } catch (err) {
+    if (signal.aborted) return;
+    disposeSettings();
+    toast(`读取设置失败：${String(err)}`);
+    return;
+  }
   echoGuard = JSON.stringify(settings);
-  settingsRefreshers.length = 0;
 
   const nav = el("nav", "settings-nav");
   for (const item of NAV) {
@@ -62,20 +80,37 @@ export async function renderSettings(root: HTMLElement): Promise<void> {
     sectionHosts[item.id] = host;
     main.append(host);
   }
-  renderServices();
-  renderAll();
+  renderServices(signal);
+  renderAll(signal);
   showSection(initialSection);
   mounted = true;
 
-  events.settingsChanged.on((s: Settings) => {
+  const stopUpdates = events.settingsChanged.on((s: Settings) => {
     if (savesInFlight || JSON.stringify(s) === echoGuard) return;
     settings = s;
     echoGuard = JSON.stringify(s);
     refreshSettings();
   });
+  signal.addEventListener("abort", stopUpdates, { once: true });
+}
+
+export function disposeSettings(): void {
+  endServiceDrag();
+  stopServiceReorderMotion();
+  cancelHotkeyRecording?.();
+  pageListeners?.abort();
+  pageListeners = undefined;
+  serviceList = undefined;
+  serviceOrderStatus = undefined;
+  serviceRows.clear();
+  settingsRefreshers.length = 0;
+  sectionHosts = {};
+  navButtons = {};
 }
 
 function showSection(id: SectionID): void {
+  if (id !== "services") endServiceDrag();
+  if (id !== "hotkeys") cancelHotkeyRecording?.();
   for (const item of NAV) {
     navButtons[item.id]!.classList.toggle("active", item.id === id);
     sectionHosts[item.id]!.classList.toggle("active", item.id === id);
@@ -83,9 +118,9 @@ function showSection(id: SectionID): void {
 }
 
 /** Build controls once so settings updates preserve focus and drafts. */
-function renderAll(): void {
+function renderAll(signal: AbortSignal): void {
   renderGeneral();
-  renderHotkeys();
+  renderHotkeys(signal);
   renderNaming();
   refreshSettings();
 }
@@ -176,56 +211,247 @@ function field(label: string, sub: string, control: HTMLElement): HTMLElement {
 
 // ---- 翻译服务 ----
 
-const serviceRows = new Map<string, { row: HTMLElement; refresh: () => void }>();
-let serviceList: HTMLElement;
+const serviceRows = new Map<string, { row: HTMLElement; card: HTMLElement; refresh: () => void }>();
+let serviceList: HTMLElement | undefined;
+let serviceOrderStatus: HTMLElement | undefined;
+let draggedService: string | null = null;
+let serviceDragDistance = 0;
+let dropMarker: { row: HTMLElement; edge: "before" | "after" } | undefined;
+const serviceReorderAnimations: Animation[] = [];
 
-function renderServices(): void {
+function renderServices(signal: AbortSignal): void {
   const host = sectionHosts.services!;
-  serviceList = el("div", "service-list");
+  const list = el("ol", "service-list");
+  const instructions = el("p", "service-instructions", "拖动手柄，或聚焦手柄后按上下方向键，调整翻译结果的显示顺序。");
+  instructions.id = "service-order-instructions";
+  const status = el("p", "service-order-status");
+  status.setAttribute("role", "status");
+  serviceList = list;
+  serviceOrderStatus = status;
   host.replaceChildren(
     el("h2", undefined, "翻译服务"),
-    el("p", "hint-bar", "已启用的服务会同时翻译。凭证保存在系统密钥环。"),
-    serviceList,
+    instructions,
+    el("p", "service-settings-note", "已启用的服务会同时翻译，凭证保存在系统密钥环。"),
+    status,
+    list,
   );
-  serviceRows.clear();
   for (const name of settings.services.order) {
-    if (Object.hasOwn(SERVICE_CREDENTIALS, name)) serviceRows.set(name, serviceRow(name));
+    if (Object.hasOwn(SERVICE_CREDENTIALS, name)) serviceRows.set(name, serviceRow(name, signal));
   }
+  function markServiceDrop(event: DragEvent): void {
+    if (!draggedService || !event.dataTransfer) return;
+    event.preventDefault();
+    const target = serviceDropTarget(draggedService, event.clientY);
+    event.dataTransfer.dropEffect = target ? "move" : "none";
+    if (!target) {
+      clearServiceDrop();
+      return;
+    }
+    const edge = target.after ? "after" : "before";
+    if (dropMarker?.row === target.row && dropMarker.edge === edge) return;
+    clearServiceDrop();
+    target.row.setAttribute("data-drop", edge);
+    dropMarker = { row: target.row, edge };
+    previewServiceDrop(draggedService, target.name, target.after);
+  }
+  list.addEventListener("dragenter", markServiceDrop, { signal });
+  list.addEventListener("dragover", markServiceDrop, { signal });
+  list.addEventListener("dragleave", (event) => {
+    if (!list.contains(event.relatedTarget as Node | null)) clearServiceDrop();
+  }, { signal });
+  list.addEventListener("drop", (event) => {
+    const name = draggedService;
+    if (!name) return;
+    event.preventDefault();
+    const target = serviceDropTarget(name, event.clientY);
+    if (target) dropService(name, target.name, target.after);
+    else endServiceDrag();
+  }, { signal });
 }
 
 function refreshServiceRows(): void {
+  if (!serviceList) return;
   let next = serviceList.firstChild;
   for (const name of settings.services.order) {
     const service = serviceRows.get(name);
     if (!service) continue;
-    if (service.row !== next) serviceList.insertBefore(service.row, next);
+    if (service.row !== next) {
+      stopServiceReorderMotion();
+      serviceList.insertBefore(service.row, next);
+    }
     next = service.row.nextSibling;
     service.refresh();
   }
 }
 
-function enabledServiceOrder(): string[] {
-  return settings.services.order.filter(
-    (name) => settings.services.enabled.includes(name) && credentials.configured.includes(name),
-  );
+function serviceDropTarget(source: string, y: number): { name: string; row: HTMLElement; after: boolean } | undefined {
+  let last: { name: string; row: HTMLElement; after: boolean } | undefined;
+  for (const name of settings.services.order) {
+    const row = serviceRows.get(name)?.row;
+    if (!row) continue;
+    const { top, height } = row.getBoundingClientRect();
+    if (y < top + height / 2) {
+      // The two gaps beside the source both leave it in its current position.
+      if (name === source || last?.name === source) return;
+      return { name, row, after: false };
+    }
+    last = { name, row, after: true };
+  }
+  return last?.name === source ? undefined : last;
 }
 
-function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
+function clearServiceDrop(): void {
+  if (!dropMarker) return;
+  dropMarker.row.removeAttribute("data-drop");
+  dropMarker = undefined;
+  if (serviceDragDistance) {
+    for (const { card } of serviceRows.values()) card.style.transform = "";
+  }
+}
+
+function endServiceDrag(): void {
+  if (!draggedService) return;
+  serviceRows.get(draggedService)?.row.classList.remove("dragging");
+  draggedService = null;
+  serviceList?.classList.remove("previewing-reorder");
+  clearServiceDrop();
+  serviceDragDistance = 0;
+}
+
+function serviceMoveIndex(from: number, targetIndex: number, after: boolean): number {
+  const insertion = targetIndex + Number(after);
+  return from < insertion ? insertion - 1 : insertion;
+}
+
+function previewServiceDrop(source: string, target: string, after: boolean): void {
+  if (!serviceDragDistance) return;
+  const order = settings.services.order;
+  const from = order.indexOf(source);
+  const to = serviceMoveIndex(from, order.indexOf(target), after);
+  const distance = from < to ? -serviceDragDistance : serviceDragDistance;
+  serviceList?.classList.add("previewing-reorder");
+  // Move the cards visually while leaving the row bounds stable for hit testing.
+  for (const service of order.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+    const card = serviceRows.get(service)?.card;
+    if (card && service !== source) card.style.transform = `translateY(${distance}px)`;
+  }
+}
+
+function stopServiceReorderMotion(): void {
+  for (const animation of serviceReorderAnimations) animation.cancel();
+  serviceReorderAnimations.length = 0;
+}
+
+function dropService(name: string, target: string, after: boolean): void {
+  const list = serviceList;
+  const positions = [];
+  if (list && serviceDragDistance) {
+    const listTop = list.getBoundingClientRect().top;
+    for (const [service, { card }] of serviceRows) {
+      if (service !== name) positions.push({ card, top: card.getBoundingClientRect().top - listTop });
+    }
+  }
+  endServiceDrag();
+  if (!moveService(name, target, after) || !list || !positions.length) return;
+
+  const listTop = list.getBoundingClientRect().top;
+  const shifts = positions.map(({ card, top }) => ({
+    card,
+    distance: top - (card.getBoundingClientRect().top - listTop),
+  }));
+  for (const { card, distance } of shifts) {
+    if (Math.abs(distance) < 0.5) continue;
+    serviceReorderAnimations.push(card.animate(
+      { transform: [`translateY(${distance}px)`, "translateY(0)"] },
+      { duration: 150, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    ));
+  }
+}
+
+function moveService(name: string, target: string, after = false): boolean {
+  const order = settings.services.order;
+  const from = order.indexOf(name);
+  const targetIndex = order.indexOf(target);
+  if (from < 0 || targetIndex < 0) return false;
+  const to = serviceMoveIndex(from, targetIndex, after);
+  if (from === to) return false;
+  order.splice(from, 1);
+  order.splice(to, 0, name);
+  refreshServiceRows();
+  if (serviceOrderStatus) {
+    const position = order.slice(0, to + 1).filter((service) => serviceRows.has(service)).length;
+    serviceOrderStatus.textContent = `${SERVICE_NAMES[name] ?? name} 已移至第 ${position} 位`;
+  }
+  void save();
+  return true;
+}
+
+function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; card: HTMLElement; refresh: () => void } {
   const title = SERVICE_NAMES[name] ?? name;
   const fields = SERVICE_CREDENTIALS[name] ?? [];
   const keyless = fields.length === 0;
+  const note = SERVICE_NOTES[name];
   let busy = false;
   let testing = false;
-  const row = el("div", "service-row");
+  const row = el("li", "service-row");
+  const card = el("div", "service-card");
+  row.append(card);
   const head = el("div", "field service-head");
-  const label = el("div", "service-name", title);
+  const label = el("div", "service-name");
+  const titleLine = el("div", "service-title-line");
+  titleLine.append(el("span", "service-title", title));
+  if (keyless) titleLine.append(el("span", "service-tip", "免密钥"));
   const state = el("span", "sub");
   state.setAttribute("aria-live", "polite");
-  label.append(state);
+  label.append(titleLine, state);
 
-  const actions = el("div", "order-btns");
-  const up = orderButton("上移", "m6 15 6-6 6 6", -1);
-  const down = orderButton("下移", "m6 9 6 6 6-6", 1);
+  const grip = el("div", "service-grip");
+  grip.draggable = true;
+  grip.tabIndex = 0;
+  grip.title = "拖动排序，或按方向键移动";
+  grip.setAttribute("role", "group");
+  grip.setAttribute("aria-label", `排序${title}`);
+  grip.setAttribute("aria-describedby", "service-order-instructions");
+  grip.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown");
+  grip.innerHTML = `<svg viewBox="0 0 16 16" stroke="currentColor" stroke-width=".6" aria-hidden="true">
+    <circle cx="5.5" cy="3" r="1.2"/><circle cx="10.5" cy="3" r="1.2"/>
+    <circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/>
+    <circle cx="5.5" cy="13" r="1.2"/><circle cx="10.5" cy="13" r="1.2"/>
+  </svg>`;
+  const identity = el("div", "service-identity");
+  identity.append(grip, label);
+  grip.addEventListener("dragstart", (event) => {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData("application/x-sotto-service", name);
+    event.dataTransfer.effectAllowed = "move";
+    const { left, top } = identity.getBoundingClientRect();
+    stopServiceReorderMotion();
+    event.dataTransfer.setDragImage(identity, event.clientX - left, event.clientY - top);
+    draggedService = name;
+    if (serviceList && globalThis.matchMedia?.("(prefers-reduced-motion: no-preference)").matches) {
+      const gap = parseFloat(getComputedStyle(serviceList).rowGap);
+      serviceDragDistance = row.getBoundingClientRect().height + gap;
+    }
+    row.classList.add("dragging");
+  }, { signal });
+  grip.addEventListener("dragend", endServiceDrag, { signal });
+  grip.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const order = settings.services.order.filter((service) => serviceRows.has(service));
+    const down = event.key === "ArrowDown";
+    const target = order[order.indexOf(name) + (down ? 1 : -1)];
+    if (target && moveService(name, target, down)) grip.focus();
+  }, { signal });
+  const actions = el("div", "service-actions");
+  const moveToTop = el("button", "service-row-action service-order");
+  moveToTop.title = "置顶";
+  moveToTop.setAttribute("aria-label", `置顶${title}`);
+  moveToTop.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14m-7 16V8m-5 5 5-5 5 5"/></svg>`;
+  moveToTop.addEventListener("click", () => {
+    const first = settings.services.order[0];
+    if (first && moveService(name, first)) grip.focus();
+  }, { signal });
   const toggle = el("input", "switch");
   toggle.type = "checkbox";
   toggle.setAttribute("aria-label", `启用${title}`);
@@ -236,7 +462,7 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
     refreshServiceRows();
     void save();
   });
-  const configure = el("button", "service-configure", "配置");
+  const configure = el("button", "service-row-action", "配置");
   const panel = el("div", "service-details");
   panel.id = `configure-${name}`;
   panel.hidden = true;
@@ -251,14 +477,10 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
     if (!panel.hidden) refreshUsage();
   });
   if (!keyless) actions.append(configure);
-  actions.append(up, down, toggle);
-  head.append(label, actions);
-  row.append(head);
-  const note = SERVICE_NOTES[name];
-  if (keyless) {
-    if (note) row.append(el("p", "service-note", note));
-    return { row, refresh };
-  }
+  actions.append(moveToTop, toggle);
+  head.append(identity, actions);
+  card.append(head);
+  if (keyless) return { row, card, refresh };
 
   const getKey = el("button", "text-btn", "获取凭证");
   getKey.addEventListener("click", () => {
@@ -302,7 +524,7 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
   footer.append(saveKey, test, result);
   form.append(footer);
   panel.append(form, usage);
-  row.append(panel);
+  card.append(panel);
 
   form.addEventListener("input", () => {
     result.textContent = "";
@@ -335,19 +557,17 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
       refresh();
     }
   });
-  return { row, refresh };
+  return { row, card, refresh };
 
   function refresh(): void {
     const configured = credentials.configured.includes(name);
     const enabled = settings.services.enabled.includes(name) && configured;
-    state.textContent = enabled ? "已启用" : keyless ? "已关闭" : configured ? "已配置 · 已关闭" : "未配置";
+    const stateText = enabled ? "已启用" : keyless ? "已关闭" : configured ? "已配置 · 已关闭" : "未配置";
+    if (state.textContent !== stateText) state.textContent = stateText;
     toggle.checked = enabled;
     toggle.disabled = !configured || busy;
-    const order = enabledServiceOrder();
-    const index = order.indexOf(name);
-    up.hidden = down.hidden = !enabled || order.length < 2;
-    up.disabled = index <= 0;
-    down.disabled = index < 0 || index === order.length - 1;
+    moveToTop.hidden = !enabled;
+    moveToTop.disabled = serviceList?.firstChild === row;
     if (keyless) return;
 
     const hasDraft = inputs.some(({ input }) => input.value.trim() !== "");
@@ -360,26 +580,6 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
     }
     saveKey.disabled = busy || testing || !hasDraft;
     test.disabled = busy || testing || !configured || hasDraft;
-  }
-
-  function orderButton(action: string, path: string, delta: number): HTMLButtonElement {
-    const button = el("button", "service-order");
-    button.title = action;
-    button.setAttribute("aria-label", `${action}${title}`);
-    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
-    button.addEventListener("click", () => {
-      const enabled = enabledServiceOrder();
-      const neighbor = enabled[enabled.indexOf(name) + delta];
-      if (!neighbor) return;
-      const order = settings.services.order;
-      const from = order.indexOf(name);
-      const to = order.indexOf(neighbor);
-      [order[from], order[to]] = [order[to]!, order[from]!];
-      refreshServiceRows();
-      (button.disabled ? (delta < 0 ? down : up) : button).focus();
-      void save();
-    });
-    return button;
   }
 
   function writeCredentials(write: () => Promise<void>, success: string): void {
@@ -463,7 +663,7 @@ function deeplUsage(): HTMLElement {
 
 // ---- 快捷键 ----
 
-function renderHotkeys(): void {
+function renderHotkeys(signal: AbortSignal): void {
   const host = sectionHosts.hotkeys!;
   host.replaceChildren(el("h2", undefined, "快捷键"));
   host.append(
@@ -475,11 +675,11 @@ function renderHotkeys(): void {
     { id: "ocr", label: "截图翻译" },
   ];
   for (const action of actions) {
-    host.append(recorderField(action.id, action.label));
+    host.append(recorderField(action.id, action.label, signal));
   }
 }
 
-function recorderField(id: "panel" | "selection" | "ocr", label: string): HTMLElement {
+function recorderField(id: "panel" | "selection" | "ocr", label: string, signal: AbortSignal): HTMLElement {
   const input = el("input", "rec-input");
   input.type = "text";
   input.readOnly = true;
@@ -492,11 +692,13 @@ function recorderField(id: "panel" | "selection" | "ocr", label: string): HTMLEl
     if (!input.classList.contains("listening")) input.value = settings.hotkeys[id];
   });
   input.addEventListener("click", () => {
+    cancelHotkeyRecording?.();
     note.textContent = "";
     input.classList.add("listening");
     input.value = "按下组合键…";
 
     const stop = () => {
+      cancelHotkeyRecording = undefined;
       input.classList.remove("listening");
       input.value = settings.hotkeys[id];
       document.removeEventListener("keydown", onKey, true);
@@ -510,11 +712,12 @@ function recorderField(id: "panel" | "selection" | "ocr", label: string): HTMLEl
       }
       const accel = toAccelerator(e);
       if (!accel) return; // a lone modifier, keep listening
-      document.removeEventListener("keydown", onKey, true);
-      input.classList.remove("listening");
+      stop();
       input.value = accel;
       void (async () => {
-        if (accel !== settings.hotkeys[id] && (await HotkeySvc.busy(accel))) {
+        const conflict = accel !== settings.hotkeys[id] && await HotkeySvc.busy(accel);
+        if (signal.aborted) return;
+        if (conflict) {
           note.textContent = "该组合键已被其他应用占用";
           input.value = settings.hotkeys[id];
           return;
@@ -523,8 +726,9 @@ function recorderField(id: "panel" | "selection" | "ocr", label: string): HTMLEl
         await save();
       })();
     };
-    document.addEventListener("keydown", onKey, true);
-  });
+    cancelHotkeyRecording = stop;
+    document.addEventListener("keydown", onKey, { capture: true, signal });
+  }, { signal });
   const row = field(label, "", controls);
   const lab = row.querySelector("label");
   lab?.append(note);

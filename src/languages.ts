@@ -63,8 +63,6 @@ export const SERVICE_NAMES: Record<string, string> = {
 
 /** Optional notes shown in the translation service settings. */
 export const SERVICE_NOTES: Partial<Record<string, string>> = {
-  google: "免密钥 · 非官方接口，部分网络可能无法连接。",
-  "index-translate": "免密钥 · B 站实验接口。原文会发送至 B 站，请勿提交敏感内容。",
   baidu: "在百度翻译开放平台开通「通用文本翻译」，再填写控制台里的 APP ID 和密钥。",
   volcengine: "在火山引擎控制台开通「机器翻译」，并在访问控制中创建有调用权限的 Access Key。",
 };
