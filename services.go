@@ -1,0 +1,171 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/egoist/mygo"
+
+	"sotto/internal/config"
+	"sotto/internal/keys"
+	"sotto/internal/naming"
+	"sotto/internal/ocr"
+	"sotto/internal/translate"
+)
+
+// The services the pages call. mygo generate turns them into the typed
+// client in src/mygo.ts: ConfigSvc.Get becomes ConfigSvc.get.
+
+// ConfigSvc reads and writes the settings.
+type ConfigSvc struct{ app *application }
+
+func (s ConfigSvc) Get() config.Settings { return s.app.settings() }
+
+// Set normalizes, saves and applies the settings.
+func (s ConfigSvc) Set(settings config.Settings) error {
+	return s.app.updateSettings(settings)
+}
+
+// SetSecret stores a credential; an empty value deletes it.
+func (ConfigSvc) SetSecret(name, value string) error {
+	if !slices.Contains(keys.Names, name) {
+		return errors.New("unknown credential: " + name)
+	}
+	return keys.Store{}.Set(name, value)
+}
+
+// HasSecret reports whether a credential is stored.
+func (ConfigSvc) HasSecret(name string) bool {
+	return slices.Contains(keys.Names, name) && keys.Store{}.Has(name)
+}
+
+// serviceKeyPages maps a service to the console page where its
+// credentials are issued. The whitelist keeps the pages from opening
+// anything but these addresses.
+var serviceKeyPages = map[string]string{
+	"deepl":    "https://www.deepl.com/zh/pro-api",
+	"openai":   "https://platform.openai.com/api-keys",
+	"baidu":    "https://fanyi-api.baidu.com/manage/repository",
+	"tencent":  "https://console.cloud.tencent.com/cam/capi",
+	"youdao":   "https://ai.youdao.com/console",
+	"azure":    "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+}
+
+// OpenKeyPage opens the service's credential page in the default browser.
+func (ConfigSvc) OpenKeyPage(service string) error {
+	page, ok := serviceKeyPages[service]
+	if !ok {
+		return fmt.Errorf("%s 没有需要配置的密钥", service)
+	}
+	return openInBrowser(page)
+}
+
+// DeeplUsage is DeepL's monthly character count and limit.
+type DeeplUsage struct {
+	Used  int `json:"used"`
+	Limit int `json:"limit"`
+}
+
+// DeeplUsage reports this month's DeepL character count and limit.
+func (ConfigSvc) DeeplUsage() (DeeplUsage, error) {
+	used, limit, err := translate.DeepL{}.Usage(context.Background(), keys.Store{}.Get(keys.DeeplKey))
+	return DeeplUsage{Used: used, Limit: limit}, err
+}
+
+// OcrLanguages lists the languages the installed OCR engine recognizes.
+func (ConfigSvc) OcrLanguages() []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return ocr.AvailableLanguages(ctx)
+}
+
+// TranslateSvc runs translations for the pages.
+type TranslateSvc struct{ app *application }
+
+// Run translates req and pushes the results to the calling window as
+// translation-update events, one per service as it arrives.
+func (s TranslateSvc) Run(ctx context.Context, req RunReq) error {
+	win := mygo.CallerWindow(ctx)
+	if win == nil {
+		return errors.New("no calling window")
+	}
+	if req.Text == "" {
+		return nil
+	}
+	s.app.runTranslation(win, req)
+	return nil
+}
+
+// Cancel stops a run; the next one cancels the last on its own, so this
+// is for the pages' explicit stop.
+func (s TranslateSvc) Cancel(reqID string) { s.app.cancelRun(reqID) }
+
+// FormatOption is one naming style of a translation, ready to copy.
+type FormatOption struct {
+	Style string `json:"style"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// Formats turns an English translation into the configured naming
+// styles, for the bubble's copy chips.
+func (s TranslateSvc) Formats(text string) []FormatOption {
+	words := naming.SplitWords(text)
+	var out []FormatOption
+	for _, style := range s.app.settings().CopyFormats {
+		out = append(out, FormatOption{
+			Style: style,
+			Label: naming.Labels[style],
+			Value: naming.Format(words, style),
+		})
+	}
+	return out
+}
+
+// BubbleSvc serves the bubble pages.
+type BubbleSvc struct{ app *application }
+
+// Ready returns the bubble's state. Its page asks on mounting, because
+// events sent before its DOM is ready are held only in small numbers.
+func (s BubbleSvc) Ready(id int64) (BubbleState, error) {
+	state, ok := s.app.bubbles.State(s.app.settings(), id)
+	if !ok {
+		return BubbleState{}, errors.New("no such bubble")
+	}
+	return state, nil
+}
+
+// Pin keeps the bubble on screen when it loses focus.
+func (s BubbleSvc) Pin(id int64) { s.app.bubbles.Pin(id) }
+
+// Unpin returns a pinned bubble to hiding on blur.
+func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
+
+// Close hides an unpinned bubble and closes a pinned one.
+func (s BubbleSvc) Close(id int64) { s.app.bubbles.Close(id) }
+
+// Copy puts text on the clipboard.
+func (BubbleSvc) Copy(text string) { mygo.Clipboard.WriteText(text) }
+
+// HotkeySvc manages the global shortcuts.
+type HotkeySvc struct{ app *application }
+
+// Apply switches to these shortcuts, rolling back on failure.
+func (s HotkeySvc) Apply(hotkeys config.HotkeySettings) error {
+	return s.app.applyHotkeys(hotkeys)
+}
+
+// Busy reports whether an accelerator is taken, by any app.
+func (HotkeySvc) Busy(accel string) bool {
+	return mygo.GlobalShortcut.IsRegistered(accel)
+}
+
+// SnipSvc serves the screenshot selection page.
+type SnipSvc struct{ app *application }
+
+// Done closes a shot: rect is the dragged rectangle in client
+// coordinates, nil for a cancel.
+func (s SnipSvc) Done(rect *snipRect) { s.app.snipDone(rect) }

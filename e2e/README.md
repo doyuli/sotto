@@ -1,0 +1,26 @@
+# e2e 冒烟测试
+
+以用户方式驱动**已构建的生产 exe**：合成全局热键、检查窗口、焦点与失焦。
+全部通过 Win32 直调（`x/sys`），不依赖窗口标题或截图。
+
+## 运行
+
+```bash
+bun run build                                      # 先产出 build/windows-amd64/sotto.exe
+CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # 需要桌面会话（本机跑，CI 无头环境不适用）
+```
+
+## 覆盖项
+
+| 测试 | 验证 |
+|---|---|
+| `TestPanelBubbleFocusAndBlur` | 面板热键唤出输入气泡；气泡**获得焦点**（前台 PID 是 app）；另一个窗口拿走焦点后气泡**消失**——"点击其他地方即走"的回归测试 |
+| `TestSnipOverlay` | OCR 热键唤出截图遮罩；遮罩是 **WS_EX_LAYERED + alpha≈89（35%）** 的窗口（Windows 上页面透明会合成成黑，必须走 layered）；显示后 700ms 仍在（曾因 blur 竞态出生即自藏） |
+| `TestSelectionBubbleShows` | 划词热键无选中文本时回退打开输入面板（划词链路的可达终点） |
+
+热键组合从 app 启动日志的 "hotkeys in force" 行解析后合成发送——默认键位或用户自定组合变了，测试跟着走，不再依赖写死的 Alt+A/S/D。
+
+## 已知测试环境限制
+
+- 热键由 `SendInput` 合成，测试进程先 `AllowSetForegroundWindow` 授予 app 前台权限，模拟真实键盘热键的权益。
+- OCR 拖框动作（鼠标拖拽 + 剪贴板/截屏）无法在自动化里真实还原，由 `sotto --ocr <png>` 与手工清单覆盖。
