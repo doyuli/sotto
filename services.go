@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"sotto/internal/keys"
 	"sotto/internal/naming"
 	"sotto/internal/ocr"
+	"sotto/internal/selection"
 	"sotto/internal/translate"
 )
 
@@ -191,7 +193,9 @@ func (s BubbleSvc) Pin(id int64) { s.app.bubbles.Pin(id) }
 func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
 
 // Close hides an unpinned bubble and closes a pinned one.
-func (s BubbleSvc) Close(id int64, sessionID string) { s.app.bubbles.Close(id, sessionID) }
+func (s BubbleSvc) Close(id int64, sessionID string, showID, revision int64) {
+	s.app.bubbles.Close(id, sessionID, showID, revision)
+}
 
 // OpenTranslationSettings opens the services tab from the bubble.
 func (s BubbleSvc) OpenTranslationSettings() {
@@ -225,3 +229,21 @@ func (s SnipSvc) Done(ctx context.Context, sessionID int64, rect *snipRect) {
 
 // Start opens a new screenshot session from a recovery action.
 func (s SnipSvc) Start() { mygo.RunOnMain(func() { s.app.startEntry("ocr") }) }
+
+// RestoreClipboard retries a retained snapshot without replacing a newer copy.
+func (BubbleSvc) RestoreClipboard(id string) error {
+	err := selection.RecoverClipboard(id)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, selection.ErrSourceChanged):
+		return errors.New("剪贴板已变化，未覆盖新内容；可放弃恢复副本后继续取词。")
+	case errors.Is(err, selection.ErrClipboardRecoveryGone):
+		return errors.New("恢复副本已处理，请重新打开面板。")
+	default:
+		log.Printf("clipboard recovery: %v", err)
+		return errors.New("剪贴板恢复失败，副本仍保留，可稍后重试。")
+	}
+}
+
+func (BubbleSvc) DiscardClipboardRecovery(id string) { selection.DiscardClipboardRecovery(id) }

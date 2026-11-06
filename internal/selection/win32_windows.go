@@ -4,7 +4,7 @@ package selection
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"sync"
 	"syscall"
 	"time"
@@ -247,9 +247,11 @@ func clipboardOwnerPID() uint32 {
 
 // openClipboard opens the clipboard, retrying: another process can hold
 // it briefly, and a grab must not fail over that.
-func openClipboard() bool {
+func openClipboard() bool { return openClipboardFor(0) }
+
+func openClipboardFor(owner uintptr) bool {
 	for attempt := 0; attempt < 10; attempt++ {
-		ok, _, _ := procOpenClipboard.Call(0)
+		ok, _, _ := procOpenClipboard.Call(owner)
 		if ok != 0 {
 			return true
 		}
@@ -271,20 +273,6 @@ var gdiClipboardFormats = map[uint16]bool{
 	0x80: true, // CF_OWNERDISPLAY
 	0x82: true, // CF_DSPMETAFILEPICT
 	0x8E: true, // CF_DSPENHMETAFILE
-}
-
-// clipboardFormat is one saved clipboard format: its id and a copy of
-// its bytes. Format ids are stable for the life of the session, which
-// outlives a grab.
-type clipboardFormat struct {
-	id   uint16
-	data []byte
-}
-
-// clipboardSnapshot is the clipboard as a grab found it.
-type clipboardSnapshot struct {
-	sequence uint32
-	formats  []clipboardFormat
 }
 
 // saveClipboard copies every global-memory format off the clipboard,
@@ -327,12 +315,15 @@ func saveClipboard() *clipboardSnapshot {
 	return &snap
 }
 
-// restoreClipboardIfUnchanged allocates every format before touching the
-// clipboard. All ownership checks happen again under the clipboard lock.
-func restoreClipboardIfUnchanged(snap *clipboardSnapshot, sequence, pid, input uint32) {
-	if snap == nil {
-		return
-	}
+// prepareClipboardRestore allocates every handle before simulated copy can
+// replace the original. Successful SetClipboardData transfers its handle;
+// only untransferred handles may be freed or retried.
+type preparedClipboard struct {
+	formats []clipboardFormat
+	handles []uintptr
+}
+
+func prepareClipboardRestore(snap *clipboardSnapshot) (*preparedClipboard, error) {
 	formats := append([]clipboardFormat(nil), snap.formats...)
 	markers := []struct {
 		name string
@@ -345,9 +336,9 @@ func restoreClipboardIfUnchanged(snap *clipboardSnapshot, sequence, pid, input u
 	var protected []clipboardFormat
 	for _, marker := range markers {
 		name, _ := syscall.UTF16PtrFromString(marker.name)
-		id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+		id, _, err := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
 		if id == 0 {
-			return
+			return nil, fmt.Errorf("register clipboard protection: %w", err)
 		}
 		protected = append(protected, clipboardFormat{id: uint16(id), data: marker.data})
 		filtered := formats[:0]
@@ -358,46 +349,58 @@ func restoreClipboardIfUnchanged(snap *clipboardSnapshot, sequence, pid, input u
 		}
 		formats = filtered
 	}
-	formats = append(protected, formats...)
-	handles := make([]uintptr, len(formats))
-	defer func() {
-		for _, h := range handles {
-			if h != 0 {
-				procGlobalFree.Call(h)
-			}
-		}
-	}()
-	for i, f := range formats {
-		h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(f.data)))
+	p := &preparedClipboard{formats: append(protected, formats...)}
+	p.handles = make([]uintptr, len(p.formats))
+	for i, f := range p.formats {
+		h, _, err := procGlobalAlloc.Call(gmemMoveable, uintptr(len(f.data)))
 		if h == 0 {
-			return
+			p.free()
+			return nil, fmt.Errorf("allocate clipboard format: %w", err)
 		}
-		handles[i] = h
-		p, _, _ := procGlobalLock.Call(h)
-		if p == 0 {
-			return
+		p.handles[i] = h
+		address, _, err := procGlobalLock.Call(h)
+		if address == 0 {
+			p.free()
+			return nil, fmt.Errorf("lock clipboard format: %w", err)
 		}
-		copy(unsafe.Slice((*byte)(native(p)), len(f.data)), f.data)
+		copy(unsafe.Slice((*byte)(native(address)), len(f.data)), f.data)
 		procGlobalUnlock.Call(h)
 	}
-	if !openClipboard() {
-		return
-	}
-	defer closeClipboard()
-	stamp, ok := lastInputStamp()
-	if !ok || stamp != input || clipboardSeq() != sequence || clipboardOwnerPID() != pid {
-		return
-	}
-	if ok, _, _ := procEmptyClipboard.Call(); ok == 0 {
-		return
-	}
-	for i, f := range formats {
-		if ok, _, err := procSetClipboardData.Call(uintptr(f.id), handles[i]); ok != 0 {
-			handles[i] = 0
-		} else {
-			log.Printf("restore clipboard format %d: %v", f.id, err)
+	return p, nil
+}
+
+func (p *preparedClipboard) free() {
+	for i, h := range p.handles {
+		if h != 0 {
+			procGlobalFree.Call(h)
+			p.handles[i] = 0
 		}
 	}
+}
+
+// Caller pins the OS thread through Open/CloseClipboard and owns a real HWND.
+// A changed clipboard is deliberately untouched; all other failures are surfaced.
+func (p *preparedClipboard) restore(owner uintptr, sequence uint32, unchanged func() bool) (restoreOutcome, uint32, error) {
+	if owner == 0 {
+		return restoreFailed, sequence, fmt.Errorf("clipboard owner missing: %w", ErrClipboardRestore)
+	}
+	if !openClipboardFor(owner) {
+		return restoreFailed, sequence, fmt.Errorf("open clipboard: %w", ErrClipboardRestore)
+	}
+	defer closeClipboard()
+	outcome, err := restoreClipboardFormats(len(p.formats), 3, unchanged, func() error {
+		if ok, _, err := procEmptyClipboard.Call(); ok == 0 {
+			return fmt.Errorf("empty clipboard: %w", err)
+		}
+		return nil
+	}, func(i int) error {
+		if ok, _, err := procSetClipboardData.Call(uintptr(p.formats[i].id), p.handles[i]); ok == 0 {
+			return fmt.Errorf("restore clipboard format %d: %w", p.formats[i].id, err)
+		}
+		p.handles[i] = 0
+		return nil
+	})
+	return outcome, clipboardSeq(), err
 }
 
 // clipboardHasText reports whether the clipboard holds text.

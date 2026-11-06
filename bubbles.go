@@ -44,6 +44,8 @@ type bubble struct {
 	pinned                 bool
 	reqID                  string // the request its page last showed
 	generation             int64
+	showID                 int64
+	closeClaimed           bool
 	sessionID              string
 	revision               int64
 	fullRevision           int64 // last full run or cancellation; retries only advance their own service
@@ -119,53 +121,60 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		}
 		return Shown{}
 	}
-	if other != nil {
-		m.hideTransientBubble(other)
-	}
-	m.mu.Lock()
-	// A pin callback may have run while native window calls were marshalled.
-	if b.pinned {
-		m.mu.Unlock()
-		b = m.create(cfg)
+	var shown Shown
+	// Presentation and close commit on the same UI thread. A delayed close
+	// cannot pass validation and then race a new presentation before Hide.
+	mygo.RunOnMain(func() {
 		if valid != nil && !valid() {
-			b.win.Destroy()
-			return Shown{}
+			if created {
+				b.win.Destroy()
+			}
+			return
+		}
+		if other != nil {
+			m.hideTransientBubble(other)
 		}
 		m.mu.Lock()
-	}
-	reuseInput := trigger == "input" && b.sessionID != ""
-	if trigger == "input" {
-		m.input = b
-	} else {
-		m.current = b
-	}
-	if !reuseInput {
-		b.stopWork()
-		b.generation++
-		b.sessionID = newRequestID()
-		b.reqID = b.sessionID
-		b.revision = -1
-		b.fullRevision, b.fullReqID = -1, ""
-		b.serviceRevisions = nil
-		b.trigger, b.text = trigger, text
-		b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
-		b.phase, b.message = phase, message
-		b.meta, b.results = nil, nil
-		b.serviceRequests = nil
-		b.cancelCapture = cancel
-	}
-	b.canShow = valid
-	state := m.state(b, cfg)
-	m.mu.Unlock()
-	if !reuseInput {
-		m.position(b, trigger, anchor)
-		BubbleReset.Emit(b.win, state)
-	}
-	m.showWin(b)
-	if trigger == "input" {
-		FocusComposer.Emit(b.win, true)
-	}
-	return Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
+		pinned := b.pinned
+		m.mu.Unlock()
+		if pinned {
+			b = m.create(cfg)
+		}
+		m.mu.Lock()
+		reuseInput := trigger == "input" && b.sessionID != ""
+		if trigger == "input" {
+			m.input = b
+		} else {
+			m.current = b
+		}
+		if !reuseInput {
+			b.stopWork()
+			b.generation++
+			b.sessionID = newRequestID()
+			b.reqID = b.sessionID
+			b.revision = -1
+			b.fullRevision, b.fullReqID = -1, ""
+			b.serviceRevisions = nil
+			b.trigger, b.text = trigger, text
+			b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
+			b.phase, b.message = phase, message
+			b.meta, b.results = nil, nil
+			b.serviceRequests = nil
+			b.cancelCapture = cancel
+		}
+		b.present()
+		b.canShow = valid
+		state := m.state(b, cfg)
+		m.mu.Unlock()
+		if !reuseInput {
+			m.position(b, trigger, anchor)
+			BubbleReset.Emit(b.win, state)
+		}
+		m.showWin(b)
+		BubblePresented.Emit(b.win, BubblePresentedMsg{ClipboardRecoveryID: state.ClipboardRecoveryID, SessionID: state.SessionID, ShowID: state.ShowID, Revision: state.Revision, Focus: trigger == "input"})
+		shown = Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
+	})
+	return shown
 }
 
 // stopWork is called under mu. Cancel functions never wait for UI work.
@@ -237,11 +246,11 @@ func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 }
 
 // Close hides an unpinned bubble and closes a pinned one for good.
-func (m *bubbleManager) Close(id int64, sessionID string) {
+func (m *bubbleManager) Close(id int64, sessionID string, showID, revision int64) {
 	mygo.RunOnMain(func() {
 		m.mu.Lock()
 		b, ok := m.byID[id]
-		ok = ok && b.sessionID == sessionID
+		ok = ok && b.claimClose(sessionID, showID, revision)
 		if ok {
 			b.stopWork()
 			b.canShow = func() bool { return false }
@@ -299,9 +308,11 @@ func (m *bubbleManager) windows() []*mygo.Window {
 
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
-		ID:              b.id,
-		ReqID:           b.reqID,
-		ServiceRequests: cloneRequests(b.serviceRequests), Generation: b.generation, SessionID: b.sessionID, Revision: b.revision, Phase: b.phase, Message: b.message, Meta: b.meta, Results: b.resultList(),
+		ID:                  b.id,
+		ShowID:              b.showID,
+		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
+		ReqID:               b.reqID,
+		ServiceRequests:     cloneRequests(b.serviceRequests), Generation: b.generation, SessionID: b.sessionID, Revision: b.revision, Phase: b.phase, Message: b.message, Meta: b.meta, Results: b.resultList(),
 		Trigger:    b.trigger,
 		Text:       b.text,
 		SourceLang: b.sourceLang,
@@ -427,8 +438,9 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		b.reqID = ""
 		b.serviceRequests = nil
 		b.revision++
+		b.closeClaimed = true
 		b.fullRevision, b.fullReqID = b.revision, ""
-		stopped := RunStoppedMsg{SessionID: b.sessionID, Revision: b.revision}
+		stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
 		b.canShow = func() bool { return false }
 		m.mu.Unlock()
 		RunStopped.Emit(b.win, stopped)

@@ -4,6 +4,7 @@ package selection
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -13,10 +14,6 @@ const (
 	clipboardTimeout = 2 * time.Second
 	modifierWait     = 1200 * time.Millisecond
 )
-
-var clipboardMu = make(chan struct{}, 1)
-
-func init() { clipboardMu <- struct{}{} }
 
 func grabClipboard(ctx context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
@@ -32,6 +29,9 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	case <-clipboardMu:
 	}
 	defer func() { clipboardMu <- struct{}{} }()
+	if PendingClipboardRecovery() != "" {
+		return Selection{}, ErrClipboardRestore
+	}
 	chord, ok := copyChordFor(class)
 	if !ok {
 		return Selection{}, ErrNoSelection
@@ -45,10 +45,20 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
+	owner, cleanup, err := clipboardOwner()
+	if err != nil {
+		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
+	}
+	defer cleanup()
 	saved := saveClipboard()
 	if saved == nil {
 		return Selection{}, ErrClipboardUnsafe
 	}
+	prepared, err := prepareClipboardRestore(saved)
+	if err != nil {
+		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
+	}
+	defer prepared.free()
 	before := saved.sequence
 	if clipboardSeq() != before || !sameForeground(hwnd, pid) {
 		return Selection{}, ErrSourceChanged
@@ -90,7 +100,17 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 				return Selection{}, ErrSourceChanged
 			}
 			// Compare again while holding the clipboard open; an intervening copy wins.
-			restoreClipboardIfUnchanged(saved, seq, pid, inputStamp)
+			outcome, restoredSeq, restoreErr := prepared.restore(owner, seq, func() bool {
+				stamp, known := lastInputStamp()
+				return known && stamp == inputStamp && clipboardSeq() == seq && clipboardOwnerPID() == pid
+			})
+			if outcome == restoreFailed {
+				retainClipboardRecovery(saved, restoredSeq)
+				return Selection{Text: text, Via: "clipboard"}, fmt.Errorf("%w: %w", ErrClipboardRestore, restoreErr)
+			}
+			if outcome == restoreSkipped {
+				return Selection{}, ErrSourceChanged
+			}
 			if err := ctx.Err(); err != nil {
 				return Selection{}, err
 			}

@@ -178,3 +178,20 @@ func (m *bubbleManager) finishRun(win *mygo.Window, reqID string) {
 		}
 	}
 }
+
+// present and claimClose are called under mu on the UI thread. Translation
+// sessions survive hiding, while each explicit presentation owns its close.
+func (b *bubble) present() {
+	b.showID++
+	b.closeClaimed = false
+}
+
+func (b *bubble) claimClose(session string, showID, revision int64) bool {
+	if session != b.sessionID || showID != b.showID || b.closeClaimed || revision <= b.revision {
+		return false
+	}
+	b.closeClaimed = true
+	// OnClose advances once more, rejecting any Run IPC sent before Close.
+	b.revision = revision
+	return true
+}

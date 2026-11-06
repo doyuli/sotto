@@ -189,3 +189,42 @@ func TestRetryCannotCrossReplacementOrCancellation(t *testing.T) {
 		t.Fatal("retry crossed cancellation")
 	}
 }
+
+func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
+	for _, submit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reopened draft", true: "reopened translation"}[submit], func(t *testing.T) {
+			m := newBubbleManager(nil)
+			w := &mygo.Window{}
+			b := &bubble{win: w, sessionID: "draft", revision: -1}
+			m.byID[1] = b
+			b.present()
+			oldShow := b.showID
+			ctx, _ := m.startRun(w, RunReq{SessionID: "draft", ReqID: "original", Revision: 0})
+			b.present()
+			if submit {
+				ctx, _ = m.startRun(w, RunReq{SessionID: "draft", ReqID: "new", Revision: 2})
+			}
+			before := b.revision
+			if b.claimClose("draft", oldShow, 1) || b.revision != before || ctx.Err() != nil {
+				t.Fatal("late close affected reopened draft or request")
+			}
+			if b.claimClose("old session", b.showID, 99) || b.claimClose("draft", b.showID, before) {
+				t.Fatal("accepted stale session/revision")
+			}
+			if !b.claimClose("draft", b.showID, before+1) {
+				t.Fatal("current close rejected")
+			}
+			b.stopWork()
+			if ctx.Err() == nil {
+				t.Fatal("accepted close did not cancel work")
+			}
+			if b.claimClose("draft", b.showID, before+2) {
+				t.Fatal("duplicate close accepted")
+			}
+			b.present()
+			if !b.claimClose("draft", b.showID, before+2) {
+				t.Fatal("new presentation cannot close")
+			}
+		})
+	}
+}

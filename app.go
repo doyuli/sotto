@@ -221,6 +221,8 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	}
 	message := ""
 	switch {
+	case errors.Is(err, selection.ErrClipboardRestore):
+		message = "剪贴板未完整恢复，已保留恢复副本，请重试恢复或放弃副本。"
 	case errors.Is(err, selection.ErrClipboardUnsafe):
 		message = "当前剪贴板内容无法安全保留，请使用截图翻译或直接输入。"
 	case errors.Is(err, selection.ErrShortcutHeld):

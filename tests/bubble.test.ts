@@ -19,7 +19,7 @@ function currentRequest(): RunReq { return calls.filter(c=>c.method==="Translate
 beforeEach(async () => {
  doc=new TestDocument(); root=doc.createElement("div"); doc.body.append(root);
  calls=[]; listeners=new Map(); callOverride=undefined;
- initial={id:1,serviceRequests:{google:"r",baidu:"r"},sessionID:"s",generation:1,revision:0,reqID:"r",trigger:"selection",text:"hello",sourceLang:"auto",targetLang:"zh-HANS",pinned:false,phase:"",message:"",meta:null,results:[],settings:{
+ initial={id:1,showID:1,clipboardRecoveryID:"",serviceRequests:{google:"r",baidu:"r"},sessionID:"s",generation:1,revision:0,reqID:"r",trigger:"selection",text:"hello",sourceLang:"auto",targetLang:"zh-HANS",pinned:false,phase:"",message:"",meta:null,results:[],settings:{
   services:{enabled:["google","baidu"],order:["google","baidu"],openai:{baseURL:"",model:""}},
   targetLanguage:"zh-HANS",identifier:{autoSplit:true},copyFormats:["snake"],hotkeys:{panel:"",selection:"",ocr:""},bubble:{autoHide:true},openAtLogin:false,
  }};
@@ -97,7 +97,7 @@ test("Escape still cancels screenshot after another key, and remount removes old
 });
 
 test("native close invalidates pending results and the next run advances the revision", () => {
- emit("run-stopped",{sessionID:"s",revision:3});
+ emit("run-stopped",{sessionID:"s",showID:1,revision:3});
  expect(root.querySelectorAll(".card-loading")).toHaveLength(0);
  input().value="resume";
  input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
@@ -156,4 +156,45 @@ test("English Ready snapshot restores naming buttons and keeps copy and speech c
  expect(button("复制")).toBeDefined(); expect(button("朗读")).toBeDefined();
  button("蛇形：hello_world").emit("click");
  expect(calls.filter(c=>c.method==="BubbleSvc.Copy").at(-1)?.args).toEqual(["hello_world"]);
+});
+
+test("close sends one guarded command and presentation updates preserve unsent drafts", () => {
+ input().value="unsent draft";
+ emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:""});
+ expect(input().value).toBe("unsent draft");
+ emit("bubble-presented",{sessionID:"s",showID:1,revision:0,focus:true,clipboardRecoveryID:""});
+ button("关闭").emit("click");
+ expect(calls.filter(c=>c.method==="TranslateSvc.Cancel")).toHaveLength(0);
+ expect(calls.filter(c=>c.method==="BubbleSvc.Close").at(-1)?.args).toEqual([1,"s",2,1]);
+});
+
+test("old close events cannot cancel a reopened panel's new translation", () => {
+ emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:""});
+ input().value="new"; input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
+ const request=currentRequest();
+ emit("run-stopped",{sessionID:"s",showID:1,revision:99});
+ emit("translation-update",{reqID:request.reqID,service:"google",text:"new result",err:""});
+ expect(root.querySelector(".card-text")?.textContent).toBe("new result");
+});
+
+test("presentation reconciles a native close without erasing the draft", () => {
+ input().value="keep draft";
+ emit("bubble-presented",{sessionID:"s",showID:2,revision:3,focus:true,clipboardRecoveryID:""});
+ expect(input().value).toBe("keep draft");
+ expect(root.querySelectorAll(".card-loading")).toHaveLength(0);
+ input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
+ expect(currentRequest().revision).toBe(4);
+});
+
+test("failed clipboard recovery stays available until explicit successful retry", async () => {
+ emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:"backup"});
+ let fail=true;
+ callOverride=(method)=> { if(method==="BubbleSvc.RestoreClipboard" && fail) throw new Error("clipboard changed"); };
+ button("重试恢复剪贴板").emit("click");
+ await new Promise(resolve=>setTimeout(resolve,0));
+ expect(button("重试恢复剪贴板").disabled).toBe(false);
+ expect(button("放弃恢复副本")).toBeDefined();
+ fail=false; button("重试恢复剪贴板").emit("click");
+ await new Promise(resolve=>setTimeout(resolve,0));
+ expect(root.querySelectorAll("button").some(b=>b.textContent==="重试恢复剪贴板")).toBe(false);
 });

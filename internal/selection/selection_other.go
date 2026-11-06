@@ -21,3 +21,5 @@ func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
 }
 
 func Prepare() func(context.Context) (Selection, error) { return grab }
+
+func RecoverClipboard(id string) error { return ErrUnsupported }

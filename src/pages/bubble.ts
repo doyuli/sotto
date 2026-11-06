@@ -217,20 +217,22 @@ function wireEvents(): void {
 
   subscriptions.push(events.runStopped.on((msg) => {
     const handle = () => {
-      if (!state || msg.sessionID !== state.sessionID || msg.revision < revision) return;
-      revision = msg.revision; state.revision = revision; reqID = ""; cardRequests.clear();
-      if (state.phase === "recognizing") {
-        state.phase = "error"; state.message = "已取消识别，可重新框选或直接输入。"; input.readOnly = false;
-      }
-      for (const [name, card] of cards) {
-        if (card.status === "loading") cards.set(name, {status:"error",err:"翻译已取消，请重试"});
-      }
-      renderCards(); renderStatus();
+      if (!state || msg.sessionID !== state.sessionID || msg.showID !== state.showID || msg.revision < revision) return;
+      stopRenderedRun(msg.revision);
     };
     if (mounted) handle(); else queued.push(handle);
   }));
-  subscriptions.push(events.focusComposer.on(() => {
-    if (mounted) input.focus(); else queued.push(() => input.focus());
+  subscriptions.push(events.bubblePresented.on((msg) => {
+    const handle = () => {
+      if (!state || msg.sessionID !== state.sessionID || msg.showID < state.showID) return;
+      state.showID = msg.showID;
+      state.clipboardRecoveryID = msg.clipboardRecoveryID;
+      // Native close may have completed while this page was hidden.
+      if (msg.revision > revision) stopRenderedRun(msg.revision);
+      renderStatus();
+      if (msg.focus) input.focus();
+    };
+    if (mounted) handle(); else queued.push(handle);
   }));
   subscriptions.push(events.bubbleReset.on((st) => {
     const handle = () => {
@@ -298,7 +300,7 @@ function wireEvents(): void {
 /** apply takes a fresh state from Go, whether on mounting or reuse. */
 function apply(st: BubbleState): void {
   if (state && (st.generation < state.generation ||
-    (st.sessionID === state.sessionID && st.revision < state.revision))) return;
+    (st.sessionID === state.sessionID && (st.revision < state.revision || st.showID < state.showID)))) return;
   state = st;
   reqID = st.reqID;
   runServices = null;
@@ -372,17 +374,26 @@ function cancelCurrent(): void {
   void TranslateSvc.cancel(state.sessionID, revision).catch((err) => toast(String(err)));
 }
 
-function closeBubble(): void {
-  cancelCurrent();
+function stopRenderedRun(stoppedRevision: number): void {
+  revision = stoppedRevision;
+  if (state) state.revision = revision;
+  reqID = ""; cardRequests.clear();
   if (state?.phase === "recognizing") {
     state.phase = "error"; state.message = "已取消识别，可重新框选或直接输入。";
-    input.readOnly = false; renderStatus();
+    input.readOnly = false;
   }
   for (const [name, card] of cards) {
     if (card.status === "loading") cards.set(name, {status:"error", err:"翻译已取消，请重试"});
   }
-  renderCards();
-  void BubbleSvc.close(bubbleID, state?.sessionID ?? "");
+  renderCards(); renderStatus();
+}
+
+function closeBubble(): void {
+  if (!state) return;
+  const session = state.sessionID, show = state.showID, closingRevision = revision + 1;
+  stopRenderedRun(closingRevision);
+  // The backend validates presentation and revision before canceling anything.
+  void BubbleSvc.close(bubbleID, session, show, closingRevision).catch((err) => toast(String(err)));
 }
 
 function renderStatus(): void {
@@ -409,6 +420,34 @@ function renderStatus(): void {
     const retry = el("button", "text-btn", state.trigger === "ocr" ? "重新框选" : "截图翻译");
     retry.addEventListener("click", () => { void SnipSvc.start().catch((err) => toast(String(err))); });
     statusHost.append(retry);
+  }
+  if (state?.clipboardRecoveryID) {
+    const recovery = state.clipboardRecoveryID;
+    statusHost.append(el("span", "capture-message", "上次取词的剪贴板尚未完整恢复，退出应用会丢弃恢复副本。"));
+    const restore = el("button", "text-btn", "重试恢复剪贴板");
+    restore.addEventListener("click", async () => {
+      restore.disabled = true;
+      try {
+        await BubbleSvc.restoreClipboard(recovery);
+        if (state?.clipboardRecoveryID === recovery) {
+          state.clipboardRecoveryID = "";
+          if (state.message.startsWith("剪贴板未完整恢复")) state.message = "剪贴板已恢复，可继续翻译。";
+        }
+        toast("剪贴板已恢复"); renderStatus();
+      } catch (err) { toast(String(err)); restore.disabled = false; }
+    });
+    const discard = el("button", "text-btn", "放弃恢复副本");
+    discard.addEventListener("click", async () => {
+      try {
+        await BubbleSvc.discardClipboardRecovery(recovery);
+        if (state?.clipboardRecoveryID === recovery) {
+          state.clipboardRecoveryID = "";
+          if (state.message.startsWith("剪贴板未完整恢复")) state.message = "已放弃恢复副本，未更改当前剪贴板。";
+        }
+        renderStatus();
+      } catch (err) { toast(String(err)); }
+    });
+    statusHost.append(restore, discard);
   }
   statusHost.classList.toggle("hidden", statusHost.children.length === 0);
 }

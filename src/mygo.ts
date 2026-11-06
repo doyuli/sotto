@@ -4,6 +4,14 @@ import { call, event } from "mygo-runtime";
 
 // ---- Types ----
 
+export interface BubblePresentedMsg {
+  clipboardRecoveryID: string;
+  sessionID: string;
+  showID: number;
+  revision: number;
+  focus: boolean;
+}
+
 export interface BubbleSettings {
   autoHide: boolean;
 }
@@ -14,6 +22,8 @@ export interface BubbleSettings {
  * is reused for a new query.
  */
 export interface BubbleState {
+  clipboardRecoveryID: string;
+  showID: number;
   id: number;
   reqID: string;
   serviceRequests: Record<string, string>;
@@ -94,6 +104,7 @@ export interface RunReq {
 }
 
 export interface RunStoppedMsg {
+  showID: number;
   sessionID: string;
   revision: number;
 }
@@ -198,12 +209,15 @@ export const TranslateSvc = {
 /** BubbleSvc serves the bubble pages. */
 export const BubbleSvc = {
   /** Close hides an unpinned bubble and closes a pinned one. */
-  close(id: number, sessionID: string): Promise<void> {
-    return call("BubbleSvc.Close", id, sessionID);
+  close(id: number, sessionID: string, showID: number, revision: number): Promise<void> {
+    return call("BubbleSvc.Close", id, sessionID, showID, revision);
   },
   /** Copy puts text on the clipboard. */
   copy(text: string): Promise<void> {
     return call("BubbleSvc.Copy", text);
+  },
+  discardClipboardRecovery(id: string): Promise<void> {
+    return call("BubbleSvc.DiscardClipboardRecovery", id);
   },
   /** OpenTranslationSettings opens the services tab from the bubble. */
   openTranslationSettings(): Promise<void> {
@@ -219,6 +233,10 @@ export const BubbleSvc = {
    */
   ready(id: number): Promise<BubbleState> {
     return call("BubbleSvc.Ready", id);
+  },
+  /** RestoreClipboard retries a retained snapshot without replacing a newer copy. */
+  restoreClipboard(id: string): Promise<void> {
+    return call("BubbleSvc.RestoreClipboard", id);
   },
   /** Unpin returns a pinned bubble to hiding on blur. */
   unpin(id: number): Promise<void> {
@@ -258,7 +276,7 @@ export const SnipSvc = {
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
   runStopped: event<RunStoppedMsg>("run-stopped"),
-  focusComposer: event<boolean>("focus-composer"),
+  bubblePresented: event<BubblePresentedMsg>("bubble-presented"),
   /** BubbleReset re-initializes a reused bubble's page. */
   bubbleReset: event<BubbleState>("bubble-reset"),
   /** TranslationUpdate reports one service result as it arrives. */
