@@ -89,14 +89,16 @@ test("retry requests only the failed service and retains the successful card", a
 
 test("language changes use the new selection and deleting the last character cancels", async () => {
   await openBubble();
-  for (const [selector, property, language] of [
-    [".source-select", "sourceLang", "fr"],
-    [".lang-select", "targetLang", "en"],
+  for (const [selector, property, language, label] of [
+    [".source-select", "sourceLang", "fr", "法语"],
+    [".lang-select", "targetLang", "en", "英语"],
   ] as const) {
     const select = page.target.querySelector<HTMLSelectElement>(selector)!;
     select.value = language;
     select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(lastRun()[property]).toBe(language);
+    await tick();
+    expect(select.closest("label")?.querySelector(".lang-value")?.textContent).toBe(label);
   }
   edit("");
   await tick();
