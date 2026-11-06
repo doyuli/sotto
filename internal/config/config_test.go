@@ -86,7 +86,6 @@ func TestLoadDamagedKeepsBackup(t *testing.T) {
 func TestNormalizeFillsAndDrops(t *testing.T) {
 	s := Default()
 	s.TargetLanguage = "klingon" // invalid → default
-	s.SourceLanguage = ""        // empty → default (auto)
 	s.CopyFormats = []string{"snake", "bogus", "snake", ""}
 	s.Services.Enabled = []string{"deepl", "deepl", "potato"}
 	s.Services.Order = []string{"deepl"}
@@ -94,9 +93,6 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 	got := Normalize(s)
 	if got.TargetLanguage != "zh-HANS" {
 		t.Errorf("target = %q, want default", got.TargetLanguage)
-	}
-	if got.SourceLanguage != "auto" {
-		t.Errorf("source = %q, want auto", got.SourceLanguage)
 	}
 	if !reflect.DeepEqual(got.CopyFormats, []string{"snake"}) {
 		t.Errorf("copy formats = %v, want [snake]", got.CopyFormats)

@@ -97,17 +97,22 @@ function renderGeneral(): void {
   const host = sectionHosts.general!;
   host.replaceChildren(el("h2", undefined, "通用"));
 
-  const target = langField("默认翻译到", settings.targetLanguage, true, (v) => {
-    settings.targetLanguage = v;
-    void save();
-  });
-  const source = langField("源语言", settings.sourceLanguage, false, (v) => {
-    settings.sourceLanguage = v;
+  const target = el("select");
+  const auto = el("option", undefined, "自动（中文↔英文）");
+  auto.value = "auto";
+  target.append(auto);
+  for (const language of LANGUAGES) {
+    const option = el("option", undefined, language.name);
+    option.value = language.code;
+    target.append(option);
+  }
+  target.value = settings.targetLanguage;
+  target.addEventListener("change", () => {
+    settings.targetLanguage = target.value;
     void save();
   });
   host.append(
-    target,
-    source,
+    field("默认翻译到", "", target),
     switchField("开机自启", "登录后常驻托盘", settings.openAtLogin, (v) => {
       settings.openAtLogin = v;
       void save();
@@ -121,28 +126,6 @@ function renderGeneral(): void {
       void save();
     }),
   );
-}
-
-function langField(
-  label: string,
-  value: string,
-  withAuto: boolean,
-  onChange: (v: string) => void,
-): HTMLElement {
-  const select = el("select");
-  if (withAuto) {
-    const auto = el("option", undefined, "自动（中文↔英文）");
-    auto.value = "auto";
-    select.append(auto);
-  }
-  for (const l of LANGUAGES) {
-    const opt = el("option", undefined, l.name);
-    opt.value = l.code;
-    select.append(opt);
-  }
-  select.value = value;
-  select.addEventListener("change", () => onChange(select.value));
-  return field(label, "", select);
 }
 
 function switchField(

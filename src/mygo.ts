@@ -89,7 +89,6 @@ export interface ServiceSettings {
 export interface Settings {
   services: ServiceSettings;
   targetLanguage: string;
-  sourceLanguage: string;
   identifier: IdentifierSettings;
   copyFormats: string[];
   hotkeys: HotkeySettings;

@@ -208,7 +208,7 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 		ReqID:      b.reqID,
 		Trigger:    b.trigger,
 		Text:       b.text,
-		SourceLang: cfg.SourceLanguage,
+		SourceLang: "auto",
 		TargetLang: cfg.TargetLanguage,
 		Pinned:     b.pinned,
 		Settings:   cfg,

@@ -60,7 +60,6 @@ type SelectionSettings struct {
 type Settings struct {
 	Services       ServiceSettings    `json:"services"`
 	TargetLanguage string             `json:"targetLanguage"`
-	SourceLanguage string             `json:"sourceLanguage"`
 	Identifier     IdentifierSettings `json:"identifier"`
 	CopyFormats    []string           `json:"copyFormats"`
 	Hotkeys        HotkeySettings     `json:"hotkeys"`
@@ -78,7 +77,6 @@ func Default() Settings {
 			OpenAI:  OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
 		},
 		TargetLanguage: "zh-HANS",
-		SourceLanguage: "auto",
 		Identifier:     IdentifierSettings{AutoSplit: true},
 		CopyFormats:    slices.Clone(naming.Styles),
 		Hotkeys: HotkeySettings{
@@ -162,11 +160,8 @@ func Normalize(s Settings) Settings {
 	if s.Services.OpenAI.Model == "" {
 		s.Services.OpenAI.Model = d.Services.OpenAI.Model
 	}
-	if !languageOK(s.TargetLanguage) {
+	if s.TargetLanguage != "auto" && !languages.Valid(s.TargetLanguage) {
 		s.TargetLanguage = d.TargetLanguage
-	}
-	if !languageOK(s.SourceLanguage) {
-		s.SourceLanguage = d.SourceLanguage
 	}
 	s.CopyFormats = validFormats(s.CopyFormats)
 	if len(s.CopyFormats) == 0 {
@@ -187,10 +182,6 @@ func Normalize(s Settings) Settings {
 		s.Hotkeys = d.Hotkeys
 	}
 	return s
-}
-
-func languageOK(code string) bool {
-	return code == "auto" || languages.Valid(code)
 }
 
 func validFormats(formats []string) []string {
