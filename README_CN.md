@@ -20,6 +20,10 @@
   <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" width="600" alt="Sotto 翻译气泡预览">
+</p>
+
 Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。
 
 集多源流式对比、离线截图 OCR、无感划词保护剪贴板、代码变量命名转换于一体，无需频繁切换应用，助你始终专注当下工作。
