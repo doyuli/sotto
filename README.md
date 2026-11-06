@@ -5,42 +5,100 @@
 <h1 align="center">Sotto</h1>
 
 <p align="center">
+  <strong>A lightweight, unobtrusive desktop translator built for Windows users and developers</strong>
+</p>
+
+<p align="center">
   <strong>English</strong> · <a href="README_CN.md">简体中文</a>
 </p>
 
-Sotto is a desktop translator for Windows. Select text, capture part of your screen, or type into the translation panel to see results beside the app you’re using.
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
+  <img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
+  <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
+</p>
 
-[Download for Windows](https://github.com/doyuli/sotto/releases/latest). Choose the `amd64` installer for x64 PCs or `arm64` for Windows on ARM. The app interface is in Simplified Chinese.
+Sotto is a desktop translation utility tailored for Windows. Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
+
+Combining multi-engine streaming comparison, offline screen OCR, non-intrusive selection without clipboard pollution, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
+
+[Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
+
+---
 
 ## Features
 
-- **Compare translations** from services such as Google Translate, DeepL, and OpenAI-compatible endpoints in one popup.
-- **Extract text from screenshots** with on-device OCR, then translate it with your selected services.
-- **Pin the popup** to keep translations visible while you work in other apps.
-- **Copy English translations as code identifiers** in `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
+- ⚡ **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold or retry cards independently.
+- 🖱️ **Non-Intrusive Selection**: Reads text via UI Automation (UIA) without copying; fallback simulated copy automatically restores your clipboard without polluting history.
+- 📷 **Offline Dual-Engine OCR**: Snip any screen region to translate locally. Powered by on-device PP-OCR and native WinRT OCR—no images uploaded to the cloud.
+- 💻 **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
+- 🔒 **Secure Credentials & Zero Telemetry**: Strictly local with no tracking. API keys are safely encrypted in Windows Credential Manager (DPAPI) rather than plain-text configs.
+- 🎨 **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with WebView2 for minimal memory usage; frameless design that respects themes, hides on blur, or pins in place.
 
-## Shortcuts
+---
 
-| Action | Default shortcut |
-| --- | --- |
-| Open the translation panel | `Ctrl+Alt+A` |
-| Translate a screen region (OCR) | `Ctrl+Alt+S` |
-| Translate selected text | `Ctrl+Alt+D` |
+## Supported Translation Services
 
-In the panel, press `Enter` to translate, `Shift+Enter` to insert a line break, and `Esc` to close it.
+| Service | Type | Notes |
+| --- | --- | --- |
+| **Google Translate** | Keyless | Ready out of the box |
+| **Bilibili (Index)** | Keyless | Experimental keyless endpoint |
+| **Dictionary** | Keyless | Displays phonetics and definitions for English words |
+| **DeepL** | API Key | Supports both Free and Pro keys |
+| **OpenAI-Compatible** | API Key | Custom Base URL and model names (DeepSeek, Moonshot, Qwen, etc.) |
+| **Volcengine (ByteDance)** | API Key | High-performance machine translation |
+| **Baidu Translate** | API Key | General text translation API |
+| **Tencent Cloud (TMT)** | API Key | Machine translation service |
+| **Youdao** | API Key | NetEase Youdao translation API |
+| **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
-Open **Settings** (设置) from the system tray to change shortcuts and select translation services. For services that require an API key, Sotto stores the key in Windows Credential Manager.
+> Open **Settings** from the tray menu to toggle services, reorder cards, and manage keys.
+
+---
+
+## Shortcuts & Quick Guide
+
+| Action | Default Shortcut | Description |
+| --- | --- | --- |
+| **Open Translation Panel** | `Ctrl+Alt+A` | Invokes the centered translation panel (preserves drafts) |
+| **Screen Region Translation (OCR)** | `Ctrl+Alt+S` | Snips any screen area to extract text locally and translate |
+| **Selection Translation** | `Ctrl+Alt+D` | Reads highlighted text in the active app and opens a popup bubble |
+
+- **In the panel**: Press `Enter` to translate, `Shift+Enter` for a new line, `Esc` to close.
+- **Controls**: Pin (📌) to keep the bubble floating, listen to pronunciation (🔊), fold cards, or retry failed services.
+
+---
+
+## System Requirements & Download
+
+- **Operating System**: Windows 10 / Windows 11
+- **Runtime**: Microsoft Edge WebView2 Runtime (pre-installed on modern Windows)
+- **Architectures**:
+  - 64-bit x86 PC (Intel / AMD): download `sotto-*-windows-amd64-installer.exe`
+  - 64-bit ARM device (e.g. Surface Pro / Snapdragon X): download `sotto-*-windows-arm64-installer.exe`
+
+👉 [Download the latest release on GitHub Releases](https://github.com/doyuli/sotto/releases/latest)
+
+---
 
 ## Development
 
-On Windows, install Go, Bun, and the WebView2 Runtime. See [go.mod](go.mod) for the required Go version.
+Requires Go (>= 1.24), Bun, and WebView2 Runtime.
 
 ```bash
-bun install
-bun run dev
+bun install                  # Install dependencies
+bun run dev                  # Start dev server (with hot reload)
+bun run typecheck            # Run type checking
+CGO_ENABLED=0 go test ./...  # Run unit tests
+bun run build                # Build for current architecture
+bun run build:win            # Build for both x64 and arm64
 ```
 
-Run `bun run build` for your current Windows architecture, or `bun run build:win` for both x64 and ARM64. Build output goes to `build/`.
+> Run `bunx mygo generate` after modifying Go backend bindings to update TypeScript types.
+
+---
 
 ## Acknowledgments
 
