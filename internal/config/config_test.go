@@ -19,6 +19,9 @@ func TestDefault(t *testing.T) {
 	if !s.Identifier.AutoSplit || !s.Bubble.AutoHide {
 		t.Errorf("autoSplit/autoHide should default to on")
 	}
+	if s.Identifier.StripCodeComments || s.Identifier.FlattenNewlines || s.Identifier.StripMarkdown {
+		t.Error("source cleanup should default to off")
+	}
 	if len(s.CopyFormats) == 0 {
 		t.Error("copy formats must default to a list")
 	}
@@ -48,6 +51,7 @@ func TestRoundTrip(t *testing.T) {
 	s.CopyFormats = []string{"snake", "kebab"}
 	s.Services.Enabled = []string{"deepl", "google"}
 	s.Services.Order = []string{"deepl", "google"}
+	s.Identifier = IdentifierSettings{StripCodeComments: true, FlattenNewlines: true, StripMarkdown: true}
 	if err := Save(path, s); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +70,9 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if !slices.Contains(got.Services.Order, "index-translate") {
 		t.Errorf("Index-Translate should be available to enable in existing settings: %v", got.Services.Order)
+	}
+	if got.Identifier != s.Identifier {
+		t.Errorf("identifier settings = %+v, want %+v", got.Identifier, s.Identifier)
 	}
 }
 
@@ -150,7 +157,7 @@ func TestNormalizePartialFile(t *testing.T) {
 	// A settings file written by an older version only has some fields;
 	// the rest keep their defaults instead of going zero.
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{"targetLanguage":"ja"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"targetLanguage":"ja","identifier":{"autoSplit":false}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Load(path)
@@ -160,7 +167,10 @@ func TestNormalizePartialFile(t *testing.T) {
 	if got.TargetLanguage != "ja" {
 		t.Errorf("target = %q, want ja", got.TargetLanguage)
 	}
-	if got.Hotkeys.Panel != "Ctrl+Alt+A" || !got.Identifier.AutoSplit {
+	if got.Hotkeys.Panel != "Ctrl+Alt+A" {
 		t.Errorf("unrelated fields lost their defaults: %+v", got)
+	}
+	if got.Identifier != (IdentifierSettings{}) {
+		t.Errorf("legacy identifier settings = %+v, want all switches off", got.Identifier)
 	}
 }

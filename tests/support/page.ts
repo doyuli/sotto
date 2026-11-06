@@ -12,7 +12,7 @@ class MockBackend {
     targetLanguage: "zh-HANS",
     openAtLogin: false,
     bubble: { autoHide: true },
-    identifier: { autoSplit: true },
+    identifier: { autoSplit: true, stripCodeComments: false, flattenNewlines: false, stripMarkdown: false },
     copyFormats: ["lowerCamel", "snake"],
     hotkeys: { panel: "Ctrl+Alt+A", selection: "Ctrl+Alt+D", ocr: "Ctrl+Alt+S" },
   };

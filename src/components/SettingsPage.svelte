@@ -35,6 +35,12 @@
     { id: "ocr", label: "截图翻译" },
   ] as const satisfies readonly { id: keyof HotkeySettings; label: string }[];
 
+  const SOURCE_OPTIONS = [
+    { id: "stripCodeComments", label: "自动去除代码注释", hint: "去掉 //、/* … */ 和 # 注释，保留代码" },
+    { id: "flattenNewlines", label: "自动将换行符替换为空格", hint: "将换行处合并为一个空格" },
+    { id: "stripMarkdown", label: "自动去除 Markdown 格式", hint: "去掉常见的标题、列表、链接和强调标记，保留文字" },
+  ] as const satisfies readonly { id: keyof Settings["identifier"]; label: string; hint: string }[];
+
   type SectionID = (typeof NAV)[number]["id"];
 
   let { initialTab = "general" }: { initialTab?: string } = $props();
@@ -276,6 +282,26 @@
               }}
             />
           </div>
+          {#each SOURCE_OPTIONS as option (option.id)}
+            <div class="field">
+              <label for={option.id}>
+                {option.label}
+                <span class="sub">{option.hint}</span>
+              </label>
+              <input
+                id={option.id}
+                type="checkbox"
+                class="switch"
+                checked={settings.identifier[option.id]}
+                onchange={(e) => {
+                  if (settings) {
+                    settings.identifier[option.id] = e.currentTarget.checked;
+                    void save();
+                  }
+                }}
+              />
+            </div>
+          {/each}
         </div>
 
         <fieldset class="copy-formats" aria-describedby="copy-formats-hint">

@@ -518,7 +518,7 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 	}
 	cfg := a.settings()
 
-	text := req.Text
+	text := translate.PrepareSource(req.Text, cfg.Identifier)
 	// Identifiers translate better as words: getUserInfo goes to the
 	// services as "get user info".
 	if cfg.Identifier.AutoSplit && naming.DetectStyle(text) != naming.None &&
@@ -564,7 +564,7 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 	}
 	go func() {
 		defer a.bubbles.finishRun(win, req.ReqID)
-		translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target, SingleWord: singleWord}, func(res translate.Result) {
+		emit := func(res translate.Result) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -572,7 +572,16 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 			if a.bubbles.recordResult(win, msg) {
 				TranslationUpdate.Emit(win, msg)
 			}
-		})
+		}
+		if text == "" {
+			for _, service := range cfg.Services.Enabled {
+				if slices.Contains(services, service) {
+					emit(translate.Result{Service: service, Err: "清理后的原文为空，请修改原文或调整命名转换设置"})
+				}
+			}
+			return
+		}
+		translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target, SingleWord: singleWord}, emit)
 	}()
 }
 
