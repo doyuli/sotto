@@ -58,53 +58,80 @@ func (o OpenAI) Translate(ctx context.Context, req Request, k KeyStore, cfg conf
 		},
 		"temperature": 0.1,
 	}
+	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI")
+	if err != nil {
+		return Result{}, err
+	}
+	// The reply may wrap the translation in quotes despite the prompt.
+	text := strings.TrimSpace(choice.Message.Content)
+	text = strings.Trim(text, "\"'“”‘’")
+	return Result{Service: o.Name(), Text: text}, nil
+}
+
+type chatChoice struct {
+	FinishReason string `json:"finish_reason"`
+	Message      struct {
+		Content string `json:"content"`
+	} `json:"message"`
+}
+
+var defaultChatClient = &http.Client{Timeout: 30 * time.Second}
+
+// requestChatCompletion shares the wire protocol between independent services.
+func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string) (chatChoice, error) {
+	if client == nil {
+		client = defaultChatClient
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return Result{}, err
+		return chatChoice{}, fmt.Errorf("%s：构造请求：%w", service, err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(data))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
-		return Result{}, err
+		return chatChoice{}, fmt.Errorf("%s：构造请求：%w", service, err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+key)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := o.client().Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		return Result{}, err
+		return chatChoice{}, fmt.Errorf("%s：%w", service, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return chatChoice{}, fmt.Errorf("%s：请求过于频繁，请稍后重试", service)
+	}
+	// Public gateways may return HTML or echo request data. Keep anonymous
+	// service errors short and avoid suggesting credentials they cannot set.
+	if status := resp.StatusCode; status != http.StatusOK && key == "" {
+		switch {
+		case status == http.StatusUnauthorized || status == http.StatusForbidden:
+			return chatChoice{}, fmt.Errorf("%s：暂时无法匿名访问，请稍后重试或切换翻译服务", service)
+		case status >= http.StatusInternalServerError:
+			return chatChoice{}, fmt.Errorf("%s：服务暂时不可用，请稍后重试", service)
+		default:
+			return chatChoice{}, fmt.Errorf("%s：请求失败（HTTP %d）", service, status)
+		}
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return Result{}, err
+		return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == 401 {
-			return Result{}, ErrAuth
+			return chatChoice{}, ErrAuth
 		}
-		return Result{}, fmt.Errorf("OpenAI: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return chatChoice{}, fmt.Errorf("%s: HTTP %d: %s", service, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+		Choices []chatChoice `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return Result{}, fmt.Errorf("OpenAI: %w", err)
+		return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
 	}
 	if len(out.Choices) == 0 {
-		return Result{}, fmt.Errorf("OpenAI: 空响应")
+		return chatChoice{}, fmt.Errorf("%s：空响应", service)
 	}
-	// The reply may wrap the translation in quotes despite the prompt.
-	text := strings.TrimSpace(out.Choices[0].Message.Content)
-	text = strings.Trim(text, "\"'“”‘’")
-	return Result{Service: "openai", Text: text}, nil
-}
-
-func (o OpenAI) client() *http.Client {
-	if o.Client != nil {
-		return o.Client
-	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return out.Choices[0], nil
 }

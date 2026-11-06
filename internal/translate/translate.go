@@ -60,6 +60,7 @@ type Translator interface {
 // Baidu's free tier allows one query a second, so it gets a limiter.
 func DefaultTranslators() []Translator {
 	return []Translator{
+		IndexTranslate{},
 		Google{},
 		Baidu{Limiter: baiduLimiter},
 		Volcengine{},

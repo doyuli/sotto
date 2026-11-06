@@ -444,7 +444,7 @@ function renderCard(name: string, card: CardState): HTMLElement {
       retry.addEventListener("click", () => run());
       const actions = el("div", "card-error-actions");
       actions.append(retry);
-      if (name === "google") actions.append(translationSettingsButton());
+      if (name === "google" || name === "index-translate") actions.append(translationSettingsButton());
       body.append(actions);
       break;
     }

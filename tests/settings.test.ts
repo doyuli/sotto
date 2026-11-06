@@ -14,7 +14,7 @@ function deferred() {
 class Backend {
   settings: Settings = {
     services: {
-      enabled: ["google", "baidu"], order: ["google", "openai", "baidu"],
+      enabled: ["index-translate", "google", "baidu"], order: ["index-translate", "google", "openai", "baidu"],
       openai: { baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini" },
     },
     targetLanguage: "zh-HANS", openAtLogin: false, bubble: { autoHide: true },
@@ -54,7 +54,7 @@ class Backend {
       case "ConfigSvc.Credentials":
         return {
           stored: [...this.secrets.keys()],
-          configured: ["google", ...(this.secrets.has("openai-key") ? ["openai"] : []),
+          configured: ["index-translate", "google", ...(this.secrets.has("openai-key") ? ["openai"] : []),
             ...(this.secrets.has("baidu-appid") && this.secrets.has("baidu-key") ? ["baidu"] : [])],
         };
       case "ConfigSvc.Set": {
@@ -123,6 +123,18 @@ function record(input: Element) {
   input.emit("click");
   doc.emit("keydown", { key: "k", ctrlKey: true, altKey: true });
 }
+
+test("Index-Translate can be turned off independently of OpenAI", async () => {
+  const index = aria("启用Bilibili");
+  const openai = aria("启用OpenAI");
+  expect(index.checked).toBe(true);
+  expect(index.disabled).toBe(false);
+  expect(openai.disabled).toBe(true);
+  change(index, false);
+  await tick();
+  expect(backend.settings.services.enabled).toEqual(["google", "baidu"]);
+  expect(openai.disabled).toBe(true);
+});
 
 test("hotkey fallback is shown without replacing the focused control", async () => {
   const input = field("翻译面板");

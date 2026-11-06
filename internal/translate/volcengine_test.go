@@ -20,11 +20,11 @@ func TestVolcengineRequiresBothCredentials(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = append(cfg.Services.Enabled, "volcengine", "baidu")
 	creds := fakeKeys{keys.VolcAccessKey: "access"}
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"google"}) {
+	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"index-translate", "google"}) {
 		t.Errorf("partial credentials: available = %v", got)
 	}
 	creds[keys.VolcSecretKey] = "secret"
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"google", "volcengine"}) {
+	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"index-translate", "google", "volcengine"}) {
 		t.Errorf("complete credentials: available = %v", got)
 	}
 	cfg.Services.Enabled = []string{}

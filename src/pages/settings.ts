@@ -1,5 +1,5 @@
 import { ConfigSvc, HotkeySvc, events, type CredentialStatus, type Settings } from "../mygo";
-import { LANGUAGES, SERVICE_CREDENTIALS, SERVICE_NAMES } from "../languages";
+import { LANGUAGES, SERVICE_CREDENTIALS, SERVICE_NAMES, SERVICE_NOTES } from "../languages";
 import { el, toast } from "../ui";
 
 // The canonical copy-format list, in display order; labels match Go's
@@ -254,21 +254,17 @@ function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
   actions.append(up, down, toggle);
   head.append(label, actions);
   row.append(head);
+  const note = SERVICE_NOTES[name];
   if (keyless) {
-    row.append(el("p", "service-note", "免密钥 · 非官方接口，部分网络可能无法连接。"));
+    if (note) row.append(el("p", "service-note", note));
     return { row, refresh };
   }
 
-  const hint = name === "baidu"
-    ? "在百度翻译开放平台开通「通用文本翻译」，再填写控制台里的 APP ID 和密钥。"
-    : name === "volcengine"
-      ? "在火山引擎控制台开通「机器翻译」，并在访问控制中创建有调用权限的 Access Key。"
-      : "";
   const getKey = el("button", "text-btn", "获取凭证");
   getKey.addEventListener("click", () => {
     void ConfigSvc.openKeyPage(name).catch((err) => toast(String(err)));
   });
-  if (hint) panel.append(el("p", "service-note", hint));
+  if (note) panel.append(el("p", "service-note", note));
   panel.append(getKey);
   if (name === "openai") panel.append(openAIFields());
 
