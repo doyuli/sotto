@@ -1,34 +1,47 @@
-# Sotto
+<p align="center">
+  <img src="resources/icon.png" width="96" height="96" alt="Sotto logo">
+</p>
 
-Sotto 是一款 Windows 桌面翻译工具。选中文字、框选屏幕区域，或直接输入文本，即可在当前应用旁边查看译文。
+<h1 align="center">Sotto</h1>
 
-## 功能
+<p align="center">
+  <strong>English</strong> · <a href="README_CN.md">简体中文</a>
+</p>
 
-- 在同一个弹窗里**对比多个译文**，支持 Google、DeepL 和 OpenAI 兼容接口等翻译服务。
-- **固定翻译弹窗**，在其他应用里继续查阅译文。
-- **按代码命名格式复制英文译文**，支持 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE` 和 `kebab-case`。
+Sotto is a desktop translator for Windows. Select text, capture part of your screen, or type into the translation panel to see results beside the app you’re using.
 
-## 快捷键
+[Download for Windows](https://github.com/doyuli/sotto/releases/latest). Choose the `amd64` installer for x64 PCs or `arm64` for Windows on ARM. The app interface is in Simplified Chinese.
 
-| 功能 | 默认快捷键 |
+## Features
+
+- **Compare translations** from services such as Google Translate, DeepL, and OpenAI-compatible endpoints in one popup.
+- **Extract text from screenshots** with on-device OCR, then translate it with your selected services.
+- **Pin the popup** to keep translations visible while you work in other apps.
+- **Copy English translations as code identifiers** in `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
+
+## Shortcuts
+
+| Action | Default shortcut |
 | --- | --- |
-| 输入翻译 | `Ctrl+Alt+A` |
-| 截图翻译（OCR） | `Ctrl+Alt+S` |
-| 划词翻译 | `Ctrl+Alt+D` |
+| Open the translation panel | `Ctrl+Alt+A` |
+| Translate a screen region (OCR) | `Ctrl+Alt+S` |
+| Translate selected text | `Ctrl+Alt+D` |
 
-从系统托盘打开「设置」，可以修改快捷键、选择翻译服务并配置 API 密钥。
+In the panel, press `Enter` to translate, `Shift+Enter` to insert a line break, and `Esc` to close it.
 
-## 从源码运行
+Open **Settings** (设置) from the system tray to change shortcuts and select translation services. For services that require an API key, Sotto stores the key in Windows Credential Manager.
 
-在 Windows 上准备 Go（版本见 [go.mod](go.mod)）、Bun 和 WebView2 Runtime。
+## Development
+
+On Windows, install Go, Bun, and the WebView2 Runtime. See [go.mod](go.mod) for the required Go version.
 
 ```bash
 bun install
 bun run dev
 ```
 
-运行 `bun run build` 可将可执行文件构建到 `build/`。
+Run `bun run build` for your current Windows architecture, or `bun run build:win` for both x64 and ARM64. Build output goes to `build/`.
 
-## 致谢
+## Acknowledgments
 
-感谢 [Easydict](https://github.com/tisfeng/Easydict) 的作者和贡献者为桌面翻译工具带来的启发。
+Thanks to the authors and contributors of [Easydict](https://github.com/tisfeng/Easydict) for inspiring Sotto.
