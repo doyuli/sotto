@@ -85,16 +85,6 @@ func recognizePPOCR(ctx context.Context, img image.Image) (Text, error) {
 	}, nil
 }
 
-// ppocrLanguages reports the languages the local PP-OCR model covers, or
-// nil when its model files are missing.
-func ppocrLanguages() []string {
-	ppEngine.once.Do(func() { ppEngine.err = ppEngine.init() })
-	if ppEngine.err != nil {
-		return nil
-	}
-	return []string{"zh-Hans", "en"}
-}
-
 func (p *ppOCR) init() error {
 	dir, _ := ocrResourcePaths()
 	keys, err := loadPPOCRKeys(filepath.Join(dir, "ppocr_keys.txt"))

@@ -67,9 +67,3 @@ func finish(t Text) Text {
 	}
 	return t
 }
-
-// AvailableLanguages lists the language packs the installed OCR can
-// recognize; empty when the engine is unusable.
-func AvailableLanguages(ctx context.Context) []string {
-	return availableLanguages(ctx)
-}

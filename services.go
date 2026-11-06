@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
 	"sotto/internal/naming"
-	"sotto/internal/ocr"
 	"sotto/internal/selection"
 	"sotto/internal/translate"
 )
@@ -121,13 +121,6 @@ func (ConfigSvc) DeeplUsage() (DeeplUsage, error) {
 	return DeeplUsage{Used: used, Limit: limit}, err
 }
 
-// OcrLanguages lists the languages the installed OCR engine recognizes.
-func (ConfigSvc) OcrLanguages() []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return ocr.AvailableLanguages(ctx)
-}
-
 // TranslateSvc runs translations for the pages.
 type TranslateSvc struct{ app *application }
 
@@ -203,15 +196,15 @@ func (s BubbleSvc) OpenTranslationSettings() {
 }
 
 // Copy puts text on the clipboard.
-func (BubbleSvc) Copy(text string) { mygo.Clipboard.WriteText(text) }
-
-// HotkeySvc manages the global shortcuts.
-type HotkeySvc struct{ app *application }
-
-// Apply switches to these shortcuts, rolling back on failure.
-func (s HotkeySvc) Apply(hotkeys config.HotkeySettings) error {
-	return s.app.applyHotkeys(hotkeys)
+func (BubbleSvc) Copy(text string) error {
+	if err := mygo.Clipboard.Write(transfer.TextData(text)); err != nil {
+		return fmt.Errorf("复制失败: %w", err)
+	}
+	return nil
 }
+
+// HotkeySvc checks whether a global shortcut is available.
+type HotkeySvc struct{}
 
 // Busy reports whether an accelerator is taken, by any app.
 func (HotkeySvc) Busy(accel string) bool {

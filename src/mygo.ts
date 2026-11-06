@@ -159,10 +159,6 @@ export const ConfigSvc = {
   get(): Promise<Settings> {
     return call("ConfigSvc.Get");
   },
-  /** OcrLanguages lists the languages the installed OCR engine recognizes. */
-  ocrLanguages(): Promise<string[]> {
-    return call("ConfigSvc.OcrLanguages");
-  },
   /** OpenKeyPage opens the service's credential page in the default browser. */
   openKeyPage(service: string): Promise<void> {
     return call("ConfigSvc.OpenKeyPage", service);
@@ -244,12 +240,8 @@ export const BubbleSvc = {
   },
 } as const;
 
-/** HotkeySvc manages the global shortcuts. */
+/** HotkeySvc checks whether a global shortcut is available. */
 export const HotkeySvc = {
-  /** Apply switches to these shortcuts, rolling back on failure. */
-  apply(hotkeys: HotkeySettings): Promise<void> {
-    return call("HotkeySvc.Apply", hotkeys);
-  },
   /** Busy reports whether an accelerator is taken, by any app. */
   busy(accel: string): Promise<boolean> {
     return call("HotkeySvc.Busy", accel);

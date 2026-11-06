@@ -37,7 +37,6 @@ type winrt struct {
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	stdout    *bufio.Reader
-	langs     []string
 	startErr  error
 	restarts  int
 	startedAt time.Time
@@ -46,9 +45,8 @@ type winrt struct {
 var engine = &winrt{}
 
 type readyMsg struct {
-	Ready     bool     `json:"ready"`
-	Languages []string `json:"languages"`
-	Error     string   `json:"error"`
+	Ready bool   `json:"ready"`
+	Error string `json:"error"`
 }
 
 type askMsg struct {
@@ -56,21 +54,6 @@ type askMsg struct {
 	Text  string `json:"text"`
 	Lines []Line `json:"lines"`
 	Error string `json:"error"`
-}
-
-// availableLanguages starts the engine if needed and reports its
-// languages. PP-OCR's Chinese model covers Chinese and English; the
-// Windows packs are reported only when PP-OCR is unavailable.
-func availableLanguages(ctx context.Context) []string {
-	if langs := ppocrLanguages(); len(langs) > 0 {
-		return langs
-	}
-	engine.mu.Lock()
-	defer engine.mu.Unlock()
-	if err := engine.ensure(ctx); err != nil {
-		return nil
-	}
-	return engine.langs
 }
 
 // recognize prefers the local PP-OCR pipeline and falls back to the
@@ -237,7 +220,6 @@ func (w *winrt) ensure(ctx context.Context) error {
 		}
 		return w.ensure(ctx)
 	}
-	w.langs = ready.Languages
 	// A successful start clears the failure budget: the limit is there
 	// to stop a crash-restart loop, not to cap the process's lifetime.
 	w.restarts = 0

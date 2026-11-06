@@ -395,7 +395,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	b := &bubble{id: id}
 	b.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto",
-		URL:             fmt.Sprintf("/#/bubble?b=%d", id),
+		URL:             fmt.Sprintf("/bubble.html?b=%d", id),
 		Width:           480,
 		Height:          240,
 		MinWidth:        480,

@@ -47,7 +47,7 @@ func (s *snipManager) Show(task *entryTask) {
 		s.mu.Unlock()
 		if win == nil {
 			win = mygo.NewWindow(mygo.WindowOptions{
-				Title: "Sotto 截图", URL: "/#/snip", Hidden: true, Frameless: true,
+				Title: "Sotto 截图", URL: "/snip.html", Hidden: true, Frameless: true,
 				Panel: true, SkipTaskbar: true, AlwaysOnTop: true, DisableResize: true,
 				Opacity: 0.35, BackgroundColor: "#10141c", Page: mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 			})
@@ -93,7 +93,7 @@ func (s *snipManager) Show(task *entryTask) {
 			s.mu.Unlock()
 		}
 		win.SetBounds(d.Bounds)
-		win.Page().LoadURL(fmt.Sprintf("/#/snip?t=%d", task.id))
+		win.Page().LoadURL(fmt.Sprintf("/snip.html#t=%d", task.id))
 		if cursor.X >= d.Bounds.X && cursor.X < d.Bounds.X+d.Bounds.Width && cursor.Y >= d.Bounds.Y && cursor.Y < d.Bounds.Y+d.Bounds.Height {
 			active = i
 		}

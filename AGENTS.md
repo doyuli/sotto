@@ -9,10 +9,10 @@
 export PATH="/c/Program Files/Go/bin:$PATH"   # go 不在 Git Bash 默认 PATH
 bun run dev            # 开发运行（vite:5173 + Go + WebView2，热重载）
 bunx mygo generate     # 改了 Go 绑定服务/事件后必须重新生成 src/mygo.ts
-bun run typecheck      # tsc --noEmit
+bun run typecheck      # svelte-check（Svelte + TypeScript）
 CGO_ENABLED=0 go test ./...
 bunx mygo vet .
-bun run build          # 生产构建（tsc + vite build + 嵌入 + 出包）
+bun run build          # 生产构建（类型检查 + Vite + 嵌入 + 出包）
 CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌面会话，见 e2e/README.md）
 ```
 
@@ -55,5 +55,5 @@ internal/translate # Translator 接口 + fan-out + deepl/openai/baidu/tencent/yo
 internal/selection # 划词：UIA 主路径 + Ctrl+C 兜底；气泡外部点击检测
 internal/capture   # GDI 截屏
 internal/ocr       # PP-OCR（ONNX Runtime 直调）+ Windows.Media.Ocr 兜底
-src/               # 前端：#/bubble（气泡）#/settings（设置）#/snip（OCR 选区）
+src/               # 前端（Svelte 5 多入口）：bubble.html / settings.html / snip.html
 ```
