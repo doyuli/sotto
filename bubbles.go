@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"runtime"
@@ -28,21 +29,34 @@ type bubbleManager struct {
 	showMu  sync.Mutex
 	mu      sync.Mutex
 	nextID  int64
+	input   *bubble
 	current *bubble   // the reusable unpinned bubble
 	pinned  []*bubble // pinned bubbles, oldest first
 	byID    map[int64]*bubble
-	// onReuse cancels the previous run of a bubble that is reused.
-	onReuse func(prevReqID string)
 	// isQuitting reports a quit under way: the close handlers then let
 	// windows close instead of hiding, or the quit sequence would abort.
 	isQuitting func() bool
 }
 
 type bubble struct {
-	id     int64
-	win    *mygo.Window
-	pinned bool
-	reqID  string // the request its page last showed
+	id                     int64
+	win                    *mygo.Window
+	pinned                 bool
+	reqID                  string // the request its page last showed
+	generation             int64
+	sessionID              string
+	revision               int64
+	fullRevision           int64 // last full run or cancellation; retries only advance their own service
+	fullReqID              string
+	serviceRevisions       map[string]int64
+	sourceLang, targetLang string
+	phase, message         string
+	meta                   *RunMetaMsg
+	results                map[string]TranslationUpdateMsg
+	runCancels             map[string]context.CancelFunc
+	serviceRequests        map[string]string
+	cancelCapture          context.CancelFunc
+	canShow                func() bool
 	// trigger and text of the last query, for a page that mounts late.
 	trigger, text string
 	// ready reports the page has loaded once; pendingShow shows a fresh
@@ -66,8 +80,8 @@ type Shown struct {
 	Text  string
 }
 
-func newBubbleManager(onReuse func(prevReqID string), isQuitting func() bool) *bubbleManager {
-	return &bubbleManager{byID: map[int64]*bubble{}, onReuse: onReuse, isQuitting: isQuitting}
+func newBubbleManager(isQuitting func() bool) *bubbleManager {
+	return &bubbleManager{byID: map[int64]*bubble{}, isQuitting: isQuitting}
 }
 
 // Show brings up a bubble beside the pointer.
@@ -78,59 +92,119 @@ func (m *bubbleManager) Show(cfg config.Settings, trigger, text string) Shown {
 // ShowAt brings up a bubble for a query: the unpinned one if it is
 // around, a fresh window otherwise.
 func (m *bubbleManager) ShowAt(cfg config.Settings, trigger, text string, anchor *Anchor) Shown {
-	if trigger == "input" {
-		text = "" // an input bubble starts empty
-	}
+	return m.ShowTask(cfg, trigger, text, anchor, "", "", nil, nil)
+}
+
+// ShowTask separates the persistent input draft from transient captures.
+// valid is checked again on the UI thread, including a delayed first show.
+func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anchor *Anchor, phase, message string, valid func() bool, cancel context.CancelFunc) Shown {
 	m.showMu.Lock()
 	defer m.showMu.Unlock()
-
+	if valid != nil && !valid() {
+		return Shown{}
+	}
 	m.mu.Lock()
-	b := m.current
-	// A reused bubble stops its previous run.
-	if b != nil && m.onReuse != nil && b.reqID != "" {
-		m.onReuse(b.reqID)
+	b, other := m.current, m.input
+	if trigger == "input" {
+		b, other = m.input, m.current
 	}
 	m.mu.Unlock()
-	if b == nil {
-		// Creating a window waits for the main thread, which stays free
-		// to take m.mu meanwhile (the callbacks): create outside it.
+	created := b == nil
+	if created {
 		b = m.create(cfg)
-		m.mu.Lock()
-		m.current = b
-		m.mu.Unlock()
+	}
+	if valid != nil && !valid() {
+		if created {
+			b.win.Destroy()
+		}
+		return Shown{}
+	}
+	if other != nil {
+		m.hideTransientBubble(other)
 	}
 	m.mu.Lock()
-	b.reqID = newRequestID()
-	b.trigger, b.text = trigger, text
+	// A pin callback may have run while native window calls were marshalled.
+	if b.pinned {
+		m.mu.Unlock()
+		b = m.create(cfg)
+		if valid != nil && !valid() {
+			b.win.Destroy()
+			return Shown{}
+		}
+		m.mu.Lock()
+	}
+	reuseInput := trigger == "input" && b.sessionID != ""
+	if trigger == "input" {
+		m.input = b
+	} else {
+		m.current = b
+	}
+	if !reuseInput {
+		b.stopWork()
+		b.generation++
+		b.sessionID = newRequestID()
+		b.reqID = b.sessionID
+		b.revision = -1
+		b.fullRevision, b.fullReqID = -1, ""
+		b.serviceRevisions = nil
+		b.trigger, b.text = trigger, text
+		b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
+		b.phase, b.message = phase, message
+		b.meta, b.results = nil, nil
+		b.serviceRequests = nil
+		b.cancelCapture = cancel
+	}
+	b.canShow = valid
 	state := m.state(b, cfg)
 	m.mu.Unlock()
-
-	m.position(b, trigger, anchor)
-	BubbleReset.Emit(b.win, state)
+	if !reuseInput {
+		m.position(b, trigger, anchor)
+		BubbleReset.Emit(b.win, state)
+	}
 	m.showWin(b)
-	return Shown{Win: b.win, ReqID: b.reqID, Text: text}
+	if trigger == "input" {
+		FocusComposer.Emit(b.win, true)
+	}
+	return Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
+}
+
+// stopWork is called under mu. Cancel functions never wait for UI work.
+func (b *bubble) stopWork() {
+	for _, cancel := range b.runCancels {
+		cancel()
+	}
+	b.runCancels = nil
+	if b.cancelCapture != nil {
+		b.cancelCapture()
+		b.cancelCapture = nil
+	}
 }
 
 // Pin makes the bubble stay when it loses focus; the manager forgets it
 // as the reusable one, so the next query opens a new window.
 func (m *bubbleManager) Pin(id int64) {
-	m.mu.Lock()
-	b, ok := m.byID[id]
-	if !ok || b.pinned {
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		b, ok := m.byID[id]
+		if !ok || b.pinned {
+			m.mu.Unlock()
+			return
+		}
+		b.pinned = true
+		if b.offBlur != nil {
+			b.offBlur()
+			b.offBlur = nil
+		}
+		if m.current == b {
+			m.current = nil
+		}
+		if m.input == b {
+			m.input = nil
+		}
+		m.pinned = append(m.pinned, b)
 		m.mu.Unlock()
-		return
-	}
-	b.pinned = true
-	if b.offBlur != nil {
-		b.offBlur()
-		b.offBlur = nil
-	}
-	if m.current == b {
-		m.current = nil
-	}
-	m.pinned = append(m.pinned, b)
-	m.mu.Unlock()
-	m.refreshOutsideClick(b)
+		m.refreshOutsideClick(b)
+	})
 }
 
 // Unpin returns a pinned bubble to the transient life: it hides on blur
@@ -138,32 +212,45 @@ func (m *bubbleManager) Pin(id int64) {
 // displaces is no longer the reusable one, and such leftovers destroy
 // themselves once hidden (see the OnHide handler in create).
 func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
-	m.mu.Lock()
-	b, ok := m.byID[id]
-	if !ok || !b.pinned {
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		b, ok := m.byID[id]
+		if !ok || !b.pinned {
+			m.mu.Unlock()
+			return
+		}
+		b.pinned = false
+		if i := indexOfBubble(m.pinned, b); i >= 0 {
+			m.pinned = append(m.pinned[:i], m.pinned[i+1:]...)
+		}
+		if b.trigger == "input" {
+			m.input = b
+		} else {
+			m.current = b
+		}
+		if cfg.Bubble.AutoHide && b.offBlur == nil {
+			b.offBlur = b.win.OnBlur(b.win.Hide)
+		}
 		m.mu.Unlock()
-		return
-	}
-	b.pinned = false
-	if i := indexOfBubble(m.pinned, b); i >= 0 {
-		m.pinned = append(m.pinned[:i], m.pinned[i+1:]...)
-	}
-	m.current = b
-	if cfg.Bubble.AutoHide && b.offBlur == nil {
-		b.offBlur = b.win.OnBlur(b.win.Hide)
-	}
-	m.mu.Unlock()
-	m.refreshOutsideClick(b)
+		m.refreshOutsideClick(b)
+	})
 }
 
 // Close hides an unpinned bubble and closes a pinned one for good.
-func (m *bubbleManager) Close(id int64) {
-	m.mu.Lock()
-	b, ok := m.byID[id]
-	m.mu.Unlock()
-	if ok {
-		b.win.Close()
-	}
+func (m *bubbleManager) Close(id int64, sessionID string) {
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		b, ok := m.byID[id]
+		ok = ok && b.sessionID == sessionID
+		if ok {
+			b.stopWork()
+			b.canShow = func() bool { return false }
+		}
+		m.mu.Unlock()
+		if ok {
+			b.win.Close()
+		}
+	})
 }
 
 // setAutoHide also updates visible bubbles displaced by Unpin.
@@ -204,10 +291,7 @@ func (m *bubbleManager) windows() []*mygo.Window {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []*mygo.Window
-	if m.current != nil {
-		out = append(out, m.current.win)
-	}
-	for _, b := range m.pinned {
+	for _, b := range m.byID {
 		out = append(out, b.win)
 	}
 	return out
@@ -215,12 +299,13 @@ func (m *bubbleManager) windows() []*mygo.Window {
 
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
-		ID:         b.id,
-		ReqID:      b.reqID,
+		ID:              b.id,
+		ReqID:           b.reqID,
+		ServiceRequests: cloneRequests(b.serviceRequests), Generation: b.generation, SessionID: b.sessionID, Revision: b.revision, Phase: b.phase, Message: b.message, Meta: b.meta, Results: b.resultList(),
 		Trigger:    b.trigger,
 		Text:       b.text,
-		SourceLang: "auto",
-		TargetLang: cfg.TargetLanguage,
+		SourceLang: b.sourceLang,
+		TargetLang: b.targetLang,
 		Pinned:     b.pinned,
 		Settings:   cfg,
 	}
@@ -229,6 +314,12 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 // showWin displays the bubble now, or as soon as its page is ready.
 func (m *bubbleManager) showWin(b *bubble) {
 	show := func() {
+		m.mu.Lock()
+		valid := b.canShow
+		m.mu.Unlock()
+		if valid != nil && !valid() {
+			return
+		}
 		b.win.Show()
 		m.refreshOutsideClick(b)
 	}
@@ -252,7 +343,7 @@ func (m *bubbleManager) refreshOutsideClick(b *bubble) {
 		b.stopOutsideClick()
 		m.mu.Lock()
 		needsWatch := b.offBlur != nil
-		reqID := b.reqID
+		sessionID := b.sessionID
 		m.mu.Unlock()
 		if !needsWatch || !b.win.IsVisible() || b.win.IsFocused() {
 			return
@@ -261,7 +352,7 @@ func (m *bubbleManager) refreshOutsideClick(b *bubble) {
 		stop, err := selection.WatchOutsideClick(b.win.NativeHandle(), func() {
 			mygo.RunOnMain(func() {
 				m.mu.Lock()
-				dismiss := active && b.reqID == reqID && b.offBlur != nil
+				dismiss := active && b.sessionID == sessionID && b.offBlur != nil
 				m.mu.Unlock()
 				if dismiss {
 					b.win.Hide()
@@ -332,7 +423,15 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		quitting := m.isQuitting != nil && m.isQuitting()
 		m.mu.Lock()
 		pinned := b.pinned
+		b.stopWork()
+		b.reqID = ""
+		b.serviceRequests = nil
+		b.revision++
+		b.fullRevision, b.fullReqID = b.revision, ""
+		stopped := RunStoppedMsg{SessionID: b.sessionID, Revision: b.revision}
+		b.canShow = func() bool { return false }
 		m.mu.Unlock()
+		RunStopped.Emit(b.win, stopped)
 		if quitting || pinned {
 			return // close it for real
 		}
@@ -343,7 +442,11 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		b.stopOutsideClick()
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		b.stopWork()
 		delete(m.byID, b.id)
+		if m.input == b {
+			m.input = nil
+		}
 		if m.current == b {
 			m.current = nil
 		}
@@ -357,7 +460,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	b.win.OnHide(func() {
 		b.stopOutsideClick()
 		m.mu.Lock()
-		stale := !b.pinned && m.current != b
+		stale := !b.pinned && m.current != b && m.input != b
 		m.mu.Unlock()
 		if stale {
 			b.win.Destroy()
@@ -406,4 +509,27 @@ func indexOfBubble(bs []*bubble, b *bubble) int {
 		}
 	}
 	return -1
+}
+
+func (m *bubbleManager) hideTransient() {
+	m.mu.Lock()
+	input, current := m.input, m.current
+	m.mu.Unlock()
+	if input != nil {
+		m.hideTransientBubble(input)
+	}
+	if current != nil {
+		m.hideTransientBubble(current)
+	}
+}
+
+func (m *bubbleManager) hideTransientBubble(b *bubble) {
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		pinned := b.pinned
+		m.mu.Unlock()
+		if !pinned {
+			b.win.Hide()
+		}
+	})
 }

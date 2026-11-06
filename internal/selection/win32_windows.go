@@ -3,6 +3,8 @@
 package selection
 
 import (
+	"context"
+	"log"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +25,7 @@ var (
 	modShcore   = windows.NewLazySystemDLL("shcore.dll")
 
 	procSendInput                  = modUser32.NewProc("SendInput")
+	procGetLastInputInfo           = modUser32.NewProc("GetLastInputInfo")
 	procGetAsyncKeyState           = modUser32.NewProc("GetAsyncKeyState")
 	procGetForegroundWindow        = modUser32.NewProc("GetForegroundWindow")
 	procGetWindowThreadProcessId   = modUser32.NewProc("GetWindowThreadProcessId")
@@ -87,11 +90,12 @@ type keyboardInput struct {
 
 // sendKeys sends a batch of key events in one SendInput call, which
 // keeps them from interleaving with anything else.
-func sendKeys(events ...keyboardInput) {
+func sendKeys(events ...keyboardInput) bool {
 	if len(events) == 0 {
-		return
+		return true
 	}
-	procSendInput.Call(uintptr(len(events)), uintptr(unsafe.Pointer(&events[0])), unsafe.Sizeof(events[0]))
+	n, _, _ := procSendInput.Call(uintptr(len(events)), uintptr(unsafe.Pointer(&events[0])), unsafe.Sizeof(events[0]))
+	return n == uintptr(len(events))
 }
 
 func keyEvent(vk uint16, up bool) keyboardInput {
@@ -106,7 +110,8 @@ func keyEvent(vk uint16, up bool) keyboardInput {
 // something else: Ctrl+Alt+C dies in the window menu, Ctrl+Shift+C is
 // another shortcut in half the apps, and a Win chord never copies. Ctrl
 // itself is not among them — a copy sent while Ctrl is held is exactly
-// the copy — so a Ctrl-carrying hotkey need not wait for its release.
+// the copy. The transaction still waits for Ctrl to avoid mistaking its
+// later release for unrelated user input.
 var copyBlockers = map[uint16]bool{
 	vkMenu:  true, // Alt
 	vkShift: true,
@@ -115,25 +120,30 @@ var copyBlockers = map[uint16]bool{
 }
 
 // waitCopyModifiers waits for the modifiers that would corrupt the copy
-// to come up on their own, and reports whether any is still held when
-// the wait runs out. Synthesizing their keyups looks equivalent but is
+// to come up on their own. Ctrl is also awaited so its eventual release
+// cannot be mistaken for new input while restoring the clipboard.
+// Synthesizing their keyups looks equivalent but is
 // not: an Alt keyup with no matching keydown puts the focused window
 // into menu mode, and the Ctrl+C that follows is eaten by the menu —
 // the copy then never lands, which made the clipboard path fail for
 // every hotkey that carries Alt. Real key releases leave no such state
 // behind, so the grab waits for them, and when they do not come it
 // skips the copy rather than send a corrupted chord.
-func waitCopyModifiers(timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if !anyKeyDown(copyBlockers) {
-			return false
+func waitCopyModifiers(ctx context.Context, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for anyKeyDown(copyBlockers) || anyKeyDown(map[uint16]bool{vkControl: true}) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return ErrShortcutHeld
+		case <-tick.C:
 		}
-		if !time.Now().Before(deadline) {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	return ctx.Err()
 }
 
 // anyKeyDown reports whether any of the given virtual keys is held.
@@ -172,21 +182,27 @@ func copyChordFor(class string) (copyChord, bool) {
 }
 
 // sendCopy sends one copy chord.
-func sendCopy(chord copyChord) {
+func sendCopy(chord copyChord) bool {
+	events := []keyboardInput{}
+	// Do not release a modifier the user is physically holding.
 	for _, mod := range chord.modifiers {
-		press(mod)
-		time.Sleep(8 * time.Millisecond)
+		if !anyKeyDown(map[uint16]bool{mod: true}) {
+			events = append(events, keyEvent(mod, false))
+		}
 	}
-	press(chord.key)
-	time.Sleep(8 * time.Millisecond)
-	sendKeys(keyEvent(chord.key, true))
-	for i := len(chord.modifiers) - 1; i >= 0; i-- {
-		time.Sleep(8 * time.Millisecond)
-		sendKeys(keyEvent(chord.modifiers[i], true))
+	events = append(events, keyEvent(chord.key, false), keyEvent(chord.key, true))
+	for i := len(events) - 3; i >= 0; i-- {
+		events = append(events, keyEvent(events[i].WVk, true))
 	}
+	return sendKeys(events...)
 }
 
-func press(vk uint16) { sendKeys(keyEvent(vk, false)) }
+// New user input ends our right to restore a previous clipboard snapshot.
+func lastInputStamp() (uint32, bool) {
+	info := struct{ Size, Time uint32 }{Size: 8}
+	r, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&info)))
+	return info.Time, r != 0
+}
 
 // foregroundWindow identifies the foreground window: its handle, the
 // process id that owns it, and its window class, read as one snapshot.
@@ -245,9 +261,8 @@ func openClipboard() bool {
 func closeClipboard() { procCloseClipboard.Call() }
 
 // gdiClipboardFormats hold GDI handles rather than global memory, which
-// a save cannot copy; a restore without them is still worth more than
-// none, and the apps that rely on them (Paint, Word) re-offer the data
-// themselves while open.
+// a save cannot copy. Refuse simulated copy when any are present rather
+// than silently dropping the user's original content.
 var gdiClipboardFormats = map[uint16]bool{
 	2:    true, // CF_BITMAP
 	3:    true, // CF_METAFILEPICT
@@ -268,17 +283,20 @@ type clipboardFormat struct {
 
 // clipboardSnapshot is the clipboard as a grab found it.
 type clipboardSnapshot struct {
-	formats []clipboardFormat
+	sequence uint32
+	formats  []clipboardFormat
 }
 
 // saveClipboard copies every global-memory format off the clipboard,
-// under one open. Returns nil when the clipboard would not open.
+// under one open. Returns nil if any format cannot be preserved or the
+// snapshot exceeds the memory budget.
 func saveClipboard() *clipboardSnapshot {
 	if !openClipboard() {
 		return nil
 	}
 	defer closeClipboard()
-	var snap clipboardSnapshot
+	snap := clipboardSnapshot{sequence: clipboardSeq()}
+	var total uintptr
 	for f := uintptr(0); ; {
 		f, _, _ = procEnumClipboardFormats.Call(f)
 		if f == 0 {
@@ -286,19 +304,20 @@ func saveClipboard() *clipboardSnapshot {
 		}
 		id := uint16(f)
 		if gdiClipboardFormats[id] {
-			continue
+			return nil
 		}
 		h, _, _ := procGetClipboardData.Call(f)
 		if h == 0 {
-			continue
+			return nil
 		}
 		size, _, _ := procGlobalSize.Call(h)
-		if size == 0 {
-			continue
+		total += size
+		if size == 0 || total > 32<<20 {
+			return nil
 		}
 		p, _, _ := procGlobalLock.Call(h)
 		if p == 0 {
-			continue
+			return nil
 		}
 		data := make([]byte, size)
 		copy(data, unsafe.Slice((*byte)(native(p)), size))
@@ -308,70 +327,76 @@ func saveClipboard() *clipboardSnapshot {
 	return &snap
 }
 
-// restoreClipboard puts a snapshot back, with the formats that keep the
-// restore out of the Win+V history and the cloud clipboard — the
-// simulated copy itself comes from the target app and cannot carry them,
-// but the restore is ours.
-func restoreClipboard(snap *clipboardSnapshot) {
-	if snap == nil || !openClipboard() {
+// restoreClipboardIfUnchanged allocates every format before touching the
+// clipboard. All ownership checks happen again under the clipboard lock.
+func restoreClipboardIfUnchanged(snap *clipboardSnapshot, sequence, pid, input uint32) {
+	if snap == nil {
 		return
 	}
-	defer closeClipboard()
-	procEmptyClipboard.Call()
-	for _, f := range snap.formats {
+	formats := append([]clipboardFormat(nil), snap.formats...)
+	markers := []struct {
+		name string
+		data []byte
+	}{
+		{"CanIncludeInClipboardHistory", []byte{0, 0, 0, 0}},
+		{"CanUploadToCloudClipboard", []byte{0, 0, 0, 0}},
+		{"ExcludeClipboardContentFromMonitorProcessing", []byte{1}},
+	}
+	var protected []clipboardFormat
+	for _, marker := range markers {
+		name, _ := syscall.UTF16PtrFromString(marker.name)
+		id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
+		if id == 0 {
+			return
+		}
+		protected = append(protected, clipboardFormat{id: uint16(id), data: marker.data})
+		filtered := formats[:0]
+		for _, f := range formats {
+			if f.id != uint16(id) {
+				filtered = append(filtered, f)
+			}
+		}
+		formats = filtered
+	}
+	formats = append(protected, formats...)
+	handles := make([]uintptr, len(formats))
+	defer func() {
+		for _, h := range handles {
+			if h != 0 {
+				procGlobalFree.Call(h)
+			}
+		}
+	}()
+	for i, f := range formats {
 		h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(f.data)))
 		if h == 0 {
-			continue
+			return
 		}
+		handles[i] = h
 		p, _, _ := procGlobalLock.Call(h)
 		if p == 0 {
-			procGlobalFree.Call(h)
-			continue
+			return
 		}
 		copy(unsafe.Slice((*byte)(native(p)), len(f.data)), f.data)
 		procGlobalUnlock.Call(h)
-		// The clipboard takes ownership of the memory on success.
-		if r, _, _ := procSetClipboardData.Call(uintptr(f.id), h); r == 0 {
-			procGlobalFree.Call(h)
+	}
+	if !openClipboard() {
+		return
+	}
+	defer closeClipboard()
+	stamp, ok := lastInputStamp()
+	if !ok || stamp != input || clipboardSeq() != sequence || clipboardOwnerPID() != pid {
+		return
+	}
+	if ok, _, _ := procEmptyClipboard.Call(); ok == 0 {
+		return
+	}
+	for i, f := range formats {
+		if ok, _, err := procSetClipboardData.Call(uintptr(f.id), handles[i]); ok != 0 {
+			handles[i] = 0
+		} else {
+			log.Printf("restore clipboard format %d: %v", f.id, err)
 		}
-	}
-	setClipboardDWord("CanIncludeInClipboardHistory", 0)
-	setClipboardDWord("CanUploadToCloudClipboard", 0)
-	setClipboardBlob("ExcludeClipboardContentFromMonitorProcessing")
-}
-
-// setClipboardDWord writes a four-byte format the clipboard system
-// reads for its policies.
-func setClipboardDWord(name string, value uint32) {
-	setClipboardBlobRaw(name, (*[4]byte)(unsafe.Pointer(&value))[:])
-}
-
-func setClipboardBlob(name string) {
-	setClipboardBlobRaw(name, []byte{1})
-}
-
-func setClipboardBlobRaw(name string, value []byte) {
-	u16, err := syscall.UTF16PtrFromString(name)
-	if err != nil {
-		return
-	}
-	id, _, _ := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(u16)))
-	if id == 0 {
-		return
-	}
-	h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(value)))
-	if h == 0 {
-		return
-	}
-	p, _, _ := procGlobalLock.Call(h)
-	if p == 0 {
-		procGlobalFree.Call(h)
-		return
-	}
-	copy(unsafe.Slice((*byte)(native(p)), len(value)), value)
-	procGlobalUnlock.Call(h)
-	if r, _, _ := procSetClipboardData.Call(id, h); r == 0 {
-		procGlobalFree.Call(h)
 	}
 }
 

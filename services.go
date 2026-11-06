@@ -145,7 +145,9 @@ func (s TranslateSvc) Run(ctx context.Context, req RunReq) error {
 
 // Cancel stops a run; the next one cancels the last on its own, so this
 // is for the pages' explicit stop.
-func (s TranslateSvc) Cancel(reqID string) { s.app.cancelRun(reqID) }
+func (s TranslateSvc) Cancel(ctx context.Context, sessionID string, revision int64) {
+	s.app.bubbles.Cancel(mygo.CallerWindow(ctx), sessionID, revision)
+}
 
 // FormatOption is one naming style of a translation, ready to copy.
 type FormatOption struct {
@@ -189,7 +191,7 @@ func (s BubbleSvc) Pin(id int64) { s.app.bubbles.Pin(id) }
 func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
 
 // Close hides an unpinned bubble and closes a pinned one.
-func (s BubbleSvc) Close(id int64) { s.app.bubbles.Close(id) }
+func (s BubbleSvc) Close(id int64, sessionID string) { s.app.bubbles.Close(id, sessionID) }
 
 // OpenTranslationSettings opens the services tab from the bubble.
 func (s BubbleSvc) OpenTranslationSettings() {
@@ -217,4 +219,9 @@ type SnipSvc struct{ app *application }
 
 // Done closes a shot: rect is the dragged rectangle in client
 // coordinates, nil for a cancel.
-func (s SnipSvc) Done(rect *snipRect) { s.app.snipDone(rect) }
+func (s SnipSvc) Done(ctx context.Context, sessionID int64, rect *snipRect) {
+	s.app.snipDone(mygo.CallerWindow(ctx), sessionID, rect)
+}
+
+// Start opens a new screenshot session from a recovery action.
+func (s SnipSvc) Start() { mygo.RunOnMain(func() { s.app.startEntry("ocr") }) }

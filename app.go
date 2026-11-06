@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"sotto/internal/keys"
 	"sotto/internal/langdetect"
 	"sotto/internal/naming"
-	"sotto/internal/ocr"
 	"sotto/internal/selection"
 	"sotto/internal/translate"
 )
@@ -55,7 +55,7 @@ type application struct {
 	mu          sync.Mutex
 	cfg         config.Settings
 	hotkeys     map[string]string // action → the accelerator in force
-	runs        map[string]context.CancelFunc
+	entry       entryGate
 	settingsWin *mygo.Window
 	quitting    bool
 
@@ -66,7 +66,7 @@ type application struct {
 }
 
 func newApplication() *application {
-	return &application{keys: keys.Store{}, runs: map[string]context.CancelFunc{}, snip: &snipManager{}}
+	return &application{keys: keys.Store{}, snip: &snipManager{}}
 }
 
 // isQuitting reports whether a quit is under way. The bubbles' OnClose
@@ -107,8 +107,10 @@ func (a *application) ready() {
 		a.mu.Lock()
 		a.quitting = true
 		a.mu.Unlock()
+		a.entry.cancel()
 	})
-	a.bubbles = newBubbleManager(a.cancelRun, a.isQuitting)
+	a.bubbles = newBubbleManager(a.isQuitting)
+	a.snip.isQuitting = a.isQuitting
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
 	}
@@ -190,75 +192,66 @@ func (a *application) broadcastSettings(s config.Settings) {
 // grab — and the window marshalling that follows it are safe: ShowAt
 // serializes its callers, and the main thread never calls in.
 func (a *application) onHotkey(action string) func() {
-	return func() {
-		log.Printf("hotkey: %s", action)
-		switch action {
-		case "panel":
-			go a.showBubble("input", "")
-		case "selection":
-			go a.grabSelection()
-		case "ocr":
-			a.snip.Show()
-		}
+	return func() { a.startEntry(action) }
+}
+
+// startEntry runs on the UI thread: capture the source before dispatching.
+func (a *application) startEntry(action string) {
+	task := a.entry.begin()
+	switch action {
+	case "panel":
+		a.snip.Hide()
+		go a.bubbles.ShowTask(a.settings(), "input", "", nil, "", "", task.valid, nil)
+	case "selection":
+		grab := selection.Prepare()
+		a.snip.Hide()
+		go a.grabSelection(task, grab)
+	case "ocr":
+		a.bubbles.hideTransient()
+		a.snip.Show(task)
 	}
 }
 
-// showBubble brings up a bubble for a query.
-func (a *application) showBubble(trigger, text string) {
-	a.bubbles.Show(a.settings(), trigger, text)
-}
-
-// grabSelection translates the text selected in the foreground app; the
-// hotkey's path. With nothing selected it falls back to the input panel,
-// which still takes the hotkey somewhere useful.
-func (a *application) grabSelection() {
-	sel, ok := a.grabSelectionOnce()
-	if !ok {
-		return // our own window is in front: nothing to grab
-	}
-	if sel == nil {
-		a.showBubble("input", "")
+func (a *application) grabSelection(task *entryTask, grab func(context.Context) (selection.Selection, error)) {
+	ctx, cancel := context.WithTimeout(task.ctx, 5*time.Second)
+	defer cancel()
+	sel, err := grab(ctx)
+	if !task.valid() || errors.Is(err, selection.ErrSelfWindow) || errors.Is(err, selection.ErrSourceChanged) {
 		return
 	}
-	a.showSelectionBubble(*sel)
-}
-
-// grabSelectionOnce runs one grab and cleans the text the way OCR text
-// is cleaned — a selection can carry zero-width or control characters
-// from the source app. A nil selection with ok allows the input panel
-// fallback. !ok means our own window is in front.
-func (a *application) grabSelectionOnce() (*selection.Selection, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	sel, err := selection.Grab(ctx)
+	message := ""
 	switch {
-	case errors.Is(err, selection.ErrSelfWindow):
-		return nil, false
+	case errors.Is(err, selection.ErrClipboardUnsafe):
+		message = "当前剪贴板内容无法安全保留，请使用截图翻译或直接输入。"
+	case errors.Is(err, selection.ErrShortcutHeld):
+		message = "请松开快捷键后重试，或直接输入要翻译的文字。"
 	case errors.Is(err, selection.ErrNoSelection):
-		return nil, true
+		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
+	case errors.Is(err, context.DeadlineExceeded):
+		message = "读取选中文字超时，请重试或使用截图翻译。"
 	case err != nil:
+		message = "当前应用暂时无法取词，请使用截图翻译或直接输入。"
+	}
+	if err != nil {
 		log.Printf("selection: %v", err)
-		return nil, true
 	}
-	if strings.TrimSpace(ocr.CleanText(sel.Text)) == "" {
-		return nil, true
+	// Selection text is not OCR: preserve tabs, paragraph spacing and joiners.
+	sel.Text = strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(sel.Text, "\ufeff"), "\r\n", "\n"))
+	if sel.Text == "" && message == "" {
+		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
 	}
-	return &sel, true
-}
-
-// showSelectionBubble opens the bubble for a grabbed selection — at the
-// selection's corner, when the grab could see it — and runs its translation.
-func (a *application) showSelectionBubble(sel selection.Selection) {
 	var anchor *Anchor
 	if sel.HasRect {
 		anchor = &Anchor{X: sel.Rect.X + sel.Rect.W, Y: sel.Rect.Y + sel.Rect.H}
 	}
-	shown := a.bubbles.ShowAt(a.settings(), "selection", sel.Text, anchor)
-	a.runTranslation(shown.Win, RunReq{
-		ReqID:  shown.ReqID,
-		Source: "selection",
-		Text:   sel.Text,
-	})
+	phase := ""
+	if message != "" {
+		phase = "error"
+	}
+	shown := a.bubbles.ShowTask(a.settings(), "selection", sel.Text, anchor, phase, message, task.valid, nil)
+	if shown.Win != nil && message == "" && task.valid() {
+		a.runTranslation(shown.Win, RunReq{ReqID: shown.ReqID, SessionID: shown.ReqID, Revision: 0, Source: "selection", Text: sel.Text})
+	}
 }
 
 // applyHotkeys switches to the configured shortcuts, falling back when
@@ -389,7 +382,7 @@ func (a *application) setUpTray() {
 		return
 	}
 	a.tray = tray
-	tray.OnClick(func() { go a.showBubble("input", "") })
+	tray.OnClick(func() { a.startEntry("panel") })
 }
 
 // refreshTrayMenu publishes the autostart and hotkey states actually in force.
@@ -414,10 +407,10 @@ func (a *application) trayMenu() *mygo.Menu {
 		{Label: label, Disabled: true},
 		mygo.Separator(),
 		{Label: "翻译面板", Accelerator: panelKey, Click: func(*mygo.MenuItem, *mygo.Window) {
-			go a.showBubble("input", "")
+			a.startEntry("panel")
 		}},
 		{Label: "截图翻译", Accelerator: ocrKey, Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.snip.Show()
+			a.startEntry("ocr")
 		}},
 		mygo.Separator(),
 		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) }},
@@ -494,6 +487,9 @@ func (a *application) showSettings(services bool) {
 // RunReq is what a page sends to start a translation.
 type RunReq struct {
 	ReqID      string `json:"reqID"`
+	SessionID  string `json:"sessionID"`
+	Revision   int64  `json:"revision"`
+	Service    string `json:"service"`
 	Source     string `json:"source"` // "input" | "selection" | "ocr"
 	Text       string `json:"text"`
 	SourceLang string `json:"sourceLang"` // "" or "auto" detects
@@ -525,46 +521,43 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 	if source == "" {
 		source = "auto"
 	}
-	target := req.TargetLang
-	if target == "" {
-		target = cfg.TargetLanguage
+	target := resolveTarget(detected, req.TargetLang, cfg.TargetLanguage)
+	// Resolve the actual request before publishing metadata or starting I/O.
+	req.SourceLang, req.TargetLang = source, target
+	ctx, accepted := a.bubbles.startRun(win, req)
+	if !accepted {
+		return
 	}
-	if target == "auto" || sameLanguage(detected, target) {
-		target = defaultTarget(detected)
+	credentials := a.keys.Snapshot()
+	services := translate.Available(cfg, credentials)
+	if req.Service != "" {
+		cfg.Services.Enabled = nil
+		if slices.Contains(services, req.Service) {
+			cfg.Services.Enabled = []string{req.Service}
+		}
 	}
-	// The services that will actually answer, so the page does not keep
-	// skeleton cards for the ones without credentials.
-	RunMeta.Emit(win, RunMetaMsg{
-		ReqID:      req.ReqID,
-		SourceLang: source,
-		TargetLang: target,
-		Services:   translate.Available(cfg, a.keys),
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.mu.Lock()
-	a.runs[req.ReqID] = cancel
-	a.mu.Unlock()
+	meta := RunMetaMsg{ReqID: req.ReqID, SourceLang: source, TargetLang: target, Services: services}
+	if a.bubbles.recordMeta(win, meta, req.Service) {
+		RunMeta.Emit(win, meta)
+	}
+	if req.Service != "" && !slices.Contains(services, req.Service) {
+		msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Err: "该服务当前不可用，请检查设置"}
+		if a.bubbles.recordResult(win, msg) {
+			TranslationUpdate.Emit(win, msg)
+		}
+		a.bubbles.finishRun(win, req.ReqID)
+		return
+	}
 	go func() {
-		defer func() {
-			cancel()
-			a.mu.Lock()
-			delete(a.runs, req.ReqID)
-			a.mu.Unlock()
-		}()
-		translate.Run(ctx, cfg, a.keys, translate.Request{
-			Text:       text,
-			SourceLang: source,
-			TargetLang: target,
-			SingleWord: singleWord,
-		}, func(res translate.Result) {
-			TranslationUpdate.Emit(win, TranslationUpdateMsg{
-				ReqID:        req.ReqID,
-				Service:      res.Service,
-				Text:         res.Text,
-				DetectedLang: res.DetectedLang,
-				Err:          res.Err,
-			})
+		defer a.bubbles.finishRun(win, req.ReqID)
+		translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target, SingleWord: singleWord}, func(res translate.Result) {
+			if ctx.Err() != nil {
+				return
+			}
+			msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err}
+			if a.bubbles.recordResult(win, msg) {
+				TranslationUpdate.Emit(win, msg)
+			}
 		})
 	}()
 }
@@ -583,17 +576,6 @@ func isSingleWord(text string) bool {
 	return langdetect.Detect(text) == "latin"
 }
 
-// cancelRun stops a running translation, when its bubble is reused.
-func (a *application) cancelRun(reqID string) {
-	a.mu.Lock()
-	cancel := a.runs[reqID]
-	delete(a.runs, reqID)
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-}
-
 // defaultTarget flips between Chinese and English: anything but Chinese
 // translates into Chinese, Chinese into English.
 func defaultTarget(detected string) string {
@@ -608,8 +590,6 @@ func defaultTarget(detected string) string {
 func sameLanguage(detected, target string) bool {
 	switch {
 	case detected == "zh" && target == "zh-HANS":
-		return true
-	case detected == "latin" && target == "en":
 		return true
 	default:
 		return detected == target
@@ -629,4 +609,19 @@ func newRequestID() string {
 		return fmt.Sprintf("t%d", b[0]) // crypto/rand failing is unheard of
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// Explicit targets are never rewritten by script-level detection.
+func resolveTarget(detected, requested, configured string) string {
+	if requested != "" && requested != "auto" {
+		return requested
+	}
+	target := configured
+	if requested == "auto" {
+		target = "auto"
+	}
+	if target == "auto" || sameLanguage(detected, target) {
+		return defaultTarget(detected)
+	}
+	return target
 }

@@ -5,6 +5,7 @@ package capture
 import (
 	"fmt"
 	"image"
+	"sync"
 
 	"syscall"
 	"unsafe"
@@ -92,7 +93,11 @@ var (
 	})
 )
 
+var displayMu sync.Mutex
+
 func displays() []display {
+	displayMu.Lock()
+	defer displayMu.Unlock()
 	var out []display
 	displaySink = func(mon uintptr) {
 		var info monitorInfoEx
@@ -205,4 +210,30 @@ func bitBlt(px, py, pw, ph int) (image.Image, error) {
 // the same trick mygo's own win32 layer uses to keep go vet content.
 func native(addr uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
+}
+
+// The overlay has one DPI per display. ClientToScreen preserves the physical
+// monitor origin, including negative coordinates, without scaling that origin.
+func grabWindow(hwnd uintptr, r Rect) (image.Image, error) {
+	if hwnd == 0 || r.X < 0 || r.Y < 0 || r.W <= 0 || r.H <= 0 {
+		return nil, fmt.Errorf("capture: invalid selection")
+	}
+	dpi, _, _ := modUser32.NewProc("GetDpiForWindow").Call(hwnd)
+	if dpi == 0 {
+		return nil, fmt.Errorf("capture: window DPI unavailable")
+	}
+	var origin struct{ X, Y int32 }
+	if ok, _, _ := modUser32.NewProc("ClientToScreen").Call(hwnd, uintptr(unsafe.Pointer(&origin))); ok == 0 {
+		return nil, fmt.Errorf("capture: window origin unavailable")
+	}
+	var bounds rect
+	if ok, _, _ := modUser32.NewProc("GetClientRect").Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok == 0 {
+		return nil, fmt.Errorf("capture: window bounds unavailable")
+	}
+	x, y := toPx(r.X, int(dpi)), toPx(r.Y, int(dpi))
+	right, bottom := min(toPx(r.X+r.W, int(dpi)), bounds.Right), min(toPx(r.Y+r.H, int(dpi)), bounds.Bottom)
+	if right <= x || bottom <= y {
+		return nil, fmt.Errorf("capture: selection outside display")
+	}
+	return bitBlt(int(origin.X+x), int(origin.Y+y), int(right-x), int(bottom-y))
 }

@@ -19,3 +19,5 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
 	return nil, ErrUnsupported
 }
+
+func Prepare() func(context.Context) (Selection, error) { return grab }

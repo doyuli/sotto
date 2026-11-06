@@ -16,6 +16,14 @@ export interface BubbleSettings {
 export interface BubbleState {
   id: number;
   reqID: string;
+  serviceRequests: Record<string, string>;
+  generation: number;
+  sessionID: string;
+  revision: number;
+  phase: string;
+  message: string;
+  meta: RunMetaMsg | null;
+  results: TranslationUpdateMsg[];
   trigger: string;
   text: string;
   sourceLang: string;
@@ -73,6 +81,9 @@ export interface RunMetaMsg {
 /** RunReq is what a page sends to start a translation. */
 export interface RunReq {
   reqID: string;
+  sessionID: string;
+  revision: number;
+  service: string;
   /** "input" | "selection" | "ocr" */
   source: string;
   text: string;
@@ -80,6 +91,11 @@ export interface RunReq {
   sourceLang: string;
   /** "" uses the default */
   targetLang: string;
+}
+
+export interface RunStoppedMsg {
+  sessionID: string;
+  revision: number;
 }
 
 export interface ServiceSettings {
@@ -98,10 +114,6 @@ export interface Settings {
   openAtLogin: boolean;
 }
 
-/**
- * snipRect is what the page reports: the dragged rectangle in client
- * coordinates, DIPs from the overlay's top-left corner.
- */
 export interface SnipRect {
   x: number;
   y: number;
@@ -164,8 +176,8 @@ export const TranslateSvc = {
    * Cancel stops a run; the next one cancels the last on its own, so this
    * is for the pages' explicit stop.
    */
-  cancel(reqID: string): Promise<void> {
-    return call("TranslateSvc.Cancel", reqID);
+  cancel(sessionID: string, revision: number): Promise<void> {
+    return call("TranslateSvc.Cancel", sessionID, revision);
   },
   /**
    * Formats turns an English translation into the configured naming
@@ -186,8 +198,8 @@ export const TranslateSvc = {
 /** BubbleSvc serves the bubble pages. */
 export const BubbleSvc = {
   /** Close hides an unpinned bubble and closes a pinned one. */
-  close(id: number): Promise<void> {
-    return call("BubbleSvc.Close", id);
+  close(id: number, sessionID: string): Promise<void> {
+    return call("BubbleSvc.Close", id, sessionID);
   },
   /** Copy puts text on the clipboard. */
   copy(text: string): Promise<void> {
@@ -232,8 +244,12 @@ export const SnipSvc = {
    * Done closes a shot: rect is the dragged rectangle in client
    * coordinates, nil for a cancel.
    */
-  done(rect: SnipRect | null): Promise<void> {
-    return call("SnipSvc.Done", rect);
+  done(sessionID: number, rect: SnipRect | null): Promise<void> {
+    return call("SnipSvc.Done", sessionID, rect);
+  },
+  /** Start opens a new screenshot session from a recovery action. */
+  start(): Promise<void> {
+    return call("SnipSvc.Start");
   },
 } as const;
 
@@ -241,6 +257,8 @@ export const SnipSvc = {
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
+  runStopped: event<RunStoppedMsg>("run-stopped"),
+  focusComposer: event<boolean>("focus-composer"),
   /** BubbleReset re-initializes a reused bubble's page. */
   bubbleReset: event<BubbleState>("bubble-reset"),
   /** TranslationUpdate reports one service result as it arrives. */

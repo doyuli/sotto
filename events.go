@@ -10,14 +10,22 @@ import (
 // its page mounts, and what BubbleReset carries when an unpinned bubble
 // is reused for a new query.
 type BubbleState struct {
-	ID         int64           `json:"id"`
-	ReqID      string          `json:"reqID"`
-	Trigger    string          `json:"trigger"`
-	Text       string          `json:"text"`
-	SourceLang string          `json:"sourceLang"`
-	TargetLang string          `json:"targetLang"`
-	Pinned     bool            `json:"pinned"`
-	Settings   config.Settings `json:"settings"`
+	ID              int64                  `json:"id"`
+	ReqID           string                 `json:"reqID"`
+	ServiceRequests map[string]string      `json:"serviceRequests"`
+	Generation      int64                  `json:"generation"`
+	SessionID       string                 `json:"sessionID"`
+	Revision        int64                  `json:"revision"`
+	Phase           string                 `json:"phase"`
+	Message         string                 `json:"message"`
+	Meta            *RunMetaMsg            `json:"meta"`
+	Results         []TranslationUpdateMsg `json:"results"`
+	Trigger         string                 `json:"trigger"`
+	Text            string                 `json:"text"`
+	SourceLang      string                 `json:"sourceLang"`
+	TargetLang      string                 `json:"targetLang"`
+	Pinned          bool                   `json:"pinned"`
+	Settings        config.Settings        `json:"settings"`
 }
 
 // TranslationUpdateMsg reports one service's result of one request. Err
@@ -40,7 +48,14 @@ type RunMetaMsg struct {
 	Services   []string `json:"services"`
 }
 
+type RunStoppedMsg struct {
+	SessionID string `json:"sessionID"`
+	Revision  int64  `json:"revision"`
+}
+
 var (
+	RunStopped    = mygo.NewEvent[RunStoppedMsg]("run-stopped")
+	FocusComposer = mygo.NewEvent[bool]("focus-composer")
 	// BubbleReset re-initializes a reused bubble's page.
 	BubbleReset = mygo.NewEvent[BubbleState]("bubble-reset")
 	// TranslationUpdate reports one service result as it arrives.

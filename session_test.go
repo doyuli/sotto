@@ -1,0 +1,191 @@
+package main
+
+import (
+	"context"
+	"testing"
+
+	"github.com/egoist/mygo"
+
+	"sotto/internal/config"
+)
+
+func TestEntryOwnership(t *testing.T) {
+	var g entryGate
+	old := g.begin()
+	next := g.begin()
+	if old.valid() || old.ctx.Err() == nil || !next.valid() {
+		t.Fatal("new entry must revoke old acquisition")
+	}
+	old.cancel()
+	if !next.valid() {
+		t.Fatal("old cancellation revoked the new entry")
+	}
+	next.cancel()
+	if next.valid() {
+		t.Fatal("canceled entry still owns the UI")
+	}
+}
+
+func TestRunOrderingAndIsolation(t *testing.T) {
+	m := newBubbleManager(nil)
+	w1, w2 := &mygo.Window{}, &mygo.Window{}
+	m.byID[1] = &bubble{win: w1, sessionID: "a", revision: -1}
+	m.byID[2] = &bubble{win: w2, sessionID: "pinned", revision: -1, pinned: true}
+	first, ok := m.startRun(w1, RunReq{SessionID: "a", ReqID: "first", Revision: 1})
+	if !ok {
+		t.Fatal("first run rejected")
+	}
+	pinned, _ := m.startRun(w2, RunReq{SessionID: "pinned", ReqID: "independent", Revision: 1})
+	latest, ok := m.startRun(w1, RunReq{SessionID: "a", ReqID: "latest", Revision: 3})
+	if !ok || first.Err() == nil || latest.Err() != nil || pinned.Err() != nil {
+		t.Fatal("replacement must cancel only this bubble's run")
+	}
+	if _, ok := m.startRun(w1, RunReq{SessionID: "a", ReqID: "late IPC", Revision: 2}); ok {
+		t.Fatal("accepted late run")
+	}
+	if m.recordResult(w1, TranslationUpdateMsg{ReqID: "first", Service: "google", Text: "stale"}) {
+		t.Fatal("accepted stale result")
+	}
+	if _, ok := m.startRun(w1, RunReq{SessionID: "old session", ReqID: "stale", Revision: 99}); ok {
+		t.Fatal("accepted prior session")
+	}
+	m.Cancel(w1, "a", 5)
+	if latest.Err() == nil {
+		t.Fatal("cancel did not stop work")
+	}
+	if _, ok := m.startRun(w1, RunReq{SessionID: "a", ReqID: "arrives after cancel", Revision: 4}); ok {
+		t.Fatal("cancel lost to late IPC")
+	}
+	if pinned.Err() != nil {
+		t.Fatal("cancel affected pinned bubble")
+	}
+}
+
+func TestRetryPreservesOtherResultsAndSnapshot(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "first", Revision: 0})
+	m.recordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google", "baidu"}}, "")
+	m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "google", Text: "hello"})
+	m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "baidu", Err: "offline"})
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "retry", Revision: 1, Service: "baidu"})
+	state, _ := m.State(config.Default(), 1)
+	if len(state.Results) != 1 || state.Results[0].Text != "hello" {
+		t.Fatalf("retry cleared successful result: %+v", state.Results)
+	}
+}
+
+func TestExplicitTargetWins(t *testing.T) {
+	cases := []struct{ script, requested, configured, want string }{
+		{"latin", "en", "zh-HANS", "en"},
+		{"zh", "zh-HANS", "en", "zh-HANS"},
+		{"latin", "", "en", "en"},
+		{"zh", "", "zh-HANS", "en"},
+		{"zh", "auto", "zh-HANS", "en"},
+		{"latin", "auto", "en", "zh-HANS"},
+	}
+	for _, c := range cases {
+		if got := resolveTarget(c.script, c.requested, c.configured); got != c.want {
+			t.Errorf("%+v: got %s", c, got)
+		}
+	}
+}
+
+func TestRetryKeepsPendingPeerAlive(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
+	original, _ := m.startRun(w, RunReq{SessionID: "s", ReqID: "original", Revision: 0})
+	m.recordMeta(w, RunMetaMsg{ReqID: "original", Services: []string{"google", "baidu"}}, "")
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "retry", Revision: 1, Service: "baidu"})
+	m.recordMeta(w, RunMetaMsg{ReqID: "retry", Services: []string{"google", "baidu"}}, "baidu")
+	if original.Err() != nil {
+		t.Fatal("retry canceled pending peer")
+	}
+	if !m.recordResult(w, TranslationUpdateMsg{ReqID: "original", Service: "google", Text: "peer result"}) {
+		t.Fatal("dropped peer's late result")
+	}
+	if m.recordResult(w, TranslationUpdateMsg{ReqID: "original", Service: "baidu", Text: "old attempt"}) {
+		t.Fatal("accepted superseded service attempt")
+	}
+	m.Cancel(w, "s", 2)
+	if original.Err() == nil {
+		t.Fatal("explicit cancel left original request running")
+	}
+}
+
+func TestIndependentRetriesSurviveInterleaving(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "metadata delayed", true: "IPC reversed"}[reverse], func(t *testing.T) {
+			m := newBubbleManager(nil)
+			w := &mygo.Window{}
+			m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
+			m.startRun(w, RunReq{SessionID: "s", ReqID: "full", Revision: 0})
+			m.recordMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
+			requests := []RunReq{
+				{SessionID: "s", ReqID: "a", Revision: 1, Service: "google"},
+				{SessionID: "s", ReqID: "b", Revision: 2, Service: "baidu"},
+			}
+			if reverse {
+				requests[0], requests[1] = requests[1], requests[0]
+			}
+			contexts := []context.Context{}
+			for _, req := range requests {
+				ctx, ok := m.startRun(w, req)
+				if !ok {
+					t.Fatalf("independent retry rejected: %s", req.Service)
+				}
+				contexts = append(contexts, ctx)
+				if m.recordResult(w, TranslationUpdateMsg{ReqID: "full", Service: req.Service}) {
+					t.Fatal("old attempt reclaimed card before retry metadata")
+				}
+			}
+			for _, req := range requests {
+				if !m.recordMeta(w, RunMetaMsg{ReqID: req.ReqID, Services: []string{"google", "baidu"}}, req.Service) ||
+					!m.recordResult(w, TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Text: req.Service}) {
+					t.Fatalf("lost retry metadata or result: %s", req.Service)
+				}
+			}
+			state, _ := m.State(config.Default(), 1)
+			if len(state.Results) != 2 || state.Revision != 2 || state.ReqID != "b" {
+				t.Fatalf("snapshot regressed: %+v", state)
+			}
+			m.Cancel(w, "s", 3)
+			for _, ctx := range contexts {
+				if ctx.Err() == nil {
+					t.Fatal("cancel left retry running")
+				}
+			}
+		})
+	}
+}
+
+func TestRetryCannotCrossReplacementOrCancellation(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "full", Revision: 0})
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "new retry", Revision: 2, Service: "google"})
+	if _, ok := m.startRun(w, RunReq{SessionID: "s", ReqID: "old retry", Revision: 1, Service: "google"}); ok {
+		t.Fatal("older retry of same service accepted")
+	}
+	// Full metadata may finish after a retry, but must not reclaim its card.
+	m.recordMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
+	if m.recordResult(w, TranslationUpdateMsg{ReqID: "full", Service: "google"}) ||
+		!m.recordResult(w, TranslationUpdateMsg{ReqID: "full", Service: "baidu"}) {
+		t.Fatal("late full metadata overwrote retry ownership or lost peer")
+	}
+	m.startRun(w, RunReq{SessionID: "s", ReqID: "replacement", Revision: 4})
+	if _, ok := m.startRun(w, RunReq{SessionID: "s", ReqID: "late peer", Revision: 3, Service: "baidu"}); ok {
+		t.Fatal("retry crossed full replacement")
+	}
+	if m.recordMeta(w, RunMetaMsg{ReqID: "new retry"}, "google") ||
+		m.recordResult(w, TranslationUpdateMsg{ReqID: "new retry", Service: "google"}) {
+		t.Fatal("old retry published after replacement")
+	}
+	m.Cancel(w, "s", 6)
+	if _, ok := m.startRun(w, RunReq{SessionID: "s", ReqID: "late canceled", Revision: 5, Service: "baidu"}); ok {
+		t.Fatal("retry crossed cancellation")
+	}
+}

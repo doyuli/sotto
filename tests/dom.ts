@@ -7,6 +7,15 @@ export class Element {
   className = "";
   textContent = "";
   value = "";
+  style: Record<string,string> = {};
+  readOnly = false;
+  scrollHeight = 42;
+  scrollTop = 0;
+  title = "";
+  innerHTML = "";
+  get options() { return this.children; }
+  get childNodes() { return this.children; }
+  setPointerCapture(_id:number) {}
   id = "";
   type = "";
   hidden = false;
@@ -56,7 +65,14 @@ export class Element {
   setAttribute(name: string, value: string) { this.attributes.set(name, value); }
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
 
-  addEventListener(name: string, listener: (event: any) => void) {
+  addEventListener(name: string, listener: (event: any) => void, options?: {once?:boolean;signal?:AbortSignal}) {
+    if (options?.signal?.aborted) return;
+    if (options?.once) {
+      const original = listener;
+      listener = (e) => { this.removeEventListener(name, listener); original(e); };
+    }
+    const callback = listener;
+    options?.signal?.addEventListener("abort", () => this.removeEventListener(name, callback), {once:true});
     if (!this.listeners.has(name)) this.listeners.set(name, new Set());
     this.listeners.get(name)!.add(listener);
   }

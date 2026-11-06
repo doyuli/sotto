@@ -1,5 +1,6 @@
 ﻿import {
   BubbleSvc,
+  SnipSvc,
   TranslateSvc,
   events,
   type BubbleState,
@@ -38,6 +39,7 @@ function iconButton(icon: keyof typeof ICONS, title: string, className = ""): HT
   const btn = el("button", `icon-btn ${className}`.trim());
   btn.innerHTML = svg(ICONS[icon]);
   btn.title = title;
+  btn.setAttribute("aria-label", title);
   return btn;
 }
 
@@ -50,8 +52,17 @@ let runServices: Set<string> | null = null;
 let sourceLang = "auto";
 let targetLang = "zh-HANS";
 let detected = ""; // the concrete language a service reported, if any
-let editing = false; // a selection/ocr text turned editable
+let revision = 0;
+let submittedText = "";
+let retryService = "";
+const cardNodes = new Map<string, { state: CardState; node: HTMLElement }>();
+let statusHost: HTMLDivElement;
+let resetVersion = 0;
+let mounted = false;
+let queued: (() => void)[] = [];
+let subscriptions: (() => void)[] = [];
 const cards = new Map<string, CardState>();
+const cardRequests = new Map<string, string>();
 
 // DOM handles, built once.
 let input: HTMLTextAreaElement;
@@ -68,11 +79,18 @@ export async function renderBubble(root: HTMLElement): Promise<void> {
   const params = new URLSearchParams(location.hash.split("?")[1] ?? "");
   bubbleID = Number(params.get("b") ?? "0");
 
+  for (const off of subscriptions) off();
+  subscriptions = []; mounted = false; queued = []; state = null;
   build(root);
   wireEvents();
 
   try {
-    apply(await BubbleSvc.ready(bubbleID));
+    const version = resetVersion;
+    const snapshot = await BubbleSvc.ready(bubbleID);
+    if (version === resetVersion) apply(snapshot);
+    mounted = true;
+    for (const event of queued) event();
+    queued = [];
   } catch {
     root.replaceChildren(el("div", "bubble-error", "气泡已关闭"));
   }
@@ -88,7 +106,7 @@ function build(root: HTMLElement): void {
   const topActions = el("div", "top-actions");
   pinButton = iconButton("pin", "钉住：失焦不隐藏，之后的新翻译另开气泡", "pin-btn");
   closeButton = iconButton("close", "关闭", "close-btn");
-  closeButton.classList.add("hidden");
+
   topActions.append(pinButton, closeButton);
   top.append(brand, topActions);
 
@@ -96,7 +114,8 @@ function build(root: HTMLElement): void {
   input.rows = 1;
   input.spellcheck = false;
   input.placeholder = "输入要翻译的文本，回车翻译…";
-  input.title = "双击可编辑";
+  input.title = "可直接修改，Enter 翻译，Shift+Enter 换行";
+  input.setAttribute("aria-label", "要翻译的原文");
 
   badge = el("div", "badge");
   const composerActions = el("div", "composer-actions");
@@ -115,8 +134,11 @@ function build(root: HTMLElement): void {
   const clear = el("button", "clear-btn");
   clear.innerHTML = svg(ICONS.close);
   clear.title = "清空输入";
+  clear.setAttribute("aria-label", "清空输入");
   clear.addEventListener("click", () => {
     input.value = "";
+    input.readOnly = false;
+    if (state) { state.phase = ""; state.message = ""; }
     grow();
     run();
     input.focus();
@@ -127,6 +149,8 @@ function build(root: HTMLElement): void {
 
   sourceSelect = el("select", "source-select");
   targetSelect = el("select", "lang-select");
+  sourceSelect.setAttribute("aria-label", "源语言");
+  targetSelect.setAttribute("aria-label", "目标语言");
   const sourceField = el("label", "lang-field");
   const sourceCaret = el("span", "lang-caret");
   sourceCaret.innerHTML = svg(`<path d="m6 9 6 6 6-6"/>`);
@@ -141,7 +165,9 @@ function build(root: HTMLElement): void {
 
   cardsHost = el("div", "bubble-cards");
   const body = el("div", "bubble-body");
-  body.append(composer, languageBar, cardsHost);
+  statusHost = el("div", "capture-status");
+  statusHost.setAttribute("role", "status");
+  body.append(statusHost, composer, languageBar, cardsHost);
   bubbleRoot.append(top, body);
   root.append(bubbleRoot);
   swap.addEventListener("click", swapLanguages);
@@ -153,6 +179,7 @@ function wireEvents(): void {
     // Clearing the composer hides the old cards at once; text changes wait
     // for Enter instead of translating while the user is still typing.
     if (!input.value.trim()) run();
+    renderStatus();
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing && !e.shiftKey) {
@@ -172,13 +199,8 @@ function wireEvents(): void {
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (editing) {
-      editing = false;
-      input.readOnly = true;
-      e.preventDefault();
-      return;
-    }
-    void BubbleSvc.close(bubbleID);
+    if (e.isComposing) return;
+    closeBubble();
   });
   pinButton.addEventListener("click", () => {
     // Pin keeps the bubble; pinning again lets go of it.
@@ -191,84 +213,137 @@ function wireEvents(): void {
     }
     renderChrome();
   });
-  closeButton.addEventListener("click", () => void BubbleSvc.close(bubbleID));
-  bubbleRoot.addEventListener("dblclick", (e) => {
-    // A selection or OCR text turns editable on a double click.
-    if (!editing && state && state.trigger !== "input" && e.target === input) {
-      editing = true;
-      input.readOnly = false;
-      input.focus();
-    }
-  });
+  closeButton.addEventListener("click", closeBubble);
 
-  events.bubbleReset.on((st) => {
-    if (st.id !== bubbleID) return;
-    apply(st);
-  });
-  events.runMeta.on((msg: RunMetaMsg) => {
-    if (msg.reqID !== reqID) return;
-    sourceLang = msg.sourceLang;
-    targetLang = msg.targetLang;
-    // Services without credentials never answer: drop their cards
-    // instead of shimmering forever.
-    runServices = new Set(msg.services ?? []);
-    for (const name of cards.keys()) {
-      if (!runServices.has(name)) cards.delete(name);
-    }
-    renderMeta();
-    renderCards();
-  });
-  events.translationUpdate.on((msg: TranslationUpdateMsg) => {
-    if (msg.reqID !== reqID) return;
-    if (
-      sourceLang === "auto" &&
-      msg.detectedLang &&
-      msg.detectedLang !== "latin" &&
-      msg.detectedLang !== "unknown"
-    ) {
-      detected = msg.detectedLang;
-    }
-    if (msg.err) {
-      cards.set(msg.service, { status: "error", err: msg.err });
-    } else {
-      cards.set(msg.service, { status: "ok", text: msg.text });
-      if (targetLang === "en" && msg.text && msg.service !== "dictionary") {
-        void attachFormats(msg.service, msg.text);
+  subscriptions.push(events.runStopped.on((msg) => {
+    const handle = () => {
+      if (!state || msg.sessionID !== state.sessionID || msg.revision < revision) return;
+      revision = msg.revision; state.revision = revision; reqID = ""; cardRequests.clear();
+      if (state.phase === "recognizing") {
+        state.phase = "error"; state.message = "已取消识别，可重新框选或直接输入。"; input.readOnly = false;
       }
-    }
-    renderCards();
-    renderMeta();
-  });
-  events.settingsChanged.on((s: Settings) => {
-    if (state) state.settings = s;
-    renderCards();
-  });
+      for (const [name, card] of cards) {
+        if (card.status === "loading") cards.set(name, {status:"error",err:"翻译已取消，请重试"});
+      }
+      renderCards(); renderStatus();
+    };
+    if (mounted) handle(); else queued.push(handle);
+  }));
+  subscriptions.push(events.focusComposer.on(() => {
+    if (mounted) input.focus(); else queued.push(() => input.focus());
+  }));
+  subscriptions.push(events.bubbleReset.on((st) => {
+    const handle = () => {
+      if (st.id !== bubbleID) return;
+      resetVersion++;
+      apply(st);
+    };
+    if (mounted) handle(); else queued.push(handle);
+  }));
+  subscriptions.push(events.runMeta.on((msg: RunMetaMsg) => {
+    const handle = () => {
+      if (msg.reqID !== reqID) {
+        // A peer retry can still be active after another card was retried.
+        for (const [name, request] of cardRequests) {
+          if (request === msg.reqID && !msg.services?.includes(name)) {
+            cards.set(name, {status:"error", err:"该服务当前不可用，请检查设置"});
+          }
+        }
+        renderCards();
+        return;
+      }
+      if (state) state.revision = revision;
+      sourceLang = msg.sourceLang;
+      targetLang = msg.targetLang;
+      // Services without credentials never answer: drop their cards
+      // instead of shimmering forever.
+      if (!retryService) {
+        runServices = new Set(msg.services ?? []);
+        for (const name of runServices) cardRequests.set(name, msg.reqID);
+        for (const name of cards.keys()) { if (!runServices.has(name)) cards.delete(name); }
+      } else if (!msg.services?.includes(retryService)) {
+        cards.set(retryService, {status:"error", err:"该服务当前不可用，请检查设置"});
+      }
+      renderMeta();
+      renderCards();
+    };
+    if (mounted) handle(); else queued.push(handle);
+  }));
+  subscriptions.push(events.translationUpdate.on((msg: TranslationUpdateMsg) => {
+    const handle = () => {
+      if (msg.reqID !== (cardRequests.get(msg.service) ?? reqID)) return;
+      if (
+        sourceLang === "auto" &&
+        msg.detectedLang &&
+        msg.detectedLang !== "latin" &&
+        msg.detectedLang !== "unknown"
+      ) {
+        if (!detected) detected = msg.detectedLang;
+      }
+      applyResult(msg);
+      renderCards();
+      renderMeta();
+    };
+    if (mounted) handle(); else queued.push(handle);
+  }));
+  subscriptions.push(events.settingsChanged.on((s: Settings) => {
+    const handle = () => {
+      if (state) state.settings = s;
+      renderCards();
+    };
+    if (mounted) handle(); else queued.push(handle);
+  }));
 }
 
 /** apply takes a fresh state from Go, whether on mounting or reuse. */
 function apply(st: BubbleState): void {
+  if (state && (st.generation < state.generation ||
+    (st.sessionID === state.sessionID && st.revision < state.revision))) return;
   state = st;
   reqID = st.reqID;
   runServices = null;
   detected = "";
-  editing = false;
+  revision = Math.max(0, st.revision);
+  submittedText = st.text;
+  retryService = "";
   sourceLang = st.sourceLang || "auto";
   targetLang = st.targetLang || "zh-HANS";
   input.value = st.text;
-  input.readOnly = st.trigger !== "input";
+  input.readOnly = st.phase === "recognizing";
   cards.clear();
+  cardNodes.clear();
+  cardRequests.clear();
+  for (const [service, id] of Object.entries(st.serviceRequests ?? {})) cardRequests.set(service, id);
   if (st.reqID && st.text) {
     // A selection or OCR query runs from Go; show its cards loading.
     for (const name of activeServices(st.settings)) {
       cards.set(name, { status: "loading" });
     }
   }
+  if (st.meta && st.meta.reqID === st.reqID) {
+    sourceLang = st.meta.sourceLang; targetLang = st.meta.targetLang;
+    runServices = new Set(st.meta.services ?? []);
+    for (const name of cards.keys()) { if (!runServices.has(name)) cards.delete(name); }
+  }
+  for (const msg of st.results ?? []) {
+    applyResult(msg);
+    if (msg.detectedLang && !detected) detected = msg.detectedLang;
+  }
   grow();
+  renderStatus();
   renderMeta();
   renderCards();
   renderChrome();
   if (st.trigger === "input") {
     input.focus();
+  }
+}
+
+// Snapshots and live results must expose the same result actions.
+function applyResult(msg: TranslationUpdateMsg): void {
+  cards.set(msg.service, msg.err ? {status:"error", err:msg.err} : {status:"ok", text:msg.text});
+  if (!msg.err && targetLang === "en" && msg.text && msg.service !== "dictionary") {
+    void attachFormats(msg.service, msg.text);
   }
 }
 
@@ -288,31 +363,88 @@ function swapLanguages(): void {
   run();
 }
 
-function run(): void {
-  const text = input.value.trim();
-  if (!text || !state) {
-    reqID = "";
-    runServices = null;
-    cards.clear();
-    renderCards();
-    return;
+function cancelCurrent(): void {
+  if (!state) return;
+  revision++;
+  state.revision = revision;
+  reqID = "";
+  cardRequests.clear();
+  void TranslateSvc.cancel(state.sessionID, revision).catch((err) => toast(String(err)));
+}
+
+function closeBubble(): void {
+  cancelCurrent();
+  if (state?.phase === "recognizing") {
+    state.phase = "error"; state.message = "已取消识别，可重新框选或直接输入。";
+    input.readOnly = false; renderStatus();
   }
-  reqID = requestID();
-  runServices = null;
-  detected = "";
-  renderMeta();
-  cards.clear();
-  for (const name of activeServices(state.settings)) {
-    cards.set(name, { status: "loading" });
+  for (const [name, card] of cards) {
+    if (card.status === "loading") cards.set(name, {status:"error", err:"翻译已取消，请重试"});
   }
   renderCards();
-  void TranslateSvc.run({
-    reqID,
-    source: state.trigger,
-    text,
-    sourceLang,
-    targetLang,
-  });
+  void BubbleSvc.close(bubbleID, state?.sessionID ?? "");
+}
+
+function renderStatus(): void {
+  const recognizing = state?.phase === "recognizing";
+  pinButton.disabled = recognizing;
+  sourceSelect.disabled = recognizing;
+  targetSelect.disabled = recognizing;
+  input.placeholder = recognizing ? "识别完成后可修改原文" : "输入要翻译的文本，回车翻译…";
+  statusHost.replaceChildren();
+  const dirty = !!submittedText && input.value.trim() !== submittedText.trim();
+  const message = state?.phase === "recognizing" ? "正在识别文字…" :
+    dirty ? "原文已修改，按 Enter 重新翻译" : state?.message ||
+    (state?.trigger === "ocr" ? "识别文字可直接修改，按 Enter 重新翻译" : "");
+  if (message) statusHost.append(el("span", "capture-message", message));
+  if (state?.phase === "recognizing") {
+    const cancel = el("button", "text-btn", "取消识别");
+    cancel.addEventListener("click", () => {
+      cancelCurrent();
+      if (state) { state.phase = "error"; state.message = "已取消识别，可重新框选或直接输入。"; }
+      input.readOnly = false; renderStatus(); input.focus();
+    });
+    statusHost.append(cancel);
+  } else if (state?.trigger === "ocr" || state?.phase === "error") {
+    const retry = el("button", "text-btn", state.trigger === "ocr" ? "重新框选" : "截图翻译");
+    retry.addEventListener("click", () => { void SnipSvc.start().catch((err) => toast(String(err))); });
+    statusHost.append(retry);
+  }
+  statusHost.classList.toggle("hidden", statusHost.children.length === 0);
+}
+
+function run(service = ""): void {
+  const text = input.value.trim();
+  if (!state) return;
+  if (!text) {
+    state.phase = ""; state.message = ""; input.readOnly = false;
+    cancelCurrent(); runServices = null; cards.clear(); submittedText = "";
+    renderCards(); renderStatus(); return;
+  }
+  // Retrying a result is valid only for the same unmodified input.
+  if (service && text !== submittedText) service = "";
+  reqID = requestID();
+  revision++;
+  state.revision = revision;
+  const request = reqID;
+  retryService = service;
+  submittedText = text;
+  state.phase = ""; state.message = "";
+  detected = "";
+  renderMeta(); renderStatus();
+  if (!service) { runServices = null; cards.clear(); cardRequests.clear(); }
+  for (const name of service ? [service] : activeServices(state.settings)) {
+    cardRequests.set(name, reqID);
+    cards.set(name, {status:"loading"});
+  }
+  renderCards();
+  void TranslateSvc.run({reqID, sessionID:state.sessionID, revision, service,
+    source:state.trigger, text, sourceLang, targetLang}).catch((err) => {
+      for (const [name, card] of cards) {
+        if (card.status === "loading" && cardRequests.get(name) === request) cards.set(name, {status:"error", err:String(err)});
+      }
+      renderCards();
+    });
 }
 
 function activeServices(settings: Settings): string[] {
@@ -329,7 +461,7 @@ function grow(): void {
 function renderChrome(): void {
   const pinned = state?.pinned ?? false;
   bubbleRoot.classList.toggle("pinned", pinned);
-  closeButton.classList.toggle("hidden", !pinned);
+
   pinButton.innerHTML = svg(ICONS.pin, pinned);
   pinButton.title = pinned
     ? "已钉住：点击取消，气泡恢复失焦隐藏"
@@ -388,9 +520,9 @@ function renderMeta(): void {
 
 function renderCards(): void {
   if (!state) return;
-  cardsHost.replaceChildren();
   const enabled = activeServices(state.settings).filter((name) => !runServices || runServices.has(name));
   if (enabled.length === 0) {
+    cardsHost.replaceChildren(); cardNodes.clear();
     cardsHost.classList.remove("hidden");
     const empty = el("div", "cards-empty", "没有可用的翻译服务");
     empty.append(translationSettingsButton());
@@ -402,11 +534,27 @@ function renderCards(): void {
     // Nothing typed (or nothing to answer yet): keep the bubble down to
     // the composer and the language row.
     cardsHost.classList.add("hidden");
+    cardsHost.replaceChildren(); cardNodes.clear();
     return;
   }
   cardsHost.classList.remove("hidden");
+  for (const [name, entry] of cardNodes) {
+    if (!showing.includes(name)) { entry.node.remove(); cardNodes.delete(name); }
+  }
+  // Keep untouched nodes in place: moving them also disrupts browser selection.
+  if (cardNodes.size === 0) cardsHost.replaceChildren();
+  let previous: HTMLElement | null = null;
   for (const name of showing) {
-    cardsHost.append(renderCard(name, cards.get(name) ?? { status: "loading" }));
+    const card = cards.get(name)!;
+    let entry = cardNodes.get(name);
+    if (!entry || entry.state !== card) {
+      const node = renderCard(name, card);
+      if (entry) { cardsHost.insertBefore(node, entry.node); entry.node.remove(); }
+      entry = {state:card, node}; cardNodes.set(name, entry);
+    }
+    const expected: ChildNode | null = previous ? previous.nextSibling : cardsHost.firstChild;
+    if (expected !== entry.node) cardsHost.insertBefore(entry.node, expected);
+    previous = entry.node;
   }
 }
 
@@ -428,10 +576,13 @@ function renderCard(name: string, card: CardState): HTMLElement {
 
   const collapsed = sessionStorage.getItem(`collapse:${name}`) === "1";
   node.classList.toggle("collapsed", collapsed);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", `${collapsed ? "展开" : "折叠"}${SERVICE_NAMES[name] ?? name}`);
   toggle.addEventListener("click", () => {
     const now = !node.classList.contains("collapsed");
     node.classList.toggle("collapsed", now);
     sessionStorage.setItem(`collapse:${name}`, now ? "1" : "0");
+    toggle.setAttribute("aria-expanded", String(!now));
   });
 
   switch (card.status) {
@@ -441,7 +592,7 @@ function renderCard(name: string, card: CardState): HTMLElement {
     case "error": {
       body.append(el("div", "card-error", card.err ?? "出错了"));
       const retry = el("button", "text-btn", "重试");
-      retry.addEventListener("click", () => run());
+      retry.addEventListener("click", () => run(name));
       const actions = el("div", "card-error-actions");
       actions.append(retry);
       if (name === "google" || name === "index-translate") actions.append(translationSettingsButton());
@@ -511,7 +662,16 @@ async function attachFormats(service: string, text: string): Promise<void> {
     return; // chips are a bonus, not a requirement
   }
   if (cards.get(service) === card && card.text === text) {
-    renderCards();
+    const entry = cardNodes.get(service);
+    if (entry?.state === card) {
+      const fresh = renderCard(service, card).querySelector(".card-tools");
+      const tools = entry.node.querySelector(".card-tools");
+      if (fresh && tools) {
+        for (const old of tools.querySelectorAll(".format-btn")) old.remove();
+        const before = tools.firstChild;
+        for (const format of fresh.querySelectorAll(".format-btn")) tools.insertBefore(format, before);
+      }
+    }
   }
 }
 

@@ -79,6 +79,9 @@ func recognize(ctx context.Context, img image.Image) (Text, error) {
 	if t, err := recognizePPOCR(ctx, img); err == nil && strings.TrimSpace(t.Text) != "" {
 		return t, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return Text{}, err
+	}
 	return recognizeWinRT(ctx, img, "")
 }
 
@@ -90,6 +93,9 @@ func recognizeWith(ctx context.Context, img image.Image, lang string) (Text, err
 		if t, err := recognizePPOCR(ctx, img); err == nil && strings.TrimSpace(t.Text) != "" {
 			return t, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return Text{}, err
 	}
 	return recognizeWinRT(ctx, img, lang)
 }

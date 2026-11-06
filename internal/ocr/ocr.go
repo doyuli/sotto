@@ -26,7 +26,18 @@ type Text struct {
 }
 
 // Recognize runs the system OCR over img.
+var admission = make(chan struct{}, 1)
+
 func Recognize(ctx context.Context, img image.Image) (Text, error) {
+	select {
+	case admission <- struct{}{}:
+	case <-ctx.Done():
+		return Text{}, ctx.Err()
+	}
+	defer func() { <-admission }()
+	if err := ctx.Err(); err != nil {
+		return Text{}, err
+	}
 	t, err := recognize(ctx, img)
 	return finish(t), err
 }
@@ -34,6 +45,15 @@ func Recognize(ctx context.Context, img image.Image) (Text, error) {
 // RecognizeWith runs OCR with an explicit UI language tag ("zh-Hans");
 // empty falls back to the user's profile languages.
 func RecognizeWith(ctx context.Context, img image.Image, lang string) (Text, error) {
+	select {
+	case admission <- struct{}{}:
+	case <-ctx.Done():
+		return Text{}, ctx.Err()
+	}
+	defer func() { <-admission }()
+	if err := ctx.Err(); err != nil {
+		return Text{}, err
+	}
 	t, err := recognizeWith(ctx, img, lang)
 	return finish(t), err
 }

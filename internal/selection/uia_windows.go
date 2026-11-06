@@ -113,15 +113,24 @@ func (b *uiaBreaker) noteAnswer() {
 // grabUIA asks the focused element for its selection, through the
 // single-slot, timeout-and-breaker wrapper.
 func grabUIA(ctx context.Context) (Selection, error) {
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
 	if !breaker.allow() {
 		return Selection{}, errUIASkipped
 	}
 	select {
+	case <-ctx.Done():
+		return Selection{}, ctx.Err()
 	case <-uiaMu:
 	case <-time.After(uiaBusyWait):
 		// The slot is taken by a call still inside the provider —
 		// exactly the call a timeout has already abandoned once.
 		return Selection{}, errUIASkipped
+	}
+	if err := ctx.Err(); err != nil {
+		uiaMu <- struct{}{}
+		return Selection{}, err
 	}
 	type answer struct {
 		sel Selection
