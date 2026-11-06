@@ -63,7 +63,7 @@ type application struct {
 
 	bubbles *bubbleManager
 	snip    *snipManager
-	tray    *mygo.Tray
+	tray    *mygo.Tray // main thread only
 	keys    keys.Store
 }
 
@@ -150,6 +150,7 @@ func (a *application) applySettings(s config.Settings) {
 		if err := mygo.App.SetOpenAtLogin(s.OpenAtLogin); err != nil {
 			log.Printf("set open at login: %v", err)
 		}
+		a.refreshTrayMenu()
 	}
 	if s.Hotkeys != old.Hotkeys {
 		if err := a.applyHotkeys(s.Hotkeys); err != nil {
@@ -161,9 +162,6 @@ func (a *application) applySettings(s config.Settings) {
 	}
 	if s.Selection != old.Selection {
 		a.applyDoubleClick(s.Selection)
-	}
-	if a.tray != nil {
-		a.tray.SetMenu(a.trayMenu())
 	}
 	// Hotkey fallbacks may have changed a.cfg after s was applied; send
 	// what is actually in force.
@@ -306,6 +304,7 @@ func (a *application) applyDoubleClick(sel config.SelectionSettings) {
 // cannot be registered at all. It holds no lock across the calls that
 // wait for the main thread.
 func (a *application) applyHotkeys(cfg config.HotkeySettings) error {
+	defer a.refreshTrayMenu()
 	a.mu.Lock()
 	old := make(map[string]string, len(a.hotkeys))
 	for action, accel := range a.hotkeys {
@@ -418,36 +417,72 @@ func containsString(xs []string, x string) bool {
 }
 
 func (a *application) setUpTray() {
-	tray, err := mygo.NewTray(mygo.TrayOptions{Icon: iconPNG, ToolTip: "Sotto 翻译"})
+	tray, err := mygo.NewTray(mygo.TrayOptions{
+		Icon:    iconPNG,
+		ToolTip: "Sotto 翻译",
+		Menu:    a.trayMenu(),
+	})
 	if err != nil {
 		log.Printf("no tray icon: %v", err)
 		return
 	}
 	a.tray = tray
-	tray.SetMenu(a.trayMenu())
 	tray.OnClick(func() { go a.showBubble("input", "") })
 }
 
-// trayMenu is rebuilt whenever the settings change, so its checkbox
-// follows autostart.
+// refreshTrayMenu publishes the autostart and hotkey states actually in force.
+func (a *application) refreshTrayMenu() {
+	mygo.RunOnMain(func() {
+		if a.tray != nil {
+			a.tray.SetMenu(a.trayMenu())
+		}
+	})
+}
+
 func (a *application) trayMenu() *mygo.Menu {
+	label := "Sotto"
+	if version := mygo.App.Version(); version != "" {
+		label += " v" + version
+	}
+	a.mu.Lock()
+	panelKey, ocrKey := a.hotkeys["panel"], a.hotkeys["ocr"]
+	a.mu.Unlock()
+
 	return mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "打开翻译面板", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: label, Disabled: true},
+		mygo.Separator(),
+		{Label: "翻译面板", Accelerator: panelKey, Click: func(*mygo.MenuItem, *mygo.Window) {
 			go a.showBubble("input", "")
 		}},
-		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings() }},
+		{Label: "截图翻译", Accelerator: ocrKey, Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.snip.Show()
+		}},
 		mygo.Separator(),
+		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings() }},
 		{Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
 			Click: func(it *mygo.MenuItem, _ *mygo.Window) {
-				cfg := a.settings()
-				cfg.OpenAtLogin = it.Checked
-				if err := a.updateSettings(cfg); err != nil {
-					log.Printf("save settings: %v", err)
-				}
+				go a.setTrayOpenAtLogin(it.IsChecked())
 			}},
 		mygo.Separator(),
-		{Role: mygo.RoleQuit},
+		{Label: "退出 Sotto", Role: mygo.RoleQuit},
 	})
+}
+
+func (a *application) setTrayOpenAtLogin(open bool) {
+	cfg := a.settings()
+	if cfg.OpenAtLogin == open {
+		// Windows can change the startup entry independently of our settings.
+		if err := mygo.App.SetOpenAtLogin(open); err != nil {
+			log.Printf("set open at login: %v", err)
+		}
+		a.refreshTrayMenu()
+		return
+	}
+	cfg.OpenAtLogin = open
+	if err := a.updateSettings(cfg); err != nil {
+		log.Printf("save settings: %v", err)
+		a.refreshTrayMenu()
+	}
 }
 
 // showSettings opens the settings window, or focuses the one there is.
