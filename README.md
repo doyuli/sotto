@@ -14,8 +14,6 @@ Sotto 是一款 Windows 桌面翻译工具：划词、截图或输入文字后�
 
 在托盘设置中可以更改快捷键，启用 DeepL、Google、OpenAI 兼容接口等翻译服务，并为需要凭据的服务配置 API 密钥。英文译文也可以按 `camelCase`、`snake_case` 等命名格式复制。
 
-首次安装默认开启 B 站 Index-Translate 和 Google。B 站接口免密钥，启用时会将原文发送至 B 站，可在「设置 → 翻译服务」关闭。
-
 ## 从源码运行
 
 在 Windows 上准备 Go（版本见 [go.mod](go.mod)）、Bun 和 WebView2 Runtime。
