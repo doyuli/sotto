@@ -64,19 +64,31 @@ func TestDeepLTranslate(t *testing.T) {
 }
 
 func TestDeepLSourceLangMapped(t *testing.T) {
-	_, deepl := deeplServer(t, func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			SourceLang string `json:"source_lang"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&in)
-		if in.SourceLang != "JA" {
-			t.Errorf("source = %q, want JA", in.SourceLang)
-		}
-		fmt.Fprint(w, `{"translations":[{"detected_source_language":"JA","text":"hello"}]}`)
-	})
-	_, err := deepl.Translate(context.Background(), Request{Text: "こんにちは", SourceLang: "ja", TargetLang: "en"}, fakeKeys{keys.DeeplKey: "k"}, config.Settings{})
-	if err != nil {
-		t.Fatal(err)
+	// DeepL's source codes differ from its target codes: EN-US/PT-BR/
+	// ZH-HANS are targets only, and sending them as source_lang is a 400.
+	cases := []struct{ in, want string }{
+		{"ja", "JA"},
+		{"en", "EN"},
+		{"zh-HANS", "ZH"},
+		{"pt", "PT"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			_, deepl := deeplServer(t, func(w http.ResponseWriter, r *http.Request) {
+				var in struct {
+					SourceLang string `json:"source_lang"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				if in.SourceLang != tc.want {
+					t.Errorf("source = %q, want %q", in.SourceLang, tc.want)
+				}
+				fmt.Fprint(w, `{"translations":[{"detected_source_language":"EN","text":"hello"}]}`)
+			})
+			_, err := deepl.Translate(context.Background(), Request{Text: "hello", SourceLang: tc.in, TargetLang: "en"}, fakeKeys{keys.DeeplKey: "k"}, config.Settings{})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

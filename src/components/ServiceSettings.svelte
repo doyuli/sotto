@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
+  import { cubicOut } from "svelte/easing";
+  import { MediaQuery } from "svelte/reactivity";
+  import { dragHandle, dragHandleZone, SHADOW_ITEM_MARKER_PROPERTY_NAME, TRIGGERS, type DndEvent } from "svelte-dnd-action";
   import { ConfigSvc, type CredentialStatus, type OpenAIOptions, type Settings } from "../mygo";
   import { SERVICE_CREDENTIALS, SERVICE_NAMES, SERVICE_NOTES } from "../languages";
 
@@ -12,6 +16,7 @@
   } = $props();
 
   let credentials = $state<CredentialStatus | null>(null);
+  let credentialsError = $state<string>("");
   let openAIDrafts = $state<Partial<OpenAIOptions>>({});
 
   let expandedServices = $state<Record<string, boolean>>({});
@@ -22,9 +27,30 @@
   let deeplUsageText = $state<string>("额度查询中…");
   let deeplUsagePct = $state<number>(0);
 
+  const credentialNames = $derived(services.order.filter((s) => Object.hasOwn(SERVICE_CREDENTIALS, s)));
+
+  // A service is on when it is enabled and has what it needs to run. Those
+  // stay first in the list; the rest form a separate, unsortable group.
+  function serviceOn(name: string): boolean {
+    const keyless = (SERVICE_CREDENTIALS[name] ?? []).length === 0;
+    return services.enabled.includes(name) && (keyless || Boolean(credentials?.configured.includes(name)));
+  }
+
+  const enabledNames = $derived(credentialNames.filter((name) => serviceOn(name)));
+  const disabledNames = $derived(credentialNames.filter((name) => !serviceOn(name)));
+
+  type ServiceItem = { id: string; name: string; [SHADOW_ITEM_MARKER_PROPERTY_NAME]?: boolean };
+
+  const reducedMotion = new MediaQuery("prefers-reduced-motion: reduce");
+  const flipDurationMs = $derived(reducedMotion.current ? 0 : 150);
+  let dragPreview = $state.raw<{ order: string[]; items: ServiceItem[] } | null>(null);
+  const currentPreview = $derived.by(() => {
+    if (!active || !dragPreview || enabledNames.length !== dragPreview.order.length) return null;
+    return dragPreview.order.every((name, index) => name === enabledNames[index]) ? dragPreview : null;
+  });
+  const sortableItems = $derived(currentPreview?.items ?? enabledNames.map((name): ServiceItem => ({ id: name, name })));
   let serviceOrderStatus = $state<string>("");
-  let draggedService = $state<string | null>(null);
-  let dropTarget = $state<{ name: string; after: boolean } | null>(null);
+  let serviceSection: HTMLElement;
 
   let pendingCredentialWrite = Promise.resolve();
   let disposed = false;
@@ -33,9 +59,16 @@
     if (disposed) return;
     try {
       const status = await ConfigSvc.credentials();
-      if (!disposed) credentials = status;
+      if (!disposed) {
+        credentials = status;
+        credentialsError = "";
+      }
     } catch (err) {
-      if (!disposed) toast(`读取凭证状态失败：${String(err)}`);
+      if (!disposed) {
+        const message = err instanceof Error ? err.message : String(err);
+        credentialsError = `读取服务状态失败：${message}`;
+        toast(credentialsError);
+      }
     }
   }
 
@@ -45,7 +78,23 @@
   });
 
   $effect(() => {
-    if (!active) endServiceDrag();
+    // Late events from a cancelled drag must not revive its preview.
+    if (!currentPreview) dragPreview = null;
+  });
+
+  $effect.pre(() => {
+    if (!active || enabledNames.length + disabledNames.length === 0) return;
+    const focused = document.activeElement;
+    if (!(focused instanceof HTMLInputElement) || !serviceSection?.contains(focused)) return;
+    const name = focused.dataset.serviceToggle;
+    if (!name) return;
+
+    // Both an optimistic toggle and its rollback can move the switch to another list.
+    void tick().then(() => {
+      if (active && !focused.isConnected && document.activeElement === document.body) {
+        serviceSection.querySelector<HTMLInputElement>(`[data-service-toggle="${name}"]`)?.focus();
+      }
+    });
   });
 
   // Services reordering logic
@@ -59,66 +108,41 @@
     if (from === to) return;
     order.splice(from, 1);
     order.splice(to, 0, name);
-    const position = order.slice(0, to + 1).filter((s) => Object.hasOwn(SERVICE_CREDENTIALS, s)).length;
+    const position = order.slice(0, to + 1).filter((s) => serviceOn(s)).length;
     serviceOrderStatus = `${SERVICE_NAMES[name] ?? name} 已移至第 ${position} 位`;
     onServicesChange({ ...services, order });
   }
 
-  function endServiceDrag(): void {
-    draggedService = null;
-    dropTarget = null;
+  function previewServiceOrder({ detail: { items, info } }: CustomEvent<DndEvent<ServiceItem>>): void {
+    if (!active) return;
+    if (info.trigger === TRIGGERS.DRAG_STARTED) {
+      dragPreview = { order: enabledNames, items };
+    } else if (currentPreview) {
+      dragPreview = { ...currentPreview, items };
+    }
   }
 
-  function onGripDragStart(e: DragEvent, name: string): void {
-    if (!e.dataTransfer) return;
-    e.dataTransfer.setData("application/x-sotto-service", name);
-    e.dataTransfer.effectAllowed = "move";
-    draggedService = name;
+  function finalizeServiceOrder({ detail: { items, info } }: CustomEvent<DndEvent<ServiceItem>>): void {
+    const preview = currentPreview;
+    dragPreview = null;
+    if (!preview || info.trigger !== TRIGGERS.DROPPED_INTO_ZONE) return;
+    const from = enabledNames.indexOf(info.id);
+    const to = items.findIndex((item) => item.id === info.id);
+    if (from < 0 || to < 0 || from === to || !enabledNames[to]) return;
+    moveService(info.id, enabledNames[to], to > from);
   }
 
-  function onRowDragOver(e: DragEvent, name: string): void {
-    if (!draggedService || draggedService === name || !e.dataTransfer) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const targetElem = e.currentTarget as HTMLElement;
-    const rect = targetElem.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    dropTarget = { name, after };
-  }
-
-  function onRowDrop(e: DragEvent, name: string): void {
-    e.preventDefault();
-    if (!draggedService) return;
-    const target = dropTarget;
-    const source = draggedService;
-    endServiceDrag();
-    if (target?.name === name) moveService(source, name, target.after);
-  }
-
-  function onGripKeydown(e: KeyboardEvent, name: string): void {
-    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-    e.preventDefault();
-    const order = services.order.filter((s) => Object.hasOwn(SERVICE_CREDENTIALS, s));
-    const down = e.key === "ArrowDown";
-    const target = order[order.indexOf(name) + (down ? 1 : -1)];
-    if (!target) return;
-    const grip = e.currentTarget as HTMLElement;
-    moveService(name, target, down);
-    void tick().then(() => { if (active && grip.isConnected) grip.focus(); });
-  }
-
-  function moveToTop(e: MouseEvent, name: string): void {
-    const first = services.order[0];
-    if (!first || first === name) return;
-    const grip = (e.currentTarget as HTMLButtonElement)
-      .closest(".service-row")?.querySelector<HTMLElement>(".service-grip");
-    moveService(name, first);
-    void tick().then(() => { if (active && grip?.isConnected) grip.focus(); });
+  function suppressKeyboardDrag(e: KeyboardEvent): void {
+    // The library starts a keyboard drag on Space or Enter.
+    if (e.key === " " || e.key === "Enter") {
+      e.stopImmediatePropagation();
+    }
   }
 
   function toggleService(name: string, checked: boolean): void {
     const enabled = services.enabled.filter((s) => s !== name);
     if (checked) enabled.push(name);
+    else expandedServices[name] = false; // the row moves to the off group
     onServicesChange({ ...services, enabled });
   }
 
@@ -219,79 +243,70 @@
   }
 </script>
 
-<section class="settings-section" class:active id="section-services">
+<section
+  class="settings-section"
+  class:active
+  class:service-drag-preview={currentPreview !== null}
+  id="section-services"
+  bind:this={serviceSection}
+>
   <h2>翻译服务</h2>
   {#if credentials}
-    <p class="service-instructions" id="service-order-instructions">
-      拖动手柄，或聚焦手柄后按上下方向键，调整翻译结果的显示顺序。
-    </p>
-    <p class="service-settings-note">
-      已启用的服务会同时翻译，凭证保存在系统密钥环。
-    </p>
+    <div class="service-instructions" id="service-order-instructions">
+      <p>已启用的服务会同时翻译，序号即结果顺序。</p>
+      <p class="sub">拖动序号调整顺序，凭证保存在系统密钥环。</p>
+    </div>
     <p class="service-order-status" role="status" aria-live="polite">
       {serviceOrderStatus}
     </p>
 
-    <ol class="service-list">
-      {#each services.order as name (name)}
+    {#snippet serviceRow(name: string, enabled: boolean, position: number)}
         {@const title = SERVICE_NAMES[name] ?? name}
         {@const fields = SERVICE_CREDENTIALS[name] ?? []}
         {@const keyless = fields.length === 0}
-        {@const isConfigured = credentials.configured.includes(name)}
-        {@const isEnabled = services.enabled.includes(name) && (keyless || isConfigured)}
+        {@const isConfigured = credentials?.configured.includes(name) ?? false}
         {@const note = SERVICE_NOTES[name]}
         {@const isExpanded = Boolean(expandedServices[name])}
         {@const testStatus = testStatuses[name]}
         {@const credentialLocked = Boolean(credentialBusy[name] || testStatus?.testing)}
+        {@const stateHint = enabled
+          ? (keyless ? "无需凭据" : "凭证已保存")
+          : (keyless || isConfigured ? "打开开关后参与翻译" : "填写凭证后可启用")}
 
-        {#if Object.hasOwn(SERVICE_CREDENTIALS, name)}
-          <li
-            class="service-row"
-            class:dragging={draggedService === name}
-            data-drop={dropTarget?.name === name ? (dropTarget.after ? "after" : "before") : undefined}
-            ondragover={(e) => onRowDragOver(e, name)}
-            ondrop={(e) => onRowDrop(e, name)}
-          >
             <div class="service-card">
               <div class="field service-head">
                 <div class="service-identity">
-                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                  <div
-                    class="service-grip"
-                    draggable="true"
-                    tabindex="0"
-                    role="group"
-                    title="拖动排序，或按方向键移动"
-                    aria-label={`排序${title}`}
-                    aria-describedby="service-order-instructions"
-                    aria-keyshortcuts="ArrowUp ArrowDown"
-                    ondragstart={(e) => onGripDragStart(e, name)}
-                    ondragend={endServiceDrag}
-                    onkeydown={(e) => onGripKeydown(e, name)}
-                  >
-                    <svg viewBox="0 0 16 16" stroke="currentColor" stroke-width=".6" aria-hidden="true">
-                      <circle cx="5.5" cy="3" r="1.2"/><circle cx="10.5" cy="3" r="1.2"/>
-                      <circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/>
-                      <circle cx="5.5" cy="13" r="1.2"/><circle cx="10.5" cy="13" r="1.2"/>
-                    </svg>
-                  </div>
+                  {#if enabled}
+                    <!-- The drag zone ignores events that start on form controls. -->
+                    <span
+                      class="service-grip"
+                      use:dragHandle
+                      role="button"
+                      tabindex="0"
+                      title="拖动排序"
+                      aria-label={`排序${title}，当前第 ${position} 位`}
+                      aria-describedby="service-order-instructions"
+                      onkeydowncapture={suppressKeyboardDrag}
+                    >
+                      <span aria-hidden="true">{position}</span>
+                    </span>
+                  {/if}
 
                   <div class="service-name">
                     <div class="service-title-line">
                       <span class="service-title">{title}</span>
-                      {#if isEnabled}
-                        <span class="service-badge service-badge-enabled">已启用</span>
-                      {:else if isConfigured}
-                        <span class="service-badge service-badge-configured">已配置</span>
-                      {:else if keyless}
-                        <span class="service-badge service-badge-keyless">免配置</span>
-                      {:else}
-                        <span class="service-badge service-badge-unconfigured">未配置</span>
+                      {#if !enabled}
+                        {#if keyless}
+                          <span class="service-badge service-badge-keyless">免配置</span>
+                        {:else if isConfigured}
+                          <span class="service-badge service-badge-configured">已配置</span>
+                        {:else}
+                          <span class="service-badge service-badge-unconfigured">未配置</span>
+                        {/if}
                       {/if}
                     </div>
                     <span class="sub" aria-live="polite">
-                      {isEnabled ? "已启用" : keyless ? "已关闭" : isConfigured ? "已配置" : "未配置"}
+                      {stateHint}
                     </span>
                   </div>
                 </div>
@@ -310,27 +325,13 @@
                     </button>
                   {/if}
 
-                  {#if isEnabled}
-                    <button
-                      type="button"
-                      class="service-row-action service-order"
-                      title="置顶"
-                      aria-label={`置顶${title}`}
-                      disabled={services.order[0] === name}
-                      onclick={(e) => moveToTop(e, name)}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M5 4h14m-7 16V8m-5 5 5-5 5 5"/>
-                      </svg>
-                    </button>
-                  {/if}
-
                   <input
                     type="checkbox"
                     class="switch"
+                    data-service-toggle={name}
                     aria-label={`启用${title}`}
                     disabled={credentialBusy[name] || (!keyless && !isConfigured)}
-                    checked={isEnabled}
+                    checked={enabled}
                     onchange={(e) => toggleService(name, e.currentTarget.checked)}
                   />
                 </div>
@@ -339,10 +340,6 @@
               <!-- Details Drawer -->
               {#if !keyless && isExpanded}
                 <div class="service-details" id={`configure-${name}`}>
-                  {#if note}
-                    <p class="service-note">{note}</p>
-                  {/if}
-
                   <div class="service-link-row">
                     <button
                       type="button"
@@ -391,7 +388,7 @@
                     }}
                   >
                     {#each fields as fieldItem (fieldItem.name)}
-                      {@const isStored = credentials.stored.includes(fieldItem.name)}
+                      {@const isStored = credentials?.stored.includes(fieldItem.name) ?? false}
                       {@const draftVal = getDraft(name, fieldItem.name)}
                       <div class="field">
                         <label for={`input-${fieldItem.name}`}>
@@ -405,7 +402,7 @@
                             id={`input-${fieldItem.name}`}
                             type={showSecrets[`${name}-${fieldItem.name}`] ? "text" : "password"}
                             autocomplete="off"
-                            placeholder={isStored ? "已保存，输入可替换" : fieldItem.placeholder}
+                            placeholder={isStored ? "已保存，留空不变" : fieldItem.placeholder}
                             value={draftVal}
                             disabled={credentialLocked}
                             oninput={(e) => setDraft(name, fieldItem.name, e.currentTarget.value)}
@@ -435,12 +432,16 @@
                       </div>
                     {/each}
 
-                    {#if name === "deepl" && credentials.stored.includes("deepl-key")}
+                    {#if note}
+                      <p class="service-note">{note}</p>
+                    {/if}
+
+                    {#if name === "deepl" && (credentials?.stored.includes("deepl-key") ?? false)}
                       <div class="usage-wrap">
+                        <div class="usage-text">{deeplUsageText}</div>
                         <div class="usage-bar">
                           <div style={`width: ${deeplUsagePct}%`}></div>
                         </div>
-                        <div class="usage-text">{deeplUsageText}</div>
                       </div>
                     {/if}
 
@@ -448,11 +449,16 @@
                     <div class="service-footer">
                       <div class="service-footer-status">
                         {#if testStatus?.result}
-                          <span class="usage-text" class:error-text={testStatus.isError} role="status">
+                          <span
+                            class="usage-text"
+                            class:error-text={testStatus.isError}
+                            class:success-text={!testStatus.isError && !testStatus.testing}
+                            role="status"
+                          >
                             {testStatus.result}
                           </span>
                         {:else}
-                          <span class="usage-text muted">未测试</span>
+                          <span class="usage-text">未测试</span>
                         {/if}
                       </div>
 
@@ -478,9 +484,67 @@
                 </div>
               {/if}
             </div>
+    {/snippet}
+
+    <h3 class="service-group-title">
+      已启用 <span class="service-group-count">{enabledNames.length}</span>
+    </h3>
+    {#if sortableItems.length}
+      <ol
+        class="service-list"
+        aria-label="已启用的翻译服务"
+        use:dragHandleZone={{
+          items: sortableItems,
+          flipDurationMs,
+          dragDisabled: !active,
+          dropAnimationDisabled: reducedMotion.current || !currentPreview,
+          dropTargetStyle: {},
+          autoAriaDisabled: true,
+          useCursorForDetection: true,
+          morphDisabled: true,
+          transformDraggedElement: (element, _item, index) => {
+            const number = element?.querySelector(".service-grip span");
+            if (number && index !== undefined) number.textContent = String(index + 1);
+          },
+        }}
+        onconsider={previewServiceOrder}
+        onfinalize={finalizeServiceOrder}
+      >
+        {#each sortableItems as item, index (item.id)}
+          <li
+            class="service-row"
+            data-is-dnd-shadow-item-hint={item[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+            inert={item[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+            animate:flip={{ duration: flipDurationMs, easing: cubicOut }}
+          >
+            {@render serviceRow(item.name, true, index + 1)}
           </li>
-        {/if}
-      {/each}
-    </ol>
+        {/each}
+      </ol>
+    {:else}
+      <p class="service-empty">还没有启用的服务。打开下方开关即可加入翻译。</p>
+    {/if}
+
+    {#if disabledNames.length}
+      <h3 class="service-group-title">
+        未启用 <span class="service-group-count">{disabledNames.length}</span>
+      </h3>
+      <ol class="service-list">
+        {#each disabledNames as name (name)}
+          <li class="service-row">
+            {@render serviceRow(name, false, 0)}
+          </li>
+        {/each}
+      </ol>
+    {/if}
+  {:else}
+    <div class="service-loading" role="status">
+      <span>{credentialsError || "正在读取服务状态…"}</span>
+      {#if credentialsError}
+        <button type="button" class="service-configure" onclick={() => void refreshCredentials()}>
+          重试
+        </button>
+      {/if}
+    </div>
   {/if}
 </section>

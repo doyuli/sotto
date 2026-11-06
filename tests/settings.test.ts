@@ -1,11 +1,26 @@
 // @vitest-environment jsdom
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
+import { SHADOW_ITEM_MARKER_PROPERTY_NAME, SHADOW_PLACEHOLDER_ITEM_ID, SOURCES, TRIGGERS } from "svelte-dnd-action";
 import { mount, tick } from "svelte";
 import SettingsPage from "../src/components/SettingsPage.svelte";
 import type { Settings } from "../src/mygo";
 import { deferred, settle, setupPageTest } from "./support/page";
 
 const page = setupPageTest();
+
+// jsdom has no Web Animations API for Svelte's FLIP bookkeeping.
+Object.defineProperty(Element.prototype, "getAnimations", {
+  configurable: true,
+  value: () => [],
+});
+
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+});
 
 function select<T extends Element = HTMLElement>(selector: string): T {
   const node = page.target.querySelector<T>(selector);
@@ -58,12 +73,12 @@ const openAtLogin = "#open-at-login-switch";
 const autoSplit = "#auto-split-switch";
 const baiduToggle = '[aria-label="启用百度翻译"]';
 const openAIToggle = '[aria-label="启用OpenAI"]';
-const moveBaiduToTop = '[aria-label="置顶百度翻译"]';
+const enabledServices = '.service-list[aria-label="已启用的翻译服务"]';
 
 test("initial services tab and native requests select the service section", async () => {
   await openSettings();
   expect(select(".settings-section.active").id).toBe("section-services");
-  expect(select(".service-badge-enabled").textContent).toBe("已启用");
+  expect(select(enabledServices).children).toHaveLength(3);
 
   await tab("通用");
   expect(select(".settings-section.active").id).toBe("section-general");
@@ -83,110 +98,138 @@ test("Bilibili can be turned off independently of OpenAI", async () => {
   expect(select<HTMLInputElement>(openAIToggle).disabled).toBe(true);
 });
 
-test("keyboard reorder preserves row focus, drafts and enablement", async () => {
+test("dragging a service preserves its drawer, drafts and enablement", async () => {
+  page.backend.secrets.set("openai-key", "key");
+  page.backend.settings.services.enabled.push("openai");
   await openSettings();
-  change(baiduToggle, false);
-  await settle();
   await expand("openai");
-  const credential = draft("#input-openai-key", "unfinished-key");
-  const openAIGrip = select('[aria-label="排序OpenAI"]');
-  const baiduGrip = select('[aria-label="排序百度翻译"]');
-
-  expect(page.target.querySelector('[aria-label="置顶OpenAI"]')).toBeNull();
-  expect(page.target.querySelector(moveBaiduToTop)).toBeNull();
-  openAIGrip.focus();
-  keydown(openAIGrip, "ArrowUp");
-  keydown(openAIGrip, "ArrowUp");
+  draft("#input-openai-key", "unfinished-key");
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, ["index-translate", "google", "openai", "baidu"], "openai");
+  await tick();
+  sortEvent("finalize", TRIGGERS.DROPPED_INTO_ZONE, ["openai", "index-translate", "google", "baidu"], "openai");
   await settle();
   expect(page.backend.settings.services.order).toEqual(["openai", "index-translate", "google", "baidu", "deepl"]);
-  expect(document.activeElement).toBe(openAIGrip);
   expect(select('[aria-controls="configure-openai"]').getAttribute("aria-expanded")).toBe("true");
-  expect(credential.value).toBe("unfinished-key");
-  expect(select<HTMLInputElement>(openAIToggle).disabled).toBe(true);
-
-  baiduGrip.focus();
-  keydown(baiduGrip, "ArrowUp");
-  await settle();
-  expect(page.backend.settings.services.order).toEqual(["openai", "index-translate", "baidu", "google", "deepl"]);
-  expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google"]);
-  expect(document.activeElement).toBe(baiduGrip);
-  expect(select(".service-order-status").textContent?.trim()).toBe("百度翻译 已移至第 3 位");
+  expect(select<HTMLInputElement>("#input-openai-key").value).toBe("unfinished-key");
+  expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu", "openai"]);
+  expect(select(".service-order-status").textContent?.trim()).toBe("OpenAI 已移至第 1 位");
 });
 
-test("move to top is available only for enabled services and transfers focus to the grip", async () => {
+test("moving a service between groups preserves switch focus and updates its drag handle", async () => {
   await openSettings();
-  expect(select(moveBaiduToTop).title).toBe("置顶");
+  const grip = '[aria-label^="排序百度翻译，"]';
+  expect(select(enabledServices).contains(select(grip))).toBe(true);
+  select(baiduToggle).focus();
   change(baiduToggle, false);
   await settle();
-  expect(page.target.querySelector(moveBaiduToTop)).toBeNull();
+  expect(page.target.querySelector(grip)).toBeNull();
+  expect(document.activeElement).toBe(select(baiduToggle));
   change(baiduToggle, true);
   await settle();
-  const button = select<HTMLButtonElement>(moveBaiduToTop);
-  button.focus();
-  button.click();
-  await settle();
-  expect(page.backend.settings.services.order[0]).toBe("baidu");
-  expect(button.disabled).toBe(true);
-  expect(document.activeElement).toBe(select('[aria-label="排序百度翻译"]'));
+  const handle = select(grip);
+  expect(select(enabledServices).contains(handle)).toBe(true);
+  expect(document.activeElement).toBe(select(baiduToggle));
+  expect(handle.title).toBe("拖动排序");
+  const unclaimedPress = vi.fn();
+  select("#section-services").addEventListener("mousedown", unclaimedPress);
+  handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  window.dispatchEvent(new MouseEvent("mouseup"));
+  expect(unclaimedPress).not.toHaveBeenCalled();
 });
 
-function dragEvent(target: Element, type: string, clientY = 0): void {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientY });
-  Object.assign(event, { dataTransfer: { setData() {}, effectAllowed: "", dropEffect: "" } });
-  target.dispatchEvent(event);
+test("a failed service toggle restores the original switch state and focus", async () => {
+  const save = deferred<void>();
+  page.backend.override("ConfigSvc.Set", async () => {
+    await save.promise;
+    throw new Error("disk full");
+  });
+  await openSettings();
+  select(baiduToggle).focus();
+  change(baiduToggle, false);
+  await settle();
+  expect(select<HTMLInputElement>(baiduToggle).checked).toBe(false);
+  expect(document.activeElement).toBe(select(baiduToggle));
+
+  save.resolve();
+  await settle();
+  expect(select<HTMLInputElement>(baiduToggle).checked).toBe(true);
+  expect(document.activeElement).toBe(select(baiduToggle));
+});
+
+function sortEvent(type: "consider" | "finalize", trigger: TRIGGERS, order: string[], id = "baidu"): void {
+  const items = order.map((name) => name === id && type === "consider"
+    ? { id: SHADOW_PLACEHOLDER_ITEM_ID, name, [SHADOW_ITEM_MARKER_PROPERTY_NAME]: true }
+    : { id: name, name });
+  select(enabledServices).dispatchEvent(new CustomEvent(type, {
+    detail: { items, info: { trigger, id, source: SOURCES.POINTER } },
+  }));
 }
 
-test("dropping before the first or after the last row changes order without changing enablement", async () => {
+test("drag previews changes and saves only a completed drop in the enabled list", async () => {
   await openSettings();
-  const rows = page.target.querySelectorAll<HTMLElement>(".service-row");
-  const grip = select('[aria-label="排序OpenAI"]');
-  const first = rows[0]!;
-  const last = rows[rows.length - 1]!;
-  const rectangle = new DOMRect(0, 0, 100, 80);
-  first.getBoundingClientRect = () => rectangle;
-  last.getBoundingClientRect = () => rectangle;
-
-  dragEvent(grip, "dragstart");
-  dragEvent(first, "dragover", 1);
+  const original = ["index-translate", "google", "baidu"];
+  const reordered = ["baidu", "index-translate", "google"];
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, original);
+  sortEvent("consider", TRIGGERS.DRAGGED_OVER_INDEX, reordered);
   await tick();
-  expect(first.dataset.drop).toBe("before");
-  dragEvent(first, "drop", 1);
-  await settle();
-  expect(page.backend.settings.services.order).toEqual(["openai", "index-translate", "google", "baidu", "deepl"]);
-  expect(first.dataset.drop).toBeUndefined();
-  expect(select(".service-list").firstElementChild?.contains(grip)).toBe(true);
+  expect(select(enabledServices).firstElementChild?.querySelector(".service-title")?.textContent).toBe("百度翻译");
+  expect(writes()).toHaveLength(0);
 
-  dragEvent(grip, "dragstart");
-  dragEvent(last, "dragover", 79);
-  await tick();
-  expect(last.dataset.drop).toBe("after");
-  dragEvent(last, "drop", 79);
+  sortEvent("finalize", TRIGGERS.DROPPED_OUTSIDE_OF_ANY, reordered);
   await settle();
-  expect(page.backend.settings.services.order).toEqual(["index-translate", "google", "baidu", "deepl", "openai"]);
-  expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu"]);
-  expect(last.dataset.drop).toBeUndefined();
-  expect(select(".service-list").lastElementChild?.contains(grip)).toBe(true);
-  expect(writes()).toHaveLength(2);
+  expect(select(enabledServices).firstElementChild?.querySelector(".service-title")?.textContent).toBe("Bilibili");
+  expect(writes()).toHaveLength(0);
+
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, original);
+  await tick();
+  sortEvent("finalize", TRIGGERS.DROPPED_INTO_ZONE, reordered);
+  await settle();
+  expect(page.backend.settings.services.order).toEqual(["baidu", "index-translate", "google", "openai", "deepl"]);
+  expect(page.backend.settings.services.enabled).toEqual(original);
+  expect(writes()).toHaveLength(1);
 });
 
 test("switching tabs clears a pending drag and unmount releases settings listeners", async () => {
   await openSettings();
-  const grip = select('[aria-label="排序OpenAI"]');
-  const first = select(".service-row");
-  dragEvent(grip, "dragstart");
-  dragEvent(first, "dragover");
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, ["index-translate", "google", "baidu"]);
   await tick();
-  expect(select(".service-row.dragging").contains(grip)).toBe(true);
-  expect(first.dataset.drop).toBe("before");
+  const placeholder = ".service-row[data-is-dnd-shadow-item-hint]";
+  expect(page.target.querySelector(placeholder)).not.toBeNull();
 
   await tab("通用");
-  expect(first.dataset.drop).toBeUndefined();
-  expect(page.target.querySelector(".service-row.dragging")).toBeNull();
-  dragEvent(first, "drop");
+  expect(page.target.querySelector(placeholder)).toBeNull();
+  await tab("翻译服务");
+  sortEvent("finalize", TRIGGERS.DROPPED_INTO_ZONE, ["baidu", "index-translate", "google"]);
   await settle();
   expect(writes()).toHaveLength(0);
   await page.destroy();
   expect([...page.backend.events.values()].every((listeners) => listeners.size === 0)).toBe(true);
+});
+
+test("a settings update cancels a drag when the enabled order changes", async () => {
+  await openSettings();
+  const original = ["index-translate", "google", "baidu"];
+  const reordered = ["baidu", "index-translate", "google"];
+  const placeholder = ".service-row[data-is-dnd-shadow-item-hint]";
+  sortEvent("consider", TRIGGERS.DRAG_STARTED, original);
+  sortEvent("consider", TRIGGERS.DRAGGED_OVER_INDEX, reordered);
+  await tick();
+  expect(page.target.querySelector(placeholder)).not.toBeNull();
+
+  page.backend.settings.services.enabled = ["index-translate", "baidu"];
+  page.backend.broadcastSettings();
+  await tick();
+  const googleToggle = '[aria-label="启用Google"]';
+  expect(page.target.querySelectorAll(googleToggle)).toHaveLength(1);
+  expect(select<HTMLInputElement>(googleToggle).checked).toBe(false);
+  expect(page.target.querySelector(placeholder)).toBeNull();
+
+  sortEvent("consider", TRIGGERS.DRAGGED_OVER_INDEX, reordered);
+  await tick();
+  expect(page.target.querySelector(placeholder)).toBeNull();
+  sortEvent("finalize", TRIGGERS.DROPPED_INTO_ZONE, reordered);
+  await settle();
+  expect(writes()).toHaveLength(0);
 });
 
 test("a late initial settings read cannot mount a disposed page", async () => {
@@ -234,12 +277,12 @@ test("only one shortcut records and leaving the tab releases keyboard capture", 
   expect(keydown(selection, "ArrowUp")).toBe(false);
   await tab("翻译服务");
   expect(selection.getAttribute("aria-pressed")).toBe("false");
+  expect(keydown(document, "ArrowDown")).toBe(true);
   const grip = select(".service-grip");
   grip.focus();
-  keydown(grip, "ArrowDown");
+  expect(keydown(grip, "ArrowDown")).toBe(true);
   await settle();
-  expect(writes()).toHaveLength(1);
-  expect(page.backend.settings.services.order.slice(0, 2)).toEqual(["google", "index-translate"]);
+  expect(writes()).toHaveLength(0);
 });
 
 test("hotkey checks cannot save an abandoned recording after unmount", async () => {
@@ -440,19 +483,18 @@ test.each(["settings", "keyring"] as const)("failed credential deletion (%s) ref
     if (failure === "keyring") backend.disableBaidu();
     throw new Error(`${failure} delete failed`);
   });
-  const clear = select<HTMLButtonElement>('[aria-label="清除APP ID"]');
-  clear.click();
+  const clear = '[aria-label="清除APP ID"]';
+  select<HTMLButtonElement>(clear).click();
   await settle();
-  const toggle = select<HTMLInputElement>(baiduToggle);
-  expect(toggle.checked).toBe(failure === "settings");
-  expect(toggle.disabled).toBe(false);
-  expect(clear.disabled).toBe(false);
+  expect(select<HTMLInputElement>(baiduToggle).checked).toBe(failure === "settings");
+  expect(select<HTMLInputElement>(baiduToggle).disabled).toBe(false);
+  expect(select<HTMLButtonElement>(clear).disabled).toBe(false);
   expect(select(".service-footer-status").textContent).toContain("更新失败");
 
   fail = false;
-  clear.click();
+  select<HTMLButtonElement>(clear).click();
   await settle();
-  expect(toggle.checked).toBe(false);
-  expect(toggle.disabled).toBe(true);
-  expect(page.target.contains(clear)).toBe(false);
+  expect(select<HTMLInputElement>(baiduToggle).checked).toBe(false);
+  expect(select<HTMLInputElement>(baiduToggle).disabled).toBe(true);
+  expect(page.target.querySelector(clear)).toBeNull();
 });

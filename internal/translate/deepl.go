@@ -42,7 +42,7 @@ func (d DeepL) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		"target_lang": target,
 	}
 	if req.SourceLang != "" && req.SourceLang != "auto" {
-		if src, ok := mapLanguage("deepl", req.SourceLang); ok {
+		if src, ok := deepLSourceLanguage(req.SourceLang); ok {
 			payload["source_lang"] = src
 		}
 	}
@@ -78,6 +78,20 @@ func (d DeepL) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		default:
 			return Result{}, fmt.Errorf("DeepL: HTTP %d: %s", status, strings.TrimSpace(string(body)))
 		}
+	}
+}
+
+func deepLSourceLanguage(code string) (string, bool) {
+	// DeepL rejects regional target variants in source_lang.
+	switch code {
+	case "en":
+		return "EN", true
+	case "pt":
+		return "PT", true
+	case "zh-HANS":
+		return "ZH", true
+	default:
+		return mapLanguage("deepl", code)
 	}
 }
 

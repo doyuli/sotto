@@ -11,7 +11,7 @@
     type Settings,
     type TranslationUpdateMsg,
   } from "../mygo";
-  import { detectedName, speechTag, LANGUAGES, SERVICE_NAMES } from "../languages";
+  import { detectedName, langName, speechTag, LANGUAGES, SERVICE_NAMES } from "../languages";
   import { requestID } from "../utils/request-id";
   import { createToasts } from "../utils/toasts.svelte";
   import BubbleIcon from "./BubbleIcon.svelte";
@@ -596,7 +596,8 @@
       <!-- Language Bar -->
       <div class="language-bar">
         <label class="lang-field">
-          <span class="lang-caret">
+          <span class="lang-value" aria-hidden="true">{detectedName(sourceLang)}</span>
+          <span class="lang-caret" aria-hidden="true">
             <BubbleIcon name="chevron" />
           </span>
           <select
@@ -631,7 +632,8 @@
         </button>
 
         <label class="lang-field">
-          <span class="lang-caret">
+          <span class="lang-value" aria-hidden="true">{langName(targetLang)}</span>
+          <span class="lang-caret" aria-hidden="true">
             <BubbleIcon name="chevron" />
           </span>
           <select

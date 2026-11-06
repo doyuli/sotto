@@ -37,6 +37,31 @@ body {
   color: var(--fg);
 }
 
+/* Shared by the bubble and settings. The snip overlay uses the root palette. */
+body[data-route="bubble"],
+body[data-route="settings"] {
+  --panel: #ffffff;
+  --control: #f1f1f1;
+  --pill: #e7e7e7;
+  --hover: #e9e9e9;
+  --fg: #202020;
+  --accent: #2f7fe8;
+  --accent-text: #1a5fae;
+}
+
+@media (prefers-color-scheme: dark) {
+  body[data-route="bubble"],
+  body[data-route="settings"] {
+    --panel: #222325;
+    --control: #2c2d2f;
+    --pill: #3a3b3d;
+    --hover: #3a3b3d;
+    --fg: #f3f4f5;
+    --accent: #7db4ff;
+    --accent-text: #7db4ff;
+  }
+}
+
 /* ---- The bubble page: the window is transparent and frameless; the
    page itself is the card. ---- */
 
@@ -46,23 +71,16 @@ body[data-route="bubble"] {
   /* The bubble is its own surface ladder: the panel is the lightest layer,
      the composer and language bar recess below it, and each card's title
      strip sits between its body and the panel. */
-  --panel: #ffffff;
   --composer: #f4f4f4;
-  --control: #f1f1f1;
   --card-head: #f1f1f1;
   --card-body: #f6f6f6;
-  --pill: #e7e7e7;
-  --hover: #e9e9e9;
   --icon: #4b4b4b;
   --icon-strong: #202020;
   --clear: #c9c9c9;
   --clear-fg: #4b4b4b;
   --scroll-thumb: #c9c9c9;
   --selection: rgba(31, 111, 208, 0.18);
-  --fg: #202020;
   --muted: #5f5f5f;
-  --accent: #2f7fe8;
-  --accent-text: #1a5fae;
   --error: #c62828;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
   color-scheme: light;
@@ -70,23 +88,16 @@ body[data-route="bubble"] {
 
 @media (prefers-color-scheme: dark) {
   body[data-route="bubble"] {
-    --panel: #222325;
     --composer: #303132;
-    --control: #2c2d2f;
     --card-head: #2c2d2f;
     --card-body: #303132;
-    --pill: #3a3b3d;
-    --hover: #3a3b3d;
     --icon: #b9bcc0;
     --icon-strong: #f3f4f5;
     --clear: #55575b;
     --clear-fg: #f3f4f5;
     --scroll-thumb: #4a4c50;
     --selection: rgba(125, 180, 255, 0.28);
-    --fg: #f3f4f5;
     --muted: #a0a3a7;
-    --accent: #7db4ff;
-    --accent-text: #7db4ff;
     --error: #ff8a8a;
     --shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
     color-scheme: dark;
@@ -126,11 +137,6 @@ body[data-route="bubble"] {
 .bubble.pinned .card-error {
   --app-region: no-drag;
   cursor: auto;
-}
-
-/* Labels open their dropdown instead of dragging the window. */
-.bubble.pinned .lang-field {
-  cursor: pointer;
 }
 
 .brand {
@@ -256,7 +262,7 @@ body[data-route="bubble"] {
 /* One quiet control for source, swap, and target. */
 .language-bar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   min-height: 38px;
   padding: 2px 6px;
@@ -265,52 +271,46 @@ body[data-route="bubble"] {
 }
 
 .lang-field {
-  display: inline-flex;
+  position: relative;
+  display: flex;
   align-items: center;
+  justify-content: center;
+  align-self: stretch;
   min-width: 0;
-  padding: 4px 6px;
-  border-radius: 8px;
+  gap: 4px;
+  padding-inline: 8px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+/* Keep the native menu and make the full label its hit target. */
+.lang-field select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  font: inherit;
   cursor: pointer;
 }
 
-.lang-field:first-child {
-  justify-self: start;
-}
-
-.lang-field:last-child {
-  justify-self: end;
-}
-
-.lang-field:hover {
+.lang-field:has(select:enabled:hover, select:focus-visible) {
   background: var(--hover);
 }
 
-.lang-select,
-.source-select {
-  appearance: none;
+.lang-value {
   min-width: 0;
-  max-width: 150px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--fg);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.lang-select:focus-visible,
-.source-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .lang-caret {
-  display: inline-flex;
+  display: flex;
+  flex-shrink: 0;
   width: 12px;
   height: 12px;
   color: var(--muted);
-  pointer-events: none;
 }
 
 .lang-caret svg {
@@ -330,8 +330,7 @@ body[data-route="bubble"] {
   background: var(--selection);
 }
 
-.bubble button:focus-visible,
-.bubble select:focus-visible {
+.bubble button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -433,37 +432,97 @@ body[data-route="bubble"] {
   color: var(--muted);
 }
 
-/* ---- The settings page ---- */
+/* ---- The settings page ----
+   The settings window is its own surface ladder: panel, tinted sidebar,
+   cards with a quiet title strip, and recessed fields. The same token
+   names carry both color schemes; only the values flip. */
+
+body[data-route="settings"] {
+  --sidebar: #fbfcfd;
+  --card: #ffffff;
+  --card-head: #f8f9fb;
+  --field: #f4f5f7;
+  --badge-ink: #5c5c5c;
+  --border: #e2e5ea;
+  --muted: #6b6b6b;
+  --accent-soft: rgba(47, 127, 232, 0.14);
+  --primary-bg: #1a5fae;
+  --on-accent: #ffffff;
+  --success: #15803d;
+  --warning: #b45309;
+  --warning-soft: rgba(217, 119, 6, 0.12);
+  --bg: #f6f7f9;
+  background: var(--panel);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  body[data-route="settings"] {
+    --sidebar: #1a1b1d;
+    --card: #26272a;
+    --card-head: #2b2c30;
+    --field: #1e1f22;
+    --badge-ink: #b4b7bb;
+    --border: #2e3035;
+    --muted: #a0a3a7;
+    --accent-soft: rgba(125, 180, 255, 0.18);
+    --primary-bg: var(--accent);
+    --on-accent: #0d1b2b;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --warning-soft: rgba(251, 191, 36, 0.14);
+    --bg: #0f1115;
+    color-scheme: dark;
+  }
+}
 
 .settings {
   display: flex;
   height: 100vh;
+  background: var(--panel);
+  color: var(--fg);
 }
 
 .settings-nav {
   width: 170px;
+  flex-shrink: 0;
   border-right: 1px solid var(--border);
-  padding: 14px 8px;
+  background: var(--sidebar);
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .settings-nav button {
-  border: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
   text-align: left;
   font: inherit;
-  font-size: 13px;
-  padding: 8px 12px;
+  font-size: 12px;
+  padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms;
+}
+
+.settings-nav button:hover {
+  background: var(--hover);
+}
+
+.settings-nav button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .settings-nav button.active {
-  background: var(--card-soft);
-  color: var(--fg);
+  background: var(--control);
+  border-color: var(--border);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -472,8 +531,8 @@ body[data-route="bubble"] {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--card-soft);
+  border-radius: 9px;
+  background: var(--field);
   border: 1px solid var(--border);
   font-size: 11px;
   color: var(--muted);
@@ -481,10 +540,30 @@ body[data-route="bubble"] {
   user-select: none;
 }
 
+.settings-security-pill svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 .settings-main {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 26px;
+  padding: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pill) transparent;
+}
+
+.settings-main::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-main::-webkit-scrollbar-thumb {
+  background: var(--pill);
+  border-radius: 3px;
+}
+
+.settings-main::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .settings-section {
@@ -498,82 +577,101 @@ body[data-route="bubble"] {
 
 .settings-section h2 {
   font-size: 16px;
-  margin: 4px 0 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 10px;
+}
+
+.settings-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
 }
 
 .hint-bar {
-  background: var(--card-soft);
+  background: var(--field);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
-  padding: 8px 12px;
-  margin-bottom: 14px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
 }
 
+/* One row: title and hint on the left, the control on the right. */
 .field {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 9px 0;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border);
 }
 
+.settings-card > .field:last-child {
+  border-bottom: 0;
+}
+
 .field > label {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .field .sub {
   display: block;
   font-size: 11px;
+  font-weight: 400;
   color: var(--muted);
   margin-top: 2px;
 }
 
 .field input[type="text"],
 .field input[type="password"],
-.field .rec-input {
-  width: 240px;
+.field .rec-input,
+.field select {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
+  border-radius: 9px;
+  background: var(--field);
   color: var(--fg);
   font: inherit;
-  font-size: 13px;
-  padding: 6px 9px;
+  font-size: 12px;
+  padding: 6px 10px;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.field input[type="text"],
+.field input[type="password"] {
+  width: 240px;
 }
 
 .field select {
-  width: 160px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--fg);
-  font: inherit;
-  font-size: 13px;
-  padding: 6px;
+  width: 190px;
+}
+
+.field :is(input, select, .rec-input):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .switch {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 38px;
+  height: 22px;
   appearance: none;
   border-radius: 999px;
-  background: #d8dbe0;
-  border: 1px solid #c7cbd1;
+  background: #d6d9df;
+  border: 1px solid #c2c6cf;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 150ms, border-color 150ms;
   flex-shrink: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .switch {
-    background: #3b3d42;
-    border-color: #4b4e54;
-  }
 }
 
 .switch:checked {
@@ -584,54 +682,73 @@ body[data-route="bubble"] {
 .switch::after {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 1px;
+  top: 2px;
+  left: 2px;
   width: 16px;
   height: 16px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  transition: left 0.15s;
+  transition: left 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .switch:checked::after {
-  left: 17px;
+  left: 18px;
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .switch {
+    background: #383a3f;
+    border-color: #4a4d55;
+  }
 }
 
 .copy-formats {
   min-width: 0;
-  margin: 16px 0 0;
+  margin: 14px 0 0;
   padding: 0;
   border: 0;
 }
 
 .copy-formats legend {
   padding: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .copy-formats-hint {
-  margin: 4px 0 12px;
+  margin: 4px 0 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.6;
 }
 
 .copy-format-list {
   overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
 }
 
 .copy-format {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 8px 12px;
-  font-size: 13px;
+  min-height: 42px;
+  padding: 8px 14px;
+  font-size: 12px;
+  transition: background 150ms;
 }
 
 .copy-format + .copy-format {
@@ -644,7 +761,7 @@ body[data-route="bubble"] {
 
 .copy-format:has(input:enabled):hover,
 .copy-format:has(input:focus-visible) {
-  background: var(--card-soft);
+  background: var(--hover);
 }
 
 .copy-format .switch {
@@ -663,31 +780,35 @@ body[data-route="bubble"] {
 
 .copy-format code {
   color: var(--muted);
+  background: var(--field);
+  border-radius: 5px;
+  padding: 1px 6px;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
-  text-align: right;
+  font-size: 11px;
+  text-align: left;
+  justify-self: start;
   overflow-wrap: anywhere;
 }
 
 #section-services > h2 {
-  margin-bottom: 6px;
-  font-size: 18px;
-}
-
-.service-instructions,
-.service-settings-note {
-  margin: 0;
-  line-height: 1.6;
+  margin-bottom: 4px;
 }
 
 .service-instructions {
-  font-size: 13px;
+  margin: 0 0 10px;
+  color: var(--muted);
 }
 
-.service-settings-note {
-  margin-top: 2px;
-  color: var(--muted);
+.service-instructions p {
+  margin: 0;
   font-size: 12px;
+  line-height: 1.55;
+}
+
+.service-instructions .sub {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .service-order-status {
@@ -702,79 +823,96 @@ body[data-route="bubble"] {
 .service-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  margin: 6px 0 0;
+  gap: 8px;
+  margin: 0;
   list-style: none;
-  /* Keep the first and last insertion lines inside the drop area. */
   padding: 9px 0;
+}
+
+.service-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.service-group-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.service-empty {
+  margin: 0;
+  padding: 4px 2px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .service-row {
   position: relative;
 }
 
+/* The card is one surface: a quiet title strip above a matching body. */
 .service-card {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
-  padding: 10px 14px;
+  overflow: hidden;
+  transition: border-color 150ms, background 150ms;
 }
 
-.service-row.dragging > .service-card {
-  background: var(--card-soft);
+.settings-card,
+.service-card {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
-.service-row[data-drop]::before,
-.service-row[data-drop]::after {
+@media (prefers-color-scheme: dark) {
+  .settings-card,
+  .service-card {
+    box-shadow: none;
+  }
+}
+
+#dnd-action-dragged-el {
+  outline: none;
+}
+
+/* The library keeps its floating row until the pointer is released. */
+body[data-route="settings"]:not(:has(.service-drag-preview)) > #dnd-action-dragged-el {
+  visibility: hidden;
+}
+
+#dnd-action-dragged-el > .service-card {
+  border-color: var(--accent);
+}
+
+.service-drag-preview .service-row[data-is-dnd-shadow-item-hint="true"]::after {
   content: "";
   position: absolute;
-  z-index: 1;
-  background: var(--accent);
+  inset: 0;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--field);
+  visibility: visible;
   pointer-events: none;
-}
-
-.service-row[data-drop]::before {
-  inset-inline-start: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.service-row[data-drop]::after {
-  inset-inline: 3px 0;
-  height: 2px;
-  border-radius: 1px;
-}
-
-.service-row[data-drop="before"]::before {
-  top: -8px;
-}
-
-.service-row[data-drop="before"]::after {
-  top: -6px;
-}
-
-.service-row[data-drop="after"]::before {
-  bottom: -8px;
-}
-
-.service-row[data-drop="after"]::after {
-  bottom: -6px;
-}
-
-.service-row .field {
-  border-bottom: none;
-  padding: 4px 0;
 }
 
 .service-row .service-head {
   gap: 12px;
-  padding: 0;
+  padding: 12px 14px;
+  background: var(--card-head);
+  border-bottom: 0;
 }
 
 .service-name {
   min-width: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
 }
@@ -793,69 +931,29 @@ body[data-route="bubble"] {
 .service-badge {
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   padding: 1px 6px;
-  border-radius: 4px;
-  line-height: 1.4;
+  border-radius: 5px;
+  line-height: 1.5;
 }
 
-.service-badge-enabled {
-  background: rgba(22, 163, 74, 0.12);
-  color: #15803d;
-  border: 1px solid rgba(22, 163, 74, 0.25);
-}
-
-@media (prefers-color-scheme: dark) {
-  .service-badge-enabled {
-    background: rgba(74, 222, 128, 0.14);
-    color: #4ade80;
-    border: none;
-  }
-}
-
-.service-badge-configured {
-  background: var(--card-soft);
-  color: var(--muted);
-  border: 1px solid var(--border);
-}
-
-@media (prefers-color-scheme: dark) {
-  .service-badge-configured {
-    border: none;
-  }
+.service-badge-configured,
+.service-badge-keyless {
+  background: var(--pill);
+  color: var(--badge-ink);
 }
 
 .service-badge-unconfigured {
-  background: rgba(217, 119, 6, 0.12);
-  color: #b45309;
-  border: 1px solid rgba(217, 119, 6, 0.25);
-}
-
-@media (prefers-color-scheme: dark) {
-  .service-badge-unconfigured {
-    background: rgba(251, 191, 36, 0.14);
-    color: #fbbf24;
-    border: none;
-  }
-}
-
-.service-badge-keyless {
-  background: var(--card-soft);
-  color: var(--muted);
-  border: 1px solid var(--border);
-}
-
-@media (prefers-color-scheme: dark) {
-  .service-badge-keyless {
-    border: none;
-  }
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .service-name .sub {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
+  line-height: 1.5;
 }
 
 .service-identity {
@@ -867,52 +965,65 @@ body[data-route="bubble"] {
 
 .service-actions {
   display: grid;
-  grid-template-columns: auto 30px auto;
+  grid-template-columns: auto auto;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
 
 .service-actions .switch {
-  grid-column: 3;
   margin-inline-start: 8px;
 }
 
 .service-grip {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
-  color: color-mix(in srgb, var(--muted) 76%, var(--card));
+  border: 0;
+  padding: 0;
   border-radius: 6px;
+  background: var(--pill);
+  color: var(--badge-ink);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
   cursor: grab;
   user-select: none;
+  transition: background 150ms, color 150ms;
 }
 
 .service-grip:hover,
-.service-grip:focus-visible,
-.service-configure:not(:disabled):hover {
-  background: var(--card-soft);
+.service-grip:focus-visible {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.service-configure:not(.primary-btn):not(:disabled):hover {
+  background: var(--hover);
   color: var(--fg);
 }
 
 .service-grip:active,
-.dragging .service-grip {
-  background: var(--card);
+#dnd-action-dragged-el .service-grip {
+  background: var(--control);
   color: var(--fg);
   cursor: grabbing;
 }
 
 .service-configure {
   border: 1px solid var(--border);
-  background: var(--card);
+  background: var(--control);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: 9px;
+  font: inherit;
   font-size: 12px;
   min-height: 30px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   cursor: pointer;
+  transition: background 150ms, opacity 150ms;
 }
 
 .service-row-action {
@@ -921,12 +1032,13 @@ body[data-route="bubble"] {
   min-height: 30px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   background: transparent;
   color: var(--muted);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms;
 }
 
 .service-row-action[aria-expanded] {
@@ -934,6 +1046,10 @@ body[data-route="bubble"] {
   align-items: center;
   justify-content: center;
   gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
 }
 
 .service-row-action[aria-expanded]::after {
@@ -950,7 +1066,7 @@ body[data-route="bubble"] {
 }
 
 .service-row-action:is(:hover, :focus-visible):not(:disabled) {
-  background: var(--card-soft);
+  background: var(--hover);
   color: var(--fg);
 }
 
@@ -958,61 +1074,94 @@ body[data-route="bubble"] {
   background: var(--border);
 }
 
-.service-order {
-  grid-column: 2;
-  min-width: 0;
-}
-
-.service-order svg {
-  margin-inline: auto;
-}
-
-.service-grip svg,
-.service-order svg {
-  display: block;
-  width: 16px;
-  height: 16px;
-  pointer-events: none;
-}
-
-.service-grip svg {
-  fill: color-mix(in srgb, currentColor 38%, var(--card));
-}
-
-.service-grip:is(:hover, :focus-visible, :active) svg,
-.dragging .service-grip svg {
-  fill: currentColor;
-}
-
 .service-configure:disabled,
 .service-row-action:disabled,
 .service-row input:disabled {
-  opacity: .55;
+  opacity: 0.5;
   cursor: default;
 }
 
-.service-row :is(button, input, .service-grip):focus-visible {
+.service-row :is(button, .service-grip, input.switch):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+/* The drawer is the card body: same surface, separated by a hairline. */
 .service-details {
   border-top: 1px solid var(--border);
-  margin-top: 8px;
-  padding-top: 8px;
+  background: var(--card);
+  padding: 14px;
 }
 
 .service-note {
-  margin: 4px 0;
+  margin: -4px 0 0;
   color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.service-link-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 8px;
+}
+
+.service-link-row .text-btn {
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.service-link-row .text-btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.service-details form {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.service-details .field {
+  display: block;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.service-details .field > label {
+  display: block;
+  margin-bottom: 5px;
   font-size: 12px;
-  line-height: 1.6;
+  font-weight: 500;
+}
+
+.service-details .field > label .sub {
+  display: inline;
+  margin-inline-start: 6px;
+  font-weight: 400;
+}
+
+.service-details .field input[type="text"],
+.service-details .field input[type="password"] {
+  width: 100%;
+}
+
+.service-details :is(input, select):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.openai-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .credential-controls {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1021,8 +1170,8 @@ body[data-route="bubble"] {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 2px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 
@@ -1035,6 +1184,10 @@ body[data-route="bubble"] {
   min-width: 0;
 }
 
+.service-footer-status .usage-text {
+  overflow-wrap: anywhere;
+}
+
 .service-footer-actions {
   display: flex;
   align-items: center;
@@ -1043,45 +1196,68 @@ body[data-route="bubble"] {
 }
 
 .service-configure.primary-btn {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-  font-weight: 500;
+  background: var(--primary-bg);
+  color: var(--on-accent);
+  border-color: var(--primary-bg);
+  font-weight: 600;
 }
 
 .service-configure.primary-btn:hover:not(:disabled) {
-  opacity: 0.92;
+  opacity: 0.9;
 }
 
 .usage-text.error-text {
   color: var(--error);
 }
 
-.credential-controls .text-btn {
-  white-space: nowrap;
+.usage-text.success-text {
+  color: var(--success);
 }
 
-.service-details .field input[type="password"],
-.service-details .field input[type="text"] {
-  width: min(200px, 34vw);
+.credential-controls .text-btn {
+  white-space: nowrap;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.credential-controls .text-btn:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.credential-controls :is(input[type="text"], input[type="password"]) {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.usage-wrap {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field);
 }
 
 .usage-bar {
-  height: 6px;
+  height: 5px;
   border-radius: 999px;
-  background: var(--border);
+  background: var(--pill);
   overflow: hidden;
-  margin: 6px 0 2px;
+  margin: 0;
 }
 
 .usage-bar > div {
   height: 100%;
   background: var(--accent);
+  border-radius: inherit;
 }
 
 .usage-text {
   font-size: 11px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .field .rec-input {
@@ -1094,11 +1270,40 @@ body[data-route="bubble"] {
 .rec-input.listening {
   border-color: var(--accent);
   color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .conflict {
   color: var(--error);
   font-size: 11px;
+}
+
+.service-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-loading .service-configure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav button,
+  .switch,
+  .switch::after,
+  .settings-card,
+  .service-card,
+  .service-row-action,
+  .service-configure,
+  .service-grip,
+  .copy-format {
+    transition: none;
+  }
 }
 
 /* ---- The snip page: the window spans the virtual screen and is
