@@ -1,0 +1,62 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag, for example v0.1.2
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-refs/tags/${{ inputs.tag }}
+
+jobs:
+  publish:
+    if: github.repository == 'doyuli/sotto' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Verify draft and Windows assets
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected a stable tag in the form vX.Y.Z." >&2
+            exit 1
+          fi
+
+          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets)
+          if ! jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft and (.isPrerelease | not)' <<< "$release" > /dev/null; then
+            echo "$RELEASE_TAG must be an unpublished stable draft." >&2
+            exit 1
+          fi
+
+          version=${RELEASE_TAG#v}
+          manifests=$(mktemp -d)
+          trap 'rm -rf "$manifests"' EXIT
+          for arch in amd64 arm64; do
+            archive="sotto-$version-windows-$arch.tar.gz"
+            manifest="update-windows-$arch.json"
+            for asset in "sotto-setup-$version-$arch.exe" "$archive" "$manifest"; do
+              if ! jq -e --arg name "$asset" 'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$release" > /dev/null; then
+                echo "Missing or incomplete asset $asset." >&2
+                exit 1
+              fi
+            done
+
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$manifest" --dir "$manifests"
+            archive_size=$(jq --arg name "$archive" '.assets[] | select(.name == $name) | .size' <<< "$release")
+            archive_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$archive"
+            if ! jq -e --arg version "$version" --arg url "$archive_url" --argjson size "$archive_size" \
+              '.version == $version and .url == $url and .size == $size' "$manifests/$manifest" > /dev/null; then
+              echo "$manifest does not match $archive." >&2
+              exit 1
+            fi
+          done
+      - name: Publish draft as Latest
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft=false --latest

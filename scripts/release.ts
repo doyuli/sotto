@@ -1,5 +1,5 @@
 import { open, readFile, unlink, writeFile } from "node:fs/promises";
-import { createInterface } from "node:readline/promises";
+import { clearScreenDown, emitKeypressEvents, moveCursor, type Key } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -27,6 +27,55 @@ function versionParts(version: string) {
   return parts;
 }
 
+function chooseBump(version: string, bumps: ReadonlyMap<string, string>): Promise<string | undefined> {
+  const { stdin, stdout } = process;
+  if (!stdin.isTTY || !stdout.isTTY) throw new Error(usage);
+
+  const options = [...bumps];
+  let selected = 0;
+  const render = () => {
+    stdout.write(options.map(([name, next], i) =>
+      `  ${i === selected ? "❯" : " "} ${name.padEnd(6)} ${next}\n`).join(""));
+  };
+
+  const wasRaw = stdin.isRaw;
+  emitKeypressEvents(stdin);
+  stdin.setRawMode(true);
+  return new Promise((resolve) => {
+    function finish(choice?: string) {
+      stdin.off("keypress", onKey);
+      stdin.off("end", onEnd);
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+      resolve(choice);
+    }
+
+    function onEnd() {
+      finish();
+    }
+
+    function onKey(_text: string, key: Key) {
+      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+        finish();
+      } else if (key.name === "return" || key.name === "enter") {
+        finish(options[selected]?.[0]);
+      } else if (key.name === "up" || key.name === "down") {
+        const step = key.name === "up" ? -1 : 1;
+        selected = (selected + step + options.length) % options.length;
+        moveCursor(stdout, 0, -options.length);
+        clearScreenDown(stdout);
+        render();
+      }
+    }
+
+    stdin.on("keypress", onKey);
+    stdin.once("end", onEnd);
+    console.log(`当前为 ${version}。用 ↑/↓ 选择，Enter 确认，Esc 取消。`);
+    render();
+    stdin.resume();
+  });
+}
+
 async function release() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -47,16 +96,10 @@ async function release() {
     ["minor", `${major}.${minor + 1}.0`],
     ["major", `${major + 1}.0.0`],
   ]);
-  let choice = positionals[0];
+  const choice = positionals[0] ?? await chooseBump(pkg.version, bumps);
   if (!choice) {
-    if (!process.stdin.isTTY) throw new Error(usage);
-    for (const [name, version] of bumps) console.log(`  ${name.padEnd(6)} ${version}`);
-    const prompt = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      choice = (await prompt.question(`当前为 ${pkg.version}，选择升级级别或输入版本号 [patch] `)).trim() || "patch";
-    } finally {
-      prompt.close();
-    }
+    console.log("已取消发版。");
+    return;
   }
 
   const version = bumps.get(choice) ?? choice;
