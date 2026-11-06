@@ -96,6 +96,7 @@ export async function renderSettings(root: HTMLElement): Promise<void> {
 
 export function disposeSettings(): void {
   endServiceDrag();
+  stopServiceReorderMotion();
   cancelHotkeyRecording?.();
   pageListeners?.abort();
   pageListeners = undefined;
@@ -210,11 +211,13 @@ function field(label: string, sub: string, control: HTMLElement): HTMLElement {
 
 // ---- 翻译服务 ----
 
-const serviceRows = new Map<string, { row: HTMLElement; refresh: () => void }>();
+const serviceRows = new Map<string, { row: HTMLElement; card: HTMLElement; refresh: () => void }>();
 let serviceList: HTMLElement | undefined;
 let serviceOrderStatus: HTMLElement | undefined;
 let draggedService: string | null = null;
+let serviceDragDistance = 0;
 let dropMarker: { row: HTMLElement; edge: "before" | "after" } | undefined;
+const serviceReorderAnimations: Animation[] = [];
 
 function renderServices(signal: AbortSignal): void {
   const host = sectionHosts.services!;
@@ -249,6 +252,7 @@ function renderServices(signal: AbortSignal): void {
     clearServiceDrop();
     target.row.setAttribute("data-drop", edge);
     dropMarker = { row: target.row, edge };
+    previewServiceDrop(draggedService, target.name, target.after);
   }
   list.addEventListener("dragenter", markServiceDrop, { signal });
   list.addEventListener("dragover", markServiceDrop, { signal });
@@ -260,8 +264,8 @@ function renderServices(signal: AbortSignal): void {
     if (!name) return;
     event.preventDefault();
     const target = serviceDropTarget(name, event.clientY);
-    endServiceDrag();
-    if (target) moveService(name, target.name, target.after);
+    if (target) dropService(name, target.name, target.after);
+    else endServiceDrag();
   }, { signal });
 }
 
@@ -271,7 +275,10 @@ function refreshServiceRows(): void {
   for (const name of settings.services.order) {
     const service = serviceRows.get(name);
     if (!service) continue;
-    if (service.row !== next) serviceList.insertBefore(service.row, next);
+    if (service.row !== next) {
+      stopServiceReorderMotion();
+      serviceList.insertBefore(service.row, next);
+    }
     next = service.row.nextSibling;
     service.refresh();
   }
@@ -294,15 +301,71 @@ function serviceDropTarget(source: string, y: number): { name: string; row: HTML
 }
 
 function clearServiceDrop(): void {
-  dropMarker?.row.removeAttribute("data-drop");
+  if (!dropMarker) return;
+  dropMarker.row.removeAttribute("data-drop");
   dropMarker = undefined;
+  if (serviceDragDistance) {
+    for (const { card } of serviceRows.values()) card.style.transform = "";
+  }
 }
 
 function endServiceDrag(): void {
   if (!draggedService) return;
   serviceRows.get(draggedService)?.row.classList.remove("dragging");
   draggedService = null;
+  serviceList?.classList.remove("previewing-reorder");
   clearServiceDrop();
+  serviceDragDistance = 0;
+}
+
+function serviceMoveIndex(from: number, targetIndex: number, after: boolean): number {
+  const insertion = targetIndex + Number(after);
+  return from < insertion ? insertion - 1 : insertion;
+}
+
+function previewServiceDrop(source: string, target: string, after: boolean): void {
+  if (!serviceDragDistance) return;
+  const order = settings.services.order;
+  const from = order.indexOf(source);
+  const to = serviceMoveIndex(from, order.indexOf(target), after);
+  const distance = from < to ? -serviceDragDistance : serviceDragDistance;
+  serviceList?.classList.add("previewing-reorder");
+  // Move the cards visually while leaving the row bounds stable for hit testing.
+  for (const service of order.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+    const card = serviceRows.get(service)?.card;
+    if (card && service !== source) card.style.transform = `translateY(${distance}px)`;
+  }
+}
+
+function stopServiceReorderMotion(): void {
+  for (const animation of serviceReorderAnimations) animation.cancel();
+  serviceReorderAnimations.length = 0;
+}
+
+function dropService(name: string, target: string, after: boolean): void {
+  const list = serviceList;
+  const positions = [];
+  if (list && serviceDragDistance) {
+    const listTop = list.getBoundingClientRect().top;
+    for (const [service, { card }] of serviceRows) {
+      if (service !== name) positions.push({ card, top: card.getBoundingClientRect().top - listTop });
+    }
+  }
+  endServiceDrag();
+  if (!moveService(name, target, after) || !list || !positions.length) return;
+
+  const listTop = list.getBoundingClientRect().top;
+  const shifts = positions.map(({ card, top }) => ({
+    card,
+    distance: top - (card.getBoundingClientRect().top - listTop),
+  }));
+  for (const { card, distance } of shifts) {
+    if (Math.abs(distance) < 0.5) continue;
+    serviceReorderAnimations.push(card.animate(
+      { transform: [`translateY(${distance}px)`, "translateY(0)"] },
+      { duration: 150, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    ));
+  }
 }
 
 function moveService(name: string, target: string, after = false): boolean {
@@ -310,8 +373,7 @@ function moveService(name: string, target: string, after = false): boolean {
   const from = order.indexOf(name);
   const targetIndex = order.indexOf(target);
   if (from < 0 || targetIndex < 0) return false;
-  let to = targetIndex + Number(after);
-  if (from < to) to--;
+  const to = serviceMoveIndex(from, targetIndex, after);
   if (from === to) return false;
   order.splice(from, 1);
   order.splice(to, 0, name);
@@ -324,7 +386,7 @@ function moveService(name: string, target: string, after = false): boolean {
   return true;
 }
 
-function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refresh: () => void } {
+function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; card: HTMLElement; refresh: () => void } {
   const title = SERVICE_NAMES[name] ?? name;
   const fields = SERVICE_CREDENTIALS[name] ?? [];
   const keyless = fields.length === 0;
@@ -332,6 +394,8 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   let busy = false;
   let testing = false;
   const row = el("li", "service-row");
+  const card = el("div", "service-card");
+  row.append(card);
   const head = el("div", "field service-head");
   const label = el("div", "service-name");
   const titleLine = el("div", "service-title-line");
@@ -361,8 +425,13 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
     event.dataTransfer.setData("application/x-sotto-service", name);
     event.dataTransfer.effectAllowed = "move";
     const { left, top } = identity.getBoundingClientRect();
+    stopServiceReorderMotion();
     event.dataTransfer.setDragImage(identity, event.clientX - left, event.clientY - top);
     draggedService = name;
+    if (serviceList && globalThis.matchMedia?.("(prefers-reduced-motion: no-preference)").matches) {
+      const gap = parseFloat(getComputedStyle(serviceList).rowGap);
+      serviceDragDistance = row.getBoundingClientRect().height + gap;
+    }
     row.classList.add("dragging");
   }, { signal });
   grip.addEventListener("dragend", endServiceDrag, { signal });
@@ -410,8 +479,8 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   if (!keyless) actions.append(configure);
   actions.append(moveToTop, toggle);
   head.append(identity, actions);
-  row.append(head);
-  if (keyless) return { row, refresh };
+  card.append(head);
+  if (keyless) return { row, card, refresh };
 
   const getKey = el("button", "text-btn", "获取凭证");
   getKey.addEventListener("click", () => {
@@ -455,7 +524,7 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
   footer.append(saveKey, test, result);
   form.append(footer);
   panel.append(form, usage);
-  row.append(panel);
+  card.append(panel);
 
   form.addEventListener("input", () => {
     result.textContent = "";
@@ -488,7 +557,7 @@ function serviceRow(name: string, signal: AbortSignal): { row: HTMLElement; refr
       refresh();
     }
   });
-  return { row, refresh };
+  return { row, card, refresh };
 
   function refresh(): void {
     const configured = credentials.configured.includes(name);

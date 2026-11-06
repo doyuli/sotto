@@ -865,20 +865,32 @@ body[data-route="bubble"] {
 
 .service-row {
   position: relative;
+}
+
+.service-card {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
   padding: 10px 14px;
 }
 
-.service-row.dragging {
+.service-row.dragging > .service-card {
   background: var(--card-soft);
+}
+
+.previewing-reorder .service-card {
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.previewing-reorder .dragging > .service-card {
+  opacity: 0;
 }
 
 .service-row[data-drop]::before,
 .service-row[data-drop]::after {
   content: "";
   position: absolute;
+  z-index: 1;
   background: var(--accent);
   pointer-events: none;
 }
@@ -897,19 +909,19 @@ body[data-route="bubble"] {
 }
 
 .service-row[data-drop="before"]::before {
-  top: -9px;
+  top: -8px;
 }
 
 .service-row[data-drop="before"]::after {
-  top: -7px;
+  top: -6px;
 }
 
 .service-row[data-drop="after"]::before {
-  bottom: -9px;
+  bottom: -8px;
 }
 
 .service-row[data-drop="after"]::after {
-  bottom: -7px;
+  bottom: -6px;
 }
 
 .service-row .field {
