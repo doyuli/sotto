@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -111,6 +112,11 @@ func (a *application) ready() {
 	})
 	a.bubbles = newBubbleManager(a.isQuitting)
 	a.snip.isQuitting = a.isQuitting
+	if runtime.GOOS == "windows" {
+		// Start WebView2 initialization while the app is launching, before
+		// the first selection needs a window. The page stays hidden until used.
+		a.bubbles.current = a.bubbles.create(cfg)
+	}
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
 	}

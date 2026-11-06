@@ -58,10 +58,6 @@ var (
 // Virtual-key codes and SendInput constants.
 const (
 	vkControl = 0x11
-	vkMenu    = 0x12 // Alt
-	vkShift   = 0x10
-	vkLWin    = 0x5B
-	vkRWin    = 0x5C
 	vkC       = 0x43
 	vkInsert  = 0x2D
 
@@ -105,35 +101,15 @@ func keyEvent(vk uint16, up bool) keyboardInput {
 	return keyboardInput{Type: inputKeyboard, WVk: vk, DwFlags: flags}
 }
 
-// copyBlockers are the modifiers that turn a plain Ctrl+C into
-// something else: Ctrl+Alt+C dies in the window menu, Ctrl+Shift+C is
-// another shortcut in half the apps, and a Win chord never copies. Ctrl
-// itself is not among them — a copy sent while Ctrl is held is exactly
-// the copy. The transaction still waits for Ctrl to avoid mistaking its
-// later release for unrelated user input.
-var copyBlockers = map[uint16]bool{
-	vkMenu:  true, // Alt
-	vkShift: true,
-	vkLWin:  true,
-	vkRWin:  true,
-}
-
-// waitCopyModifiers waits for the modifiers that would corrupt the copy
-// to come up on their own. Ctrl is also awaited so its eventual release
-// cannot be mistaken for new input while restoring the clipboard.
-// Synthesizing their keyups looks equivalent but is
-// not: an Alt keyup with no matching keydown puts the focused window
-// into menu mode, and the Ctrl+C that follows is eaten by the menu —
-// the copy then never lands, which made the clipboard path fail for
-// every hotkey that carries Alt. Real key releases leave no such state
-// behind, so the grab waits for them, and when they do not come it
-// skips the copy rather than send a corrupted chord.
-func waitCopyModifiers(ctx context.Context, timeout time.Duration) error {
+// waitCopyKeys waits for the entire shortcut to come up on its own. A
+// modifier can alter the copy chord, and a later release of the shortcut's
+// main key looks like new input to the clipboard transaction's watcher.
+func waitCopyKeys(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
-	for anyKeyDown(copyBlockers) || anyKeyDown(map[uint16]bool{vkControl: true}) {
+	for copyKeysDown(keyDown) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -145,15 +121,20 @@ func waitCopyModifiers(ctx context.Context, timeout time.Duration) error {
 	return ctx.Err()
 }
 
-// anyKeyDown reports whether any of the given virtual keys is held.
-// GetAsyncKeyState's high bit is set while the key is down.
-func anyKeyDown(keys map[uint16]bool) bool {
-	for vk := range keys {
-		if r, _, _ := procGetAsyncKeyState.Call(uintptr(vk)); int16(r) < 0 {
+// Scan the keyboard range to cover custom shortcuts as well as the default.
+// Mouse buttons are below VK_BACK and are watched separately during copy.
+func copyKeysDown(down func(uint16) bool) bool {
+	for vk := uint16(0x08); vk <= 0xFE; vk++ {
+		if down(vk) {
 			return true
 		}
 	}
 	return false
+}
+
+func keyDown(vk uint16) bool {
+	state, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	return int16(state) < 0
 }
 
 // copyChord is the key sequence a simulated copy sends. The modifiers go
@@ -182,9 +163,7 @@ func copyChordFor(class string) (copyChord, bool) {
 
 // sendCopy sends one copy chord.
 func sendCopy(chord copyChord, marker uintptr) bool {
-	return sendKeys(copyKeyEvents(chord, marker, func(vk uint16) bool {
-		return anyKeyDown(map[uint16]bool{vk: true})
-	})...)
+	return sendKeys(copyKeyEvents(chord, marker, keyDown)...)
 }
 
 func copyKeyEvents(chord copyChord, marker uintptr, down func(uint16) bool) []keyboardInput {
@@ -277,7 +256,7 @@ func saveClipboard() *clipboardSnapshot {
 		return nil
 	}
 	defer closeClipboard()
-	snap := clipboardSnapshot{sequence: clipboardSeq()}
+	var snap clipboardSnapshot
 	var total uintptr
 	for f := uintptr(0); ; {
 		f, _, _ = procEnumClipboardFormats.Call(f)
@@ -306,6 +285,9 @@ func saveClipboard() *clipboardSnapshot {
 		procGlobalUnlock.Call(h)
 		snap.formats = append(snap.formats, clipboardFormat{id: id, data: data})
 	}
+	// Reading delayed formats can advance the sequence. Record it after
+	// materializing the snapshot while the clipboard is still open.
+	snap.sequence = clipboardSeq()
 	return &snap
 }
 

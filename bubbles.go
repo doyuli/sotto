@@ -387,8 +387,8 @@ func (b *bubble) stopOutsideClick() {
 }
 
 // create makes a hidden bubble window. It runs outside m.mu — creating
-// a window waits for the main thread — but under showMu, so no two
-// bubbles are ever created at once.
+// a window waits for the main thread — before hotkeys are registered or
+// under showMu, so no two bubbles are ever created at once.
 func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	id := m.nextID
 	m.nextID++
@@ -416,6 +416,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	// Once the bubble has focus, the blur listener can handle dismissal.
 	b.win.OnFocus(b.stopOutsideClick)
 	b.win.OnReadyToShow(func() {
+		log.Printf("bubble: page ready id=%d", b.id)
 		m.mu.Lock()
 		b.ready = true
 		show := b.pendingShow

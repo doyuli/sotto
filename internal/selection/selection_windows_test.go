@@ -117,16 +117,13 @@ func TestCopyChordFor(t *testing.T) {
 	}
 }
 
-func TestCopyBlockers(t *testing.T) {
-	// The keys whose holding corrupts a copy. Ctrl must stay out: a copy
-	// sent while Ctrl is held is exactly the copy, and waiting for its
-	// release would only delay every Ctrl-carrying hotkey.
-	for _, vk := range []uint16{vkMenu, vkShift, vkLWin, vkRWin} {
-		if !copyBlockers[vk] {
-			t.Errorf("vk 0x%X should be a copy blocker", vk)
+func TestCopyWaitsForShortcutKeyAfterModifiersAreReleased(t *testing.T) {
+	for _, held := range []uint16{'D', 0x87, vkControl, 0x12, 0x10, 0x5B, 0x5C} {
+		if !copyKeysDown(func(vk uint16) bool { return vk == held }) {
+			t.Errorf("held key 0x%X did not block copy", held)
 		}
 	}
-	if copyBlockers[vkControl] {
-		t.Error("vkControl must not be a copy blocker")
+	if copyKeysDown(func(vk uint16) bool { return vk == 1 }) {
+		t.Error("left mouse button counted as a held keyboard key")
 	}
 }

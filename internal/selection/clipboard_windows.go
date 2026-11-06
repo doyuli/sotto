@@ -12,7 +12,7 @@ const (
 	clipboardPoll    = 10 * time.Millisecond
 	clipboardSettle  = 40 * time.Millisecond
 	clipboardTimeout = 2 * time.Second
-	modifierWait     = 1200 * time.Millisecond
+	keyReleaseWait   = 1200 * time.Millisecond
 )
 
 func grabClipboard(ctx context.Context) (Selection, error) {
@@ -36,7 +36,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if !ok {
 		return Selection{}, ErrNoSelection
 	}
-	if err := waitCopyModifiers(ctx, modifierWait); err != nil {
+	if err := waitCopyKeys(ctx, keyReleaseWait); err != nil {
 		return Selection{}, err
 	}
 	if !sameForeground(hwnd, pid) {
@@ -72,7 +72,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	}
 	defer watch.stop()
 	// Hook setup can take time; validate the original source again before copy.
-	if !watch.unchanged() {
+	if copyKeysDown(keyDown) || !watch.unchanged() {
 		return Selection{}, fmt.Errorf("input before copy injection: %w", ErrSourceChanged)
 	}
 	if clipboardSeq() != before || !sameForeground(hwnd, pid) {

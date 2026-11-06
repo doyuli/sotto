@@ -28,7 +28,7 @@ var (
 	// ignored the simulated copy.
 	ErrNoSelection           = errors.New("no text selected")
 	ErrSourceChanged         = errors.New("selection source changed")
-	ErrShortcutHeld          = errors.New("shortcut modifiers still held")
+	ErrShortcutHeld          = errors.New("shortcut keys still held")
 	ErrClipboardUnsafe       = errors.New("clipboard cannot be safely preserved")
 	ErrClipboardRestore      = errors.New("clipboard restore incomplete")
 	ErrClipboardRecoveryGone = errors.New("clipboard recovery no longer available")
