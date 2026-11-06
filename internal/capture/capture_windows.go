@@ -112,8 +112,9 @@ func displays() []display {
 			physH: int(info.rcMonitor.Bottom - info.rcMonitor.Top),
 			dpi:   96,
 		}
-		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&d.dpi)), uintptr(unsafe.Pointer(&d.dpi))); r != 0 || d.dpi == 0 {
-			d.dpi = 96
+		var dx, dy uint32
+		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx != 0 {
+			d.dpi = int(dx)
 		}
 		// mygo's own conversion, so a DIP here is a DIP there.
 		d.dipX = (d.physX*96 + d.dpi/2) / d.dpi

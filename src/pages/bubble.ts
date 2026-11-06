@@ -44,7 +44,7 @@ function iconButton(icon: keyof typeof ICONS, title: string, className = ""): HT
 }
 
 // The page's own state, on top of what Go pushed through Ready and the
-// events. The textarea owns the text; cards re-render wholesale.
+// events. The textarea owns the draft; unchanged cards retain their DOM nodes.
 let bubbleID = 0;
 let state: BubbleState | null = null;
 let reqID = ""; // the run the cards are showing
@@ -61,6 +61,7 @@ let resetVersion = 0;
 let mounted = false;
 let queued: (() => void)[] = [];
 let subscriptions: (() => void)[] = [];
+let pageListeners: AbortController | undefined;
 const cards = new Map<string, CardState>();
 const cardRequests = new Map<string, string>();
 
@@ -76,24 +77,37 @@ let bubbleRoot: HTMLDivElement;
 
 /** renderBubble mounts the bubble page. */
 export async function renderBubble(root: HTMLElement): Promise<void> {
+  disposeBubble();
+  pageListeners = new AbortController();
+  const { signal } = pageListeners;
   const params = new URLSearchParams(location.hash.split("?")[1] ?? "");
   bubbleID = Number(params.get("b") ?? "0");
 
-  for (const off of subscriptions) off();
-  subscriptions = []; mounted = false; queued = []; state = null;
   build(root);
-  wireEvents();
+  wireEvents(signal);
 
   try {
     const version = resetVersion;
     const snapshot = await BubbleSvc.ready(bubbleID);
+    if (signal.aborted) return;
     if (version === resetVersion) apply(snapshot);
     mounted = true;
     for (const event of queued) event();
     queued = [];
   } catch {
+    if (signal.aborted) return;
+    disposeBubble();
     root.replaceChildren(el("div", "bubble-error", "气泡已关闭"));
   }
+}
+
+// Route changes must also release listeners when the next page is not a bubble.
+export function disposeBubble(): void {
+  pageListeners?.abort();
+  pageListeners = undefined;
+  for (const off of subscriptions) off();
+  subscriptions = []; mounted = false; queued = []; state = null;
+  reqID = ""; cards.clear(); cardNodes.clear(); cardRequests.clear();
 }
 
 function build(root: HTMLElement): void {
@@ -169,11 +183,11 @@ function build(root: HTMLElement): void {
   statusHost.setAttribute("role", "status");
   body.append(statusHost, composer, languageBar, cardsHost);
   bubbleRoot.append(top, body);
-  root.append(bubbleRoot);
+  root.replaceChildren(bubbleRoot);
   swap.addEventListener("click", swapLanguages);
 }
 
-function wireEvents(): void {
+function wireEvents(signal: AbortSignal): void {
   input.addEventListener("input", () => {
     grow();
     // Clearing the composer hides the old cards at once; text changes wait
@@ -201,7 +215,7 @@ function wireEvents(): void {
     if (e.key !== "Escape") return;
     if (e.isComposing) return;
     closeBubble();
-  });
+  }, { signal });
   pinButton.addEventListener("click", () => {
     // Pin keeps the bubble; pinning again lets go of it.
     if (state?.pinned) {
@@ -423,7 +437,7 @@ function renderStatus(): void {
   }
   if (state?.clipboardRecoveryID) {
     const recovery = state.clipboardRecoveryID;
-    statusHost.append(el("span", "capture-message", "上次取词的剪贴板尚未完整恢复，退出应用会丢弃恢复副本。"));
+    statusHost.append(el("span", "capture-message", "之前复制的内容尚未恢复，部分应用的划词翻译已暂停。请重试恢复或放弃恢复，也可直接输入或截图翻译。退出应用后，这些内容将无法恢复。"));
     const restore = el("button", "text-btn", "重试恢复剪贴板");
     restore.addEventListener("click", async () => {
       restore.disabled = true;
@@ -436,13 +450,13 @@ function renderStatus(): void {
         toast("剪贴板已恢复"); renderStatus();
       } catch (err) { toast(String(err)); restore.disabled = false; }
     });
-    const discard = el("button", "text-btn", "放弃恢复副本");
+    const discard = el("button", "text-btn", "放弃恢复，继续取词");
     discard.addEventListener("click", async () => {
       try {
         await BubbleSvc.discardClipboardRecovery(recovery);
         if (state?.clipboardRecoveryID === recovery) {
           state.clipboardRecoveryID = "";
-          if (state.message.startsWith("剪贴板未完整恢复")) state.message = "已放弃恢复副本，未更改当前剪贴板。";
+          if (state.message.startsWith("剪贴板未完整恢复")) state.message = "已放弃恢复之前的内容，当前剪贴板没有改变，可继续取词。";
         }
         renderStatus();
       } catch (err) { toast(String(err)); }

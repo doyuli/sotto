@@ -237,12 +237,12 @@ func (BubbleSvc) RestoreClipboard(id string) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, selection.ErrSourceChanged):
-		return errors.New("剪贴板已变化，未覆盖新内容；可放弃恢复副本后继续取词。")
+		return errors.New("你已复制了新内容，本次没有覆盖它。可放弃恢复之前的内容，然后继续取词。")
 	case errors.Is(err, selection.ErrClipboardRecoveryGone):
-		return errors.New("恢复副本已处理，请重新打开面板。")
+		return errors.New("之前的剪贴板内容已恢复或已放弃恢复，请重新打开面板。")
 	default:
 		log.Printf("clipboard recovery: %v", err)
-		return errors.New("剪贴板恢复失败，副本仍保留，可稍后重试。")
+		return errors.New("暂时无法恢复剪贴板，之前的内容仍在，可稍后重试。")
 	}
 }
 

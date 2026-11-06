@@ -1,11 +1,13 @@
 import "./style.css";
-import { renderBubble } from "./pages/bubble";
+import { renderBubble, disposeBubble } from "./pages/bubble";
 import { renderSettings } from "./pages/settings";
-import { renderSnip } from "./pages/snip";
+import { renderSnip, disposeSnip } from "./pages/snip";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 function route(): void {
+  disposeBubble();
+  disposeSnip();
   const path = (location.hash || "#/").slice(1).split("?")[0] ?? "/";
   document.body.dataset.route = path.slice(1) || "root";
   app.replaceChildren();

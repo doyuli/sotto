@@ -13,18 +13,15 @@ import (
 	"sotto/internal/selection"
 )
 
-// bubbleManager owns the bubble windows. One unpinned bubble is kept and
-// reused for every query — hidden, not destroyed, so it reappears at
-// once — and pinning it moves it aside: the next query then opens a new
-// window, and any number of pinned bubbles can coexist.
+// bubbleManager keeps an input draft and a separate reusable capture bubble.
+// Pinning detaches either window from reuse; pinned windows remain independent.
 //
-// Threading: Show and ShowAt run on goroutines — hotkey handlers and
-// tray clicks dispatch to them, the main thread never calls in — and
-// showMu serializes them with each other. The mutex m.mu guards the maps
-// and the bubbles' mutable fields, and is never held across a call that
-// waits for the main thread (window calls wait there): the main thread's
-// callbacks — close, hide, ready — take m.mu for plain memory only, so
-// whoever holds it releases within microseconds and nothing deadlocks.
+// ShowTask enters from a worker and holds showMu while marshaling presentation
+// to the UI thread. Never call ShowTask itself from the UI thread: another
+// worker may hold showMu while waiting for that thread. Presentation and Close
+// commit on the UI thread; m.mu guards state shared with translation workers.
+// Release m.mu before native window calls. See docs/translation-state.md for
+// the identities and ordering rules used by backend state and frontend events.
 type bubbleManager struct {
 	showMu  sync.Mutex
 	mu      sync.Mutex
@@ -74,8 +71,8 @@ type bubble struct {
 // corner, when the grab could see one.
 type Anchor struct{ X, Y int }
 
-// Shown describes the bubble a Show brought up: the window that carries
-// it and the query it holds, for whoever runs that query.
+// Shown identifies an accepted presentation; a new page may still be loading.
+// Win is nil when entry ownership expired or UI dispatch stopped during quit.
 type Shown struct {
 	Win   *mygo.Window
 	ReqID string
@@ -86,19 +83,9 @@ func newBubbleManager(isQuitting func() bool) *bubbleManager {
 	return &bubbleManager{byID: map[int64]*bubble{}, isQuitting: isQuitting}
 }
 
-// Show brings up a bubble beside the pointer.
-func (m *bubbleManager) Show(cfg config.Settings, trigger, text string) Shown {
-	return m.ShowAt(cfg, trigger, text, nil)
-}
-
-// ShowAt brings up a bubble for a query: the unpinned one if it is
-// around, a fresh window otherwise.
-func (m *bubbleManager) ShowAt(cfg config.Settings, trigger, text string, anchor *Anchor) Shown {
-	return m.ShowTask(cfg, trigger, text, anchor, "", "", nil, nil)
-}
-
 // ShowTask separates the persistent input draft from transient captures.
 // valid is checked again on the UI thread, including a delayed first show.
+// Call from a worker only, and check Shown.Win before starting follow-up work.
 func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anchor *Anchor, phase, message string, valid func() bool, cancel context.CancelFunc) Shown {
 	m.showMu.Lock()
 	defer m.showMu.Unlock()

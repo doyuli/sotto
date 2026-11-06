@@ -189,8 +189,8 @@ func (a *application) broadcastSettings(s config.Settings) {
 
 // onHotkey is what a registered accelerator runs, on the main thread.
 // The actions continue on goroutines, where slow work — a selection
-// grab — and the window marshalling that follows it are safe: ShowAt
-// serializes its callers, and the main thread never calls in.
+// grab — and the window marshalling that follows it are safe: ShowTask
+// serializes worker callers before dispatching the presentation to the UI thread.
 func (a *application) onHotkey(action string) func() {
 	return func() { a.startEntry(action) }
 }
@@ -222,7 +222,7 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	message := ""
 	switch {
 	case errors.Is(err, selection.ErrClipboardRestore):
-		message = "剪贴板未完整恢复，已保留恢复副本，请重试恢复或放弃副本。"
+		message = "剪贴板未完整恢复，请先处理之前复制的内容。"
 	case errors.Is(err, selection.ErrClipboardUnsafe):
 		message = "当前剪贴板内容无法安全保留，请使用截图翻译或直接输入。"
 	case errors.Is(err, selection.ErrShortcutHeld):

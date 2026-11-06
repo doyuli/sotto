@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
-import { renderBubble } from "../src/pages/bubble";
-import { renderSnip } from "../src/pages/snip";
+import { renderBubble, disposeBubble } from "../src/pages/bubble";
+import { renderSnip, disposeSnip } from "../src/pages/snip";
 import type { BubbleState, RunReq } from "../src/mygo";
 import { Element, TestDocument } from "./dom";
 
@@ -193,8 +193,87 @@ test("failed clipboard recovery stays available until explicit successful retry"
  button("重试恢复剪贴板").emit("click");
  await new Promise(resolve=>setTimeout(resolve,0));
  expect(button("重试恢复剪贴板").disabled).toBe(false);
- expect(button("放弃恢复副本")).toBeDefined();
+ expect(button("放弃恢复，继续取词")).toBeDefined();
  fail=false; button("重试恢复剪贴板").emit("click");
  await new Promise(resolve=>setTimeout(resolve,0));
  expect(root.querySelectorAll("button").some(b=>b.textContent==="重试恢复剪贴板")).toBe(false);
+});
+
+test("remounting bubbles leaves exactly one Escape handler", async () => {
+ await renderBubble(root as unknown as HTMLElement);
+ await renderBubble(root as unknown as HTMLElement);
+ doc.emit("keydown",{key:"Escape",isComposing:false});
+ expect(calls.filter(c=>c.method==="BubbleSvc.Close")).toHaveLength(1);
+});
+
+test("leaving bubble and snip routes releases document handlers and subscriptions", () => {
+ disposeBubble();
+ const pendingBefore=calls.length;
+ doc.emit("keydown",{key:"Escape",isComposing:false});
+ emit("bubble-presented",{...initial,showID:99,focus:true});
+ expect(calls).toHaveLength(pendingBefore);
+ expect([...listeners.values()].every(handlers=>handlers.size===0)).toBe(true);
+ Object.assign(globalThis,{location:{hash:"#/snip?t=10"},innerWidth:1000,innerHeight:800});
+ renderSnip(root as unknown as HTMLElement);
+ disposeSnip();
+ doc.emit("keydown",{key:"Escape"});
+ doc.emit("contextmenu");
+ expect(calls.filter(c=>c.method==="SnipSvc.Done")).toHaveLength(0);
+});
+
+test("late Ready cannot overwrite a newer mount or another route", async () => {
+ let finishReady!: (value:BubbleState)=>void;
+ callOverride=(method)=> {
+  if(method==="BubbleSvc.Ready") return new Promise(resolve=>{finishReady=resolve;});
+ };
+ const oldMount=renderBubble(root as unknown as HTMLElement);
+ const finishOld=finishReady;
+ callOverride=undefined;
+ initial.text="new mount";
+ await renderBubble(root as unknown as HTMLElement);
+ finishOld({...initial,text:"stale mount"}); await oldMount;
+ expect(input().value).toBe("new mount");
+
+ callOverride=(method)=> {
+  if(method==="BubbleSvc.Ready") return new Promise(resolve=>{finishReady=resolve;});
+ };
+ const leaving=renderBubble(root as unknown as HTMLElement);
+ disposeBubble();
+ const other=doc.createElement("div"); other.textContent="another route"; root.replaceChildren(other);
+ finishReady(initial); await leaving;
+ expect(root.firstChild).toBe(other);
+ expect([...listeners.values()].every(handlers=>handlers.size===0)).toBe(true);
+});
+
+test("late failed Ready cannot erase another route", async () => {
+ let rejectReady!: (reason:Error)=>void;
+ callOverride=(method)=> {
+  if(method==="BubbleSvc.Ready") return new Promise((_,reject)=>{rejectReady=reject;});
+ };
+ const mounting=renderBubble(root as unknown as HTMLElement);
+ disposeBubble();
+ const other=doc.createElement("div"); root.replaceChildren(other);
+ rejectReady(new Error("old page closed")); await mounting;
+ expect(root.firstChild).toBe(other);
+});
+
+test("format loading preserves copy focus and peer updates preserve format focus", async () => {
+ emit("bubble-reset",{...initial,targetLang:"en"});
+ let finishFormats!: (value:unknown)=>void;
+ callOverride=(method)=> {
+  if(method==="TranslateSvc.Formats") return new Promise(resolve=>{finishFormats=resolve;});
+ };
+ emit("translation-update",{reqID:"r",service:"google",text:"hello world",err:""});
+ const card=root.querySelector(".card-ok")!;
+ const copy=button("复制"); copy.focus();
+ finishFormats([{style:"snake",label:"蛇形",value:"hello_world"}]);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ expect(doc.activeElement).toBe(copy);
+ expect(root.querySelector(".card-ok")).toBe(card);
+ const format=button("蛇形：hello_world"); format.focus();
+ emit("translation-update",{reqID:"r",service:"baidu",text:"peer result",err:""});
+ finishFormats([{style:"snake",label:"蛇形",value:"peer_result"}]);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ expect(button("蛇形：hello_world")).toBe(format);
+ expect(doc.activeElement).toBe(format);
 });

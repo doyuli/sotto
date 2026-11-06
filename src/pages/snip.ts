@@ -3,10 +3,16 @@ import { el } from "../ui";
 
 // Every mount owns its listeners; changing the screenshot session aborts them.
 let listeners: AbortController | undefined;
-export function renderSnip(root: HTMLElement): void {
+export function disposeSnip(): void {
   listeners?.abort();
-  listeners = new AbortController();
-  const { signal } = listeners;
+  listeners = undefined;
+}
+
+export function renderSnip(root: HTMLElement): void {
+  disposeSnip();
+  const controller = new AbortController();
+  listeners = controller;
+  const { signal } = controller;
   const session = Number(new URLSearchParams(location.hash.split("?")[1] ?? "").get("t"));
   root.replaceChildren();
   const veil = el("div", "snip-veil");
@@ -20,7 +26,7 @@ export function renderSnip(root: HTMLElement): void {
   const finish = (rect: { x: number; y: number; w: number; h: number } | null) => {
     if (submitted) return;
     submitted = true;
-    listeners?.abort();
+    controller.abort();
     void SnipSvc.done(session, rect);
   };
   const draw = (x: number, y: number) => {
