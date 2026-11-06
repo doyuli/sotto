@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="600" alt="Sotto 翻译气泡预览">
+  <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
 Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。

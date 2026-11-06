@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="600" alt="Sotto Translation Bubble Preview">
+  <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
 Sotto is a desktop translation utility tailored for Windows. Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
