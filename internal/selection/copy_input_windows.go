@@ -14,7 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const whKeyboardLL = 13
+const (
+	whKeyboardLL = 13
+	wmMouseMove  = 0x0200
+)
 
 type keyboardHookInput struct {
 	key, scan, flags, time uint32
@@ -43,7 +46,7 @@ func watchCopyInput() (*copyInputWatch, error) {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		defer close(w.done)
-		defer w.changed.Store(true)
+		defer w.invalidate(copyInputStopped)
 		var message msg
 		procPeekMessageW.Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0, 0)
 		w.thread = windows.GetCurrentThreadId()
@@ -86,7 +89,7 @@ func (w *copyInputWatch) stop() {
 	default:
 	}
 	if ok, _, err := procPostThreadMessageW.Call(uintptr(w.thread), wmQuit, 0, 0); ok == 0 {
-		w.changed.Store(true)
+		w.invalidate(copyInputStopped)
 		log.Printf("stop copy input watch: %v", err)
 		return
 	}
@@ -94,10 +97,10 @@ func (w *copyInputWatch) stop() {
 }
 
 func copyKeyboardHook(code int, wp, lp uintptr) uintptr {
-	if code >= 0 {
+	if code == 0 {
 		if state := activeCopyInput.Load(); state != nil {
 			input := (*keyboardHookInput)(native(lp))
-			state.observe(input.flags&0x10 != 0, input.extra) // LLKHF_INJECTED
+			state.observeKey(input.flags&0x10 != 0, input.extra) // LLKHF_INJECTED
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, uintptr(code), wp, lp)
@@ -105,10 +108,9 @@ func copyKeyboardHook(code int, wp, lp uintptr) uintptr {
 }
 
 func copyMouseHook(code int, wp, lp uintptr) uintptr {
-	if code >= 0 {
+	if code == 0 {
 		if state := activeCopyInput.Load(); state != nil {
-			input := (*msllHookStruct)(native(lp))
-			state.observe(input.Flags&1 != 0, input.ExtraInfo) // LLMHF_INJECTED
+			state.observeMouse(wp == wmMouseMove)
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, uintptr(code), wp, lp)

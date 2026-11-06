@@ -117,13 +117,13 @@ func TestCopyChordFor(t *testing.T) {
 	}
 }
 
-func TestCopyWaitsForShortcutKeyAfterModifiersAreReleased(t *testing.T) {
-	for _, held := range []uint16{'D', 0x87, vkControl, 0x12, 0x10, 0x5B, 0x5C} {
-		if !copyKeysDown(func(vk uint16) bool { return vk == held }) {
-			t.Errorf("held key 0x%X did not block copy", held)
+func TestCopyWaitsForShortcutKeysAndMouseButtons(t *testing.T) {
+	for _, held := range []uint16{'D', 0x87, vkControl, 0x12, 0x10, 0x5B, 0x5C, 1, 2, 4, 5, 6} {
+		if !copyControlsDown(func(vk uint16) bool { return vk == held }) {
+			t.Errorf("held virtual key 0x%X did not block copy", held)
 		}
 	}
-	if copyKeysDown(func(vk uint16) bool { return vk == 1 }) {
-		t.Error("left mouse button counted as a held keyboard key")
+	if copyControlsDown(func(uint16) bool { return false }) {
+		t.Error("copy blocked after all keys and buttons were released")
 	}
 }

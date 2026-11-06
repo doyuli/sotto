@@ -236,7 +236,7 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	case errors.Is(err, selection.ErrClipboardUnsafe):
 		message = "当前剪贴板内容无法安全保留，请使用截图翻译或直接输入。"
 	case errors.Is(err, selection.ErrShortcutHeld):
-		message = "请松开快捷键后重试，或直接输入要翻译的文字。"
+		message = "请松开快捷键和鼠标按键后重试，或直接输入要翻译的文字。"
 	case errors.Is(err, selection.ErrNoSelection):
 		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
 	case errors.Is(err, context.DeadlineExceeded):

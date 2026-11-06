@@ -101,15 +101,16 @@ func keyEvent(vk uint16, up bool) keyboardInput {
 	return keyboardInput{Type: inputKeyboard, WVk: vk, DwFlags: flags}
 }
 
-// waitCopyKeys waits for the entire shortcut to come up on its own. A
+// waitCopyRelease waits for the entire shortcut to come up on its own. A
 // modifier can alter the copy chord, and a later release of the shortcut's
 // main key looks like new input to the clipboard transaction's watcher.
-func waitCopyKeys(ctx context.Context, timeout time.Duration) error {
+// Also wait for mouse buttons so the copy cannot begin during a drag.
+func waitCopyRelease(ctx context.Context, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
-	for copyKeysDown(keyDown) {
+	for copyControlsDown(keyDown) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -121,10 +122,9 @@ func waitCopyKeys(ctx context.Context, timeout time.Duration) error {
 	return ctx.Err()
 }
 
-// Scan the keyboard range to cover custom shortcuts as well as the default.
-// Mouse buttons are below VK_BACK and are watched separately during copy.
-func copyKeysDown(down func(uint16) bool) bool {
-	for vk := uint16(0x08); vk <= 0xFE; vk++ {
+// Scan the virtual-key range, including mouse buttons and custom shortcuts.
+func copyControlsDown(down func(uint16) bool) bool {
+	for vk := uint16(0x01); vk <= 0xFE; vk++ {
 		if down(vk) {
 			return true
 		}
