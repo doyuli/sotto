@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/egoist/mygo"
 
 	"sotto/internal/config"
+	"sotto/internal/selection"
 )
 
 // bubbleManager owns the bubble windows. One unpinned bubble is kept and
@@ -47,6 +49,8 @@ type bubble struct {
 	ready       bool
 	pendingShow func()
 	offBlur     func() // unregisters focus hiding; Pin calls it
+	// offOutsideClick belongs to the main thread, like the window it watches.
+	offOutsideClick func()
 }
 
 // Anchor is a DIP screen point to open a bubble beside — a selection's
@@ -71,9 +75,7 @@ func (m *bubbleManager) Show(cfg config.Settings, trigger, text string) Shown {
 }
 
 // ShowAt brings up a bubble for a query: the unpinned one if it is
-// around, a fresh window otherwise. Selection and OCR bubbles appear
-// without taking the focus from the app the user was in; an input bubble
-// takes it, as a launcher's panel does.
+// around, a fresh window otherwise.
 func (m *bubbleManager) ShowAt(cfg config.Settings, trigger, text string, anchor *Anchor) Shown {
 	if trigger == "input" {
 		text = "" // an input bubble starts empty
@@ -104,7 +106,7 @@ func (m *bubbleManager) ShowAt(cfg config.Settings, trigger, text string, anchor
 
 	m.position(b, trigger, anchor)
 	BubbleReset.Emit(b.win, state)
-	m.showWin(b, trigger)
+	m.showWin(b)
 	return Shown{Win: b.win, ReqID: b.reqID, Text: text}
 }
 
@@ -112,9 +114,9 @@ func (m *bubbleManager) ShowAt(cfg config.Settings, trigger, text string, anchor
 // as the reusable one, so the next query opens a new window.
 func (m *bubbleManager) Pin(id int64) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	b, ok := m.byID[id]
 	if !ok || b.pinned {
+		m.mu.Unlock()
 		return
 	}
 	b.pinned = true
@@ -126,6 +128,8 @@ func (m *bubbleManager) Pin(id int64) {
 		m.current = nil
 	}
 	m.pinned = append(m.pinned, b)
+	m.mu.Unlock()
+	m.refreshOutsideClick(b)
 }
 
 // Unpin returns a pinned bubble to the transient life: it hides on blur
@@ -134,9 +138,9 @@ func (m *bubbleManager) Pin(id int64) {
 // themselves once hidden (see the OnHide handler in create).
 func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	b, ok := m.byID[id]
 	if !ok || !b.pinned {
+		m.mu.Unlock()
 		return
 	}
 	b.pinned = false
@@ -147,6 +151,8 @@ func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 	if cfg.Bubble.AutoHide && b.offBlur == nil {
 		b.offBlur = b.win.OnBlur(b.win.Hide)
 	}
+	m.mu.Unlock()
+	m.refreshOutsideClick(b)
 }
 
 // Close hides an unpinned bubble and closes a pinned one for good.
@@ -159,13 +165,12 @@ func (m *bubbleManager) Close(id int64) {
 	}
 }
 
-// setAutoHide turns the unpinned bubble's hide-on-blur on or off; it
-// runs from applySettings, on the main thread.
+// setAutoHide turns the unpinned bubble's automatic hiding on or off.
 func (m *bubbleManager) setAutoHide(on bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	b := m.current
 	if b == nil {
+		m.mu.Unlock()
 		return
 	}
 	switch {
@@ -175,6 +180,8 @@ func (m *bubbleManager) setAutoHide(on bool) {
 		b.offBlur()
 		b.offBlur = nil
 	}
+	m.mu.Unlock()
+	m.refreshOutsideClick(b)
 }
 
 // State returns the bubble's current state for its page.
@@ -216,21 +223,60 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 }
 
 // showWin displays the bubble now, or as soon as its page is ready.
-// Every bubble takes the focus when it shows: the hide-on-blur that
-// makes a bubble go away when the user clicks elsewhere only fires on a
-// window that has the focus, and a focusless overlay (ShowInactive)
-// would linger forever. Esc, or a click outside, hides it and the
-// previous app gets the focus back.
-func (m *bubbleManager) showWin(b *bubble, _ string) {
-	show := b.win.Show
+func (m *bubbleManager) showWin(b *bubble) {
+	show := func() {
+		b.win.Show()
+		m.refreshOutsideClick(b)
+	}
 	m.mu.Lock()
 	if b.ready {
 		m.mu.Unlock()
-		show()
+		mygo.RunOnMain(show)
 		return
 	}
 	b.pendingShow = show
 	m.mu.Unlock()
+}
+
+// Windows can deny foreground activation after an asynchronous selection
+// grab. A bubble that never acquired focus cannot dismiss itself on blur.
+func (m *bubbleManager) refreshOutsideClick(b *bubble) {
+	mygo.RunOnMain(func() {
+		b.stopOutsideClick()
+		m.mu.Lock()
+		needsWatch := b.trigger == "selection" && b.offBlur != nil
+		reqID := b.reqID
+		m.mu.Unlock()
+		if !needsWatch || !b.win.IsVisible() || b.win.IsFocused() {
+			return
+		}
+		active := true // accessed only on the main thread
+		stop, err := selection.WatchOutsideClick(b.win.NativeHandle(), func() {
+			mygo.RunOnMain(func() {
+				m.mu.Lock()
+				dismiss := active && b.reqID == reqID && b.offBlur != nil
+				m.mu.Unlock()
+				if dismiss {
+					b.win.Hide()
+				}
+			})
+		})
+		if err != nil {
+			log.Printf("bubble outside click: %v", err)
+			return
+		}
+		b.offOutsideClick = func() {
+			active = false
+			stop()
+		}
+	})
+}
+
+func (b *bubble) stopOutsideClick() {
+	if b.offOutsideClick != nil {
+		b.offOutsideClick()
+		b.offOutsideClick = nil
+	}
 }
 
 // create makes a hidden bubble window. It runs outside m.mu — creating
@@ -262,11 +308,11 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	})
 	b.win.OnReadyToShow(func() {
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		b.ready = true
-		if b.pendingShow != nil {
-			show := b.pendingShow
-			b.pendingShow = nil
+		show := b.pendingShow
+		b.pendingShow = nil
+		m.mu.Unlock()
+		if show != nil {
 			show()
 		}
 	})
@@ -285,6 +331,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		b.win.Hide()
 	})
 	b.win.OnClosed(func() {
+		b.stopOutsideClick()
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		delete(m.byID, b.id)
@@ -299,6 +346,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	// by Unpin — will never be shown again: recycle it once hidden. The
 	// reusable one, and pinned ones, survive their hides.
 	b.win.OnHide(func() {
+		b.stopOutsideClick()
 		m.mu.Lock()
 		stale := !b.pinned && m.current != b
 		m.mu.Unlock()

@@ -21,3 +21,7 @@ func startDoubleClick(onWord func()) error {
 }
 
 func stopDoubleClick() {}
+
+func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
+	return nil, ErrUnsupported
+}

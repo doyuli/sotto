@@ -276,8 +276,7 @@ func (a *application) grabSelectionOnce() (*selection.Selection, bool) {
 }
 
 // showSelectionBubble opens the bubble for a grabbed selection — at the
-// selection's corner, when the grab could see it, and without stealing
-// the focus from the app the user is in — and runs its translation.
+// selection's corner, when the grab could see it — and runs its translation.
 func (a *application) showSelectionBubble(sel selection.Selection) {
 	var anchor *Anchor
 	if sel.HasRect {
@@ -291,9 +290,7 @@ func (a *application) showSelectionBubble(sel selection.Selection) {
 	})
 }
 
-// applyDoubleClick follows the double-click setting: the hook watches
-// every mouse event in the system, so it only runs while the feature is
-// on.
+// applyDoubleClick enables or disables double-click detection on the mouse hook.
 func (a *application) applyDoubleClick(sel config.SelectionSettings) {
 	if sel.DoubleClick {
 		if err := selection.StartDoubleClick(a.onDoubleClick); err != nil {
