@@ -1,8 +1,12 @@
 # Sotto
 
-Sotto 是一款 Windows 桌面翻译工具：划词、截图或输入文字后，即可在同一个弹窗中对比多个翻译服务的译文，无需切换应用。
+Sotto 是一款 Windows 桌面翻译工具。选中文字、框选屏幕区域，或直接输入文本，即可在当前应用旁边查看译文。
 
-**目前仅适配 Windows。** 如果你用的是 macOS，推荐试试 [Easydict](https://github.com/tisfeng/Easydict)，用起来可能更顺手。
+## 功能
+
+- 在同一个弹窗里**对比多个译文**，支持 Google、DeepL 和 OpenAI 兼容接口等翻译服务。
+- **固定翻译弹窗**，在其他应用里继续查阅译文。
+- **按代码命名格式复制英文译文**，支持 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE` 和 `kebab-case`。
 
 ## 快捷键
 
@@ -12,7 +16,7 @@ Sotto 是一款 Windows 桌面翻译工具：划词、截图或输入文字后�
 | 截图翻译（OCR） | `Ctrl+Alt+S` |
 | 划词翻译 | `Ctrl+Alt+D` |
 
-在托盘设置中可以更改快捷键，启用 DeepL、Google、OpenAI 兼容接口等翻译服务，并为需要凭据的服务配置 API 密钥。英文译文也可以按 `camelCase`、`snake_case` 等命名格式复制。
+从系统托盘打开「设置」，可以修改快捷键、选择翻译服务并配置 API 密钥。
 
 ## 从源码运行
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 
 	"sotto/internal/ocr"
 	"sotto/internal/selection"
@@ -30,6 +31,15 @@ func main() {
 	// line over and quits.
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
+	}
+	mygo.Use(updater.New(updater.Options{
+		Language:               "zh-Hans",
+		Icon:                   iconPNG,
+		DisableAutomaticChecks: true,
+	}))
+	// A saved preference takes precedence over the plugin's default.
+	if updater.AutomaticChecks() {
+		updater.SetAutomaticChecks(false)
 	}
 	app := newApplication()
 	mygo.Bind(

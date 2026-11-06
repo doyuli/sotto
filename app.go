@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
@@ -426,6 +427,7 @@ func (a *application) trayMenu() *mygo.Menu {
 		}},
 		mygo.Separator(),
 		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) }},
+		updater.MenuItem(),
 		{Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
 			Click: func(it *mygo.MenuItem, _ *mygo.Window) {
 				go a.setTrayOpenAtLogin(it.IsChecked())

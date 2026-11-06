@@ -1,5 +1,6 @@
 {
   "name": "sotto",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +9,7 @@
     "build:win": "mygo build -platform windows/amd64,windows/arm64",
     "build:win:x64": "mygo build -platform windows/amd64",
     "build:win:arm64": "mygo build -platform windows/arm64",
+    "release": "bun scripts/release.ts",
     "generate": "mygo generate",
     "dev:web": "vite",
     "test:web": "bun test ./tests",

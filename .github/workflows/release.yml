@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  windows:
+    if: github.repository == 'doyuli/sotto'
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Check version
+        run: |
+          version=$(bun -p 'require("./package.json").version')
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ || "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Expected a stable version and a matching v$version tag." >&2
+            exit 1
+          fi
+      - name: Prepare update notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != true ]]; then
+              echo "Release $GITHUB_REF_NAME is already published." >&2
+              exit 1
+            fi
+            notes=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)
+          else
+            notes=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" --jq .body)
+          fi
+          # MyGo treats level-two headings as the start of a new version.
+          printf '## %s\n\n' "${GITHUB_REF_NAME#v}" > CHANGELOG.md
+          printf '%s\n' "${notes:-Sotto $GITHUB_REF_NAME}" | sed 's/^## /### /' >> CHANGELOG.md
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build signed updates and upload draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$MYGO_UPDATER_PUBLIC_KEY" || -z "$MYGO_UPDATER_PRIVATE_KEY" ]]; then
+            echo "Configure the updater public key variable and private key secret." >&2
+            exit 1
+          fi
+          bun run build:win -upload
