@@ -40,7 +40,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 		return Selection{}, err
 	}
 	if !sameForeground(hwnd, pid) {
-		return Selection{}, ErrSourceChanged
+		return Selection{}, fmt.Errorf("foreground before clipboard snapshot: %w", ErrSourceChanged)
 	}
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
@@ -61,55 +61,68 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	defer prepared.free()
 	before := saved.sequence
 	if clipboardSeq() != before || !sameForeground(hwnd, pid) {
-		return Selection{}, ErrSourceChanged
+		return Selection{}, fmt.Errorf("clipboard or foreground during snapshot: %w", ErrSourceChanged)
 	}
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
-	if !sendCopy(chord) {
-		return Selection{}, ErrNoSelection
+	watch, err := watchCopyInput()
+	if err != nil {
+		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
 	}
-	inputStamp, ok := lastInputStamp()
-	if !ok {
-		return Selection{}, ErrClipboardUnsafe
+	defer watch.stop()
+	// Hook setup can take time; validate the original source again before copy.
+	if !watch.unchanged() {
+		return Selection{}, fmt.Errorf("input before copy injection: %w", ErrSourceChanged)
+	}
+	if clipboardSeq() != before || !sameForeground(hwnd, pid) {
+		return Selection{}, fmt.Errorf("clipboard or foreground before copy injection: %w", ErrSourceChanged)
+	}
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
+	if !sendCopy(chord, watch.marker) {
+		return Selection{}, ErrNoSelection
 	}
 	deadline := time.NewTimer(clipboardTimeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(clipboardPoll)
 	defer tick.Stop()
 	for {
-		stamp, known := lastInputStamp()
-		if !known || stamp != inputStamp || !sameForeground(hwnd, pid) {
-			return Selection{}, ErrSourceChanged
+		if !watch.unchanged() {
+			return Selection{}, fmt.Errorf("input while waiting for copy: %w", ErrSourceChanged)
+		}
+		if !sameForeground(hwnd, pid) {
+			return Selection{}, fmt.Errorf("foreground while waiting for copy: %w", ErrSourceChanged)
 		}
 		seq := clipboardSeq()
 		if seq != before {
 			if clipboardOwnerPID() != pid {
-				return Selection{}, ErrSourceChanged
+				return Selection{}, fmt.Errorf("clipboard owner after copy: %w", ErrSourceChanged)
 			}
 			// Let multiple formats settle, but accept no new input in that interval.
 			time.Sleep(clipboardSettle)
 			seq = clipboardSeq()
-			stamp, known = lastInputStamp()
-			if !known || stamp != inputStamp || clipboardOwnerPID() != pid || !sameForeground(hwnd, pid) {
-				return Selection{}, ErrSourceChanged
+			if !watch.unchanged() {
+				return Selection{}, fmt.Errorf("input while settling copy formats: %w", ErrSourceChanged)
+			}
+			if clipboardOwnerPID() != pid || !sameForeground(hwnd, pid) {
+				return Selection{}, fmt.Errorf("clipboard owner or foreground while settling copy formats: %w", ErrSourceChanged)
 			}
 			text, read := readClipboardText()
-			stamp, known = lastInputStamp()
-			if !known || stamp != inputStamp || clipboardSeq() != seq || clipboardOwnerPID() != pid {
-				return Selection{}, ErrSourceChanged
+			if !watch.unchanged() || clipboardSeq() != seq || clipboardOwnerPID() != pid {
+				return Selection{}, fmt.Errorf("input or clipboard while reading copy: %w", ErrSourceChanged)
 			}
 			// Compare again while holding the clipboard open; an intervening copy wins.
 			outcome, restoredSeq, restoreErr := prepared.restore(owner, seq, func() bool {
-				stamp, known := lastInputStamp()
-				return known && stamp == inputStamp && clipboardSeq() == seq && clipboardOwnerPID() == pid
+				return watch.unchanged() && clipboardSeq() == seq && clipboardOwnerPID() == pid
 			})
 			if outcome == restoreFailed {
 				retainClipboardRecovery(saved, restoredSeq)
 				return Selection{Text: text, Via: "clipboard"}, fmt.Errorf("%w: %w", ErrClipboardRestore, restoreErr)
 			}
 			if outcome == restoreSkipped {
-				return Selection{}, ErrSourceChanged
+				return Selection{}, fmt.Errorf("clipboard restore no longer owned: %w", ErrSourceChanged)
 			}
 			if err := ctx.Err(); err != nil {
 				return Selection{}, err

@@ -8,6 +8,25 @@ import (
 	"sotto/internal/config"
 )
 
+// replaceContent commits a new selection/OCR session under mu. Cancel first,
+// then revoke every old result identity before the replacement can start.
+// Merely reopening an input draft does not replace its content.
+func (b *bubble) replaceContent(cfg config.Settings, trigger, text, phase, message string, cancel context.CancelFunc) {
+	b.stopWork()
+	b.generation++
+	b.sessionID = newRequestID()
+	b.reqID = b.sessionID
+	b.revision = -1
+	b.fullRevision, b.fullReqID = -1, ""
+	b.serviceRevisions = nil
+	b.trigger, b.text = trigger, text
+	b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
+	b.phase, b.message = phase, message
+	b.meta, b.results = nil, nil
+	b.serviceRequests = nil
+	b.cancelCapture = cancel
+}
+
 func (b *bubble) resultList() []TranslationUpdateMsg {
 	out := make([]TranslationUpdateMsg, 0, len(b.results))
 	for _, r := range b.results {
@@ -194,4 +213,8 @@ func (b *bubble) claimClose(session string, showID, revision int64) bool {
 	// OnClose advances once more, rejecting any Run IPC sent before Close.
 	b.revision = revision
 	return true
+}
+
+func (b *bubble) shouldHideAfterBlur(showID int64, visible, focused bool) bool {
+	return b.showID == showID && !b.pinned && b.offBlur != nil && visible && !focused
 }

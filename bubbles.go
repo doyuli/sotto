@@ -135,19 +135,7 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 			m.current = b
 		}
 		if !reuseInput {
-			b.stopWork()
-			b.generation++
-			b.sessionID = newRequestID()
-			b.reqID = b.sessionID
-			b.revision = -1
-			b.fullRevision, b.fullReqID = -1, ""
-			b.serviceRevisions = nil
-			b.trigger, b.text = trigger, text
-			b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
-			b.phase, b.message = phase, message
-			b.meta, b.results = nil, nil
-			b.serviceRequests = nil
-			b.cancelCapture = cancel
+			b.replaceContent(cfg, trigger, text, phase, message, cancel)
 		}
 		b.present()
 		b.canShow = valid
@@ -225,7 +213,7 @@ func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 			m.current = b
 		}
 		if cfg.Bubble.AutoHide && b.offBlur == nil {
-			b.offBlur = b.win.OnBlur(b.win.Hide)
+			b.offBlur = b.win.OnBlur(m.blurHandler(b))
 		}
 		m.mu.Unlock()
 		m.refreshOutsideClick(b)
@@ -249,6 +237,27 @@ func (m *bubbleManager) Close(id int64, sessionID string, showID, revision int64
 	})
 }
 
+// Blur can be delivered while Show/Hide is changing activation. Defer the
+// decision until that native call finishes, then check the actual focus and
+// presentation identity instead of letting an old blur hide the next result.
+func (m *bubbleManager) blurHandler(b *bubble) func() {
+	return func() {
+		m.mu.Lock()
+		showID := b.showID
+		m.mu.Unlock()
+		go mygo.RunOnMain(func() {
+			visible, focused := b.win.IsVisible(), b.win.IsFocused()
+			m.mu.Lock()
+			hide := b.shouldHideAfterBlur(showID, visible, focused)
+			m.mu.Unlock()
+			if hide {
+				log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
+				b.win.Hide()
+			}
+		})
+	}
+}
+
 // setAutoHide also updates visible bubbles displaced by Unpin.
 func (m *bubbleManager) setAutoHide(on bool) {
 	m.mu.Lock()
@@ -258,7 +267,7 @@ func (m *bubbleManager) setAutoHide(on bool) {
 			continue
 		}
 		if on {
-			b.offBlur = b.win.OnBlur(b.win.Hide)
+			b.offBlur = b.win.OnBlur(m.blurHandler(b))
 		} else {
 			b.offBlur()
 			b.offBlur = nil
@@ -316,9 +325,11 @@ func (m *bubbleManager) showWin(b *bubble) {
 		valid := b.canShow
 		m.mu.Unlock()
 		if valid != nil && !valid() {
+			log.Printf("bubble: skip stale show id=%d show=%d", b.id, b.showID)
 			return
 		}
 		b.win.Show()
+		log.Printf("bubble: show id=%d show=%d visible=%t focused=%t", b.id, b.showID, b.win.IsVisible(), b.win.IsFocused())
 		m.refreshOutsideClick(b)
 	}
 	m.mu.Lock()
@@ -341,7 +352,7 @@ func (m *bubbleManager) refreshOutsideClick(b *bubble) {
 		b.stopOutsideClick()
 		m.mu.Lock()
 		needsWatch := b.offBlur != nil
-		sessionID := b.sessionID
+		sessionID, showID := b.sessionID, b.showID
 		m.mu.Unlock()
 		if !needsWatch || !b.win.IsVisible() || b.win.IsFocused() {
 			return
@@ -350,7 +361,7 @@ func (m *bubbleManager) refreshOutsideClick(b *bubble) {
 		stop, err := selection.WatchOutsideClick(b.win.NativeHandle(), func() {
 			mygo.RunOnMain(func() {
 				m.mu.Lock()
-				dismiss := active && b.sessionID == sessionID && b.offBlur != nil
+				dismiss := active && b.sessionID == sessionID && b.showID == showID && b.offBlur != nil
 				m.mu.Unlock()
 				if dismiss {
 					b.win.Hide()
@@ -466,7 +477,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		}
 	})
 	if cfg.Bubble.AutoHide {
-		b.offBlur = b.win.OnBlur(b.win.Hide)
+		b.offBlur = b.win.OnBlur(m.blurHandler(b))
 	}
 	m.mu.Lock()
 	m.byID[id] = b

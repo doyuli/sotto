@@ -30,6 +30,34 @@ func TestKeyboardInputLayout(t *testing.T) {
 	}
 }
 
+func TestCopyKeyEventsTagEveryEventAndPreserveHeldModifiers(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		events := copyKeyEvents(copyChord{modifiers: []uint16{vkControl}, key: vkC}, 123, func(uint16) bool { return held })
+		want := 4
+		if held {
+			want = 2
+		}
+		if len(events) != want {
+			t.Fatalf("got %d events, want %d", len(events), want)
+		}
+		for _, event := range events {
+			if event.Extra != 123 {
+				t.Fatal("unmarked injected event would cancel copy")
+			}
+			if held && event.WVk == vkControl {
+				t.Fatal("released a physically held modifier")
+			}
+		}
+	}
+}
+
+func TestKeyboardHookLayout(t *testing.T) {
+	var input keyboardHookInput
+	if unsafe.Sizeof(input) != 24 || unsafe.Offsetof(input.extra) != 16 {
+		t.Fatal("KBDLLHOOKSTRUCT layout does not match 64-bit Windows")
+	}
+}
+
 func TestToDIP(t *testing.T) {
 	// mygo's conversion (internal/windows toDIP), rounding included.
 	tests := []struct {

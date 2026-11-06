@@ -25,7 +25,6 @@ var (
 	modShcore   = windows.NewLazySystemDLL("shcore.dll")
 
 	procSendInput                  = modUser32.NewProc("SendInput")
-	procGetLastInputInfo           = modUser32.NewProc("GetLastInputInfo")
 	procGetAsyncKeyState           = modUser32.NewProc("GetAsyncKeyState")
 	procGetForegroundWindow        = modUser32.NewProc("GetForegroundWindow")
 	procGetWindowThreadProcessId   = modUser32.NewProc("GetWindowThreadProcessId")
@@ -182,11 +181,17 @@ func copyChordFor(class string) (copyChord, bool) {
 }
 
 // sendCopy sends one copy chord.
-func sendCopy(chord copyChord) bool {
+func sendCopy(chord copyChord, marker uintptr) bool {
+	return sendKeys(copyKeyEvents(chord, marker, func(vk uint16) bool {
+		return anyKeyDown(map[uint16]bool{vk: true})
+	})...)
+}
+
+func copyKeyEvents(chord copyChord, marker uintptr, down func(uint16) bool) []keyboardInput {
 	events := []keyboardInput{}
 	// Do not release a modifier the user is physically holding.
 	for _, mod := range chord.modifiers {
-		if !anyKeyDown(map[uint16]bool{mod: true}) {
+		if !down(mod) {
 			events = append(events, keyEvent(mod, false))
 		}
 	}
@@ -194,14 +199,10 @@ func sendCopy(chord copyChord) bool {
 	for i := len(events) - 3; i >= 0; i-- {
 		events = append(events, keyEvent(events[i].WVk, true))
 	}
-	return sendKeys(events...)
-}
-
-// New user input ends our right to restore a previous clipboard snapshot.
-func lastInputStamp() (uint32, bool) {
-	info := struct{ Size, Time uint32 }{Size: 8}
-	r, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&info)))
-	return info.Time, r != 0
+	for i := range events {
+		events[i].Extra = marker
+	}
+	return events
 }
 
 // foregroundWindow identifies the foreground window: its handle, the
@@ -218,13 +219,6 @@ func foregroundWindow() (hwnd uintptr, pid uint32, class string) {
 		class = syscall.UTF16ToString(buf[:n])
 	}
 	return hwnd, pid, class
-}
-
-// foregroundIsSelf reports whether our own window is in front, whose
-// selection a hotkey does not mean to grab.
-func foregroundIsSelf() bool {
-	_, pid, _ := foregroundWindow()
-	return pid != 0 && pid == windows.GetCurrentProcessId()
 }
 
 // clipboardSeq is the clipboard's change counter.

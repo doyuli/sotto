@@ -61,6 +61,51 @@ func TestRunOrderingAndIsolation(t *testing.T) {
 	}
 }
 
+func TestNewSelectionCancelsPendingTranslationBeforeReplacementStarts(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w}
+	m.byID[1] = b
+	b.replaceContent(config.Default(), "selection", "first", "", "", nil)
+	oldSession := b.sessionID
+	old, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "first", Revision: 0, Text: "first"})
+	if !ok || !m.recordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google"}}, "") {
+		t.Fatal("could not start first selection")
+	}
+	retry, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "retry", Revision: 1, Service: "google"})
+	if !ok {
+		t.Fatal("could not start pending retry")
+	}
+	// This is the same content transition ShowTask uses after acquiring a new
+	// selection, including when the old window was hidden before results arrived.
+	b.replaceContent(config.Default(), "selection", "second", "", "", nil)
+	if old.Err() != context.Canceled || retry.Err() != context.Canceled {
+		t.Fatal("replacement did not cancel all old requests before starting the new one")
+	}
+	if b.sessionID == oldSession || b.generation != 2 || b.text != "second" {
+		t.Fatal("replacement failed to claim new content")
+	}
+	if _, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "late IPC", Revision: 99}); ok {
+		t.Fatal("old page restarted work after replacement")
+	}
+	latest, ok := m.startRun(w, RunReq{SessionID: b.sessionID, ReqID: "second", Revision: 0, Text: "second"})
+	if !ok || latest.Err() != nil {
+		t.Fatal("new selection could not start immediately")
+	}
+	m.recordMeta(w, RunMetaMsg{ReqID: "second", Services: []string{"google"}}, "")
+	for _, reqID := range []string{"first", "retry"} {
+		if m.recordMeta(w, RunMetaMsg{ReqID: reqID, Services: []string{"google"}}, "") ||
+			m.recordResult(w, TranslationUpdateMsg{ReqID: reqID, Service: "google", Text: "stale"}) {
+			t.Fatal("late old request reclaimed the new selection")
+		}
+		m.finishRun(w, reqID)
+	}
+	if latest.Err() != nil || !m.recordResult(w, TranslationUpdateMsg{ReqID: "second", Service: "google", Text: "new"}) {
+		t.Fatal("old completion affected the new request")
+	}
+	m.finishRun(w, "second")
+}
+
 func TestRetryPreservesOtherResultsAndSnapshot(t *testing.T) {
 	m := newBubbleManager(nil)
 	w := &mygo.Window{}
@@ -226,5 +271,32 @@ func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
 				t.Fatal("new presentation cannot close")
 			}
 		})
+	}
+}
+
+func TestDelayedBlurCannotHideANewerSelection(t *testing.T) {
+	b := &bubble{offBlur: func() {}}
+	b.present()
+	previous := b.showID
+	if !b.shouldHideAfterBlur(previous, true, false) {
+		t.Fatal("real outside focus change must hide")
+	}
+	if b.shouldHideAfterBlur(previous, true, true) {
+		t.Fatal("stale blur hid a refocused window")
+	}
+	b.present()
+	if b.shouldHideAfterBlur(previous, true, false) {
+		t.Fatal("previous selection's blur hid the new selection")
+	}
+	if b.shouldHideAfterBlur(b.showID, false, false) {
+		t.Fatal("hidden window was hidden again")
+	}
+	b.pinned = true
+	if b.shouldHideAfterBlur(b.showID, true, false) {
+		t.Fatal("blur hid a pinned window")
+	}
+	b.pinned, b.offBlur = false, nil
+	if b.shouldHideAfterBlur(b.showID, true, false) {
+		t.Fatal("blur ignored disabled auto-hide")
 	}
 }

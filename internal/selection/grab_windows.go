@@ -2,7 +2,13 @@
 
 package selection
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"golang.org/x/sys/windows"
+)
 
 // grab reads the foreground app's selection: UI Automation where the app
 // answers with text — browsers, Office, Windows Terminal — and a
@@ -16,24 +22,26 @@ import "context"
 // Prepare captures identity on the hotkey thread, before background work queues.
 func Prepare() func(context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
-	self := foregroundIsSelf()
+	self := pid != 0 && pid == windows.GetCurrentProcessId()
+	log.Printf("selection: source hwnd=%x pid=%d class=%q self=%t", hwnd, pid, class, self)
 	return func(ctx context.Context) (Selection, error) {
 		if self {
 			return Selection{}, ErrSelfWindow
 		}
 		if !sameForeground(hwnd, pid) {
-			return Selection{}, ErrSourceChanged
+			return Selection{}, fmt.Errorf("foreground before UIA: %w", ErrSourceChanged)
 		}
 		sel, err := grabUIA(ctx)
 		if ctx.Err() != nil {
 			return Selection{}, ctx.Err()
 		}
 		if !sameForeground(hwnd, pid) {
-			return Selection{}, ErrSourceChanged
+			return Selection{}, fmt.Errorf("foreground after UIA: %w", ErrSourceChanged)
 		}
 		if err == nil && sel.Text != "" {
 			return sel, nil
 		}
+		log.Printf("selection: clipboard fallback uia_error=%v", err)
 		return grabClipboardFrom(ctx, hwnd, pid, class)
 	}
 }

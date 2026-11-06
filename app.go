@@ -198,6 +198,7 @@ func (a *application) onHotkey(action string) func() {
 // startEntry runs on the UI thread: capture the source before dispatching.
 func (a *application) startEntry(action string) {
 	task := a.entry.begin()
+	log.Printf("entry: start id=%d action=%s", task.id, action)
 	switch action {
 	case "panel":
 		a.snip.Hide()
@@ -215,8 +216,11 @@ func (a *application) startEntry(action string) {
 func (a *application) grabSelection(task *entryTask, grab func(context.Context) (selection.Selection, error)) {
 	ctx, cancel := context.WithTimeout(task.ctx, 5*time.Second)
 	defer cancel()
+	started := time.Now()
 	sel, err := grab(ctx)
-	if !task.valid() || errors.Is(err, selection.ErrSelfWindow) || errors.Is(err, selection.ErrSourceChanged) {
+	valid := task.valid()
+	log.Printf("selection: end entry=%d current=%t via=%s elapsed=%s err=%v", task.id, valid, sel.Via, time.Since(started).Round(time.Millisecond), err)
+	if !valid || errors.Is(err, selection.ErrSelfWindow) || errors.Is(err, selection.ErrSourceChanged) {
 		return
 	}
 	message := ""
