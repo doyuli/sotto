@@ -294,7 +294,7 @@ body[data-route="bubble"] {
   cursor: pointer;
 }
 
-.lang-field:has(select:enabled:hover) {
+.lang-field:has(select:enabled:hover, select:focus-visible) {
   background: var(--hover);
 }
 
@@ -330,8 +330,7 @@ body[data-route="bubble"] {
   background: var(--selection);
 }
 
-.bubble button:focus-visible,
-.lang-field:has(select:focus-visible) {
+.bubble button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
