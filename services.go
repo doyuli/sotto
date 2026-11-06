@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -30,28 +31,71 @@ func (s ConfigSvc) Set(settings config.Settings) error {
 }
 
 // SetSecret stores a credential; an empty value deletes it.
-func (ConfigSvc) SetSecret(name, value string) error {
+func (s ConfigSvc) SetSecret(name, value string) error {
 	if !slices.Contains(keys.Names, name) {
 		return errors.New("unknown credential: " + name)
 	}
-	return keys.Store{}.Set(name, value)
+	s.app.configWriteMu.Lock()
+	defer s.app.configWriteMu.Unlock()
+
+	// Disable services that would lose a required credential before removing
+	// it, so a failed settings write cannot leave an enabled service behind.
+	if value == "" {
+		cfg := s.app.settings()
+		credentials := s.app.keys.Snapshot()
+		delete(credentials, name)
+		enabled := translate.Available(cfg, credentials)
+		if !slices.Equal(enabled, cfg.Services.Enabled) {
+			cfg.Services.Enabled = enabled
+			if err := s.app.saveSettings(cfg); err != nil {
+				return err
+			}
+		}
+	} else if value = strings.TrimSpace(value); value == "" {
+		return errors.New("请输入凭证")
+	}
+	if err := s.app.keys.Set(name, value); err != nil {
+		return fmt.Errorf("更新凭证：%w", err)
+	}
+	return nil
 }
 
-// HasSecret reports whether a credential is stored.
-func (ConfigSvc) HasSecret(name string) bool {
-	return slices.Contains(keys.Names, name) && keys.Store{}.Has(name)
+// CredentialStatus contains presence information without exposing stored values.
+type CredentialStatus struct {
+	Stored     []string `json:"stored"`
+	Configured []string `json:"configured"`
+}
+
+// Credentials reports which credentials are stored and which services can be enabled.
+func (s ConfigSvc) Credentials() CredentialStatus {
+	credentials := s.app.keys.Snapshot()
+	status := CredentialStatus{Stored: []string{}, Configured: translate.Configured(s.app.settings(), credentials)}
+	for _, name := range keys.Names {
+		if credentials.Get(name) != "" {
+			status.Stored = append(status.Stored, name)
+		}
+	}
+	return status
+}
+
+// TestService returns a user-facing error, or an empty string on success.
+func (s ConfigSvc) TestService(ctx context.Context, name string) string {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	return translate.UserMessage(translate.Test(ctx, name, s.app.settings(), s.app.keys.Snapshot()))
 }
 
 // serviceKeyPages maps a service to the console page where its
 // credentials are issued. The whitelist keeps the pages from opening
 // anything but these addresses.
 var serviceKeyPages = map[string]string{
-	"deepl":    "https://www.deepl.com/zh/pro-api",
-	"openai":   "https://platform.openai.com/api-keys",
-	"baidu":    "https://fanyi-api.baidu.com/manage/repository",
-	"tencent":  "https://console.cloud.tencent.com/cam/capi",
-	"youdao":   "https://ai.youdao.com/console",
-	"azure":    "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+	"deepl":      "https://www.deepl.com/zh/pro-api",
+	"openai":     "https://platform.openai.com/api-keys",
+	"baidu":      "https://fanyi-api.baidu.com/manage/repository",
+	"tencent":    "https://console.cloud.tencent.com/cam/capi",
+	"youdao":     "https://ai.youdao.com/console",
+	"azure":      "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+	"volcengine": "https://console.volcengine.com/iam/keymanage/",
 }
 
 // OpenKeyPage opens the service's credential page in the default browser.
@@ -146,6 +190,11 @@ func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
 
 // Close hides an unpinned bubble and closes a pinned one.
 func (s BubbleSvc) Close(id int64) { s.app.bubbles.Close(id) }
+
+// OpenTranslationSettings opens the services tab from the bubble.
+func (s BubbleSvc) OpenTranslationSettings() {
+	mygo.RunOnMain(func() { s.app.showSettings(true) })
+}
 
 // Copy puts text on the clipboard.
 func (BubbleSvc) Copy(text string) { mygo.Clipboard.WriteText(text) }

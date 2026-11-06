@@ -17,12 +17,15 @@ const (
 	YoudaoSecret     = "youdao-secret"
 	AzureKey         = "azure-key"
 	AzureRegion      = "azure-region"
+	VolcAccessKey    = "volcengine-access-key"
+	VolcSecretKey    = "volcengine-secret-key"
 )
 
 // Names lists every keyring entry, so the settings page can enumerate them.
 var Names = []string{
 	DeeplKey, OpenAIKey, BaiduAppID, BaiduKey,
 	TencentSecretID, TencentSecretKey, YoudaoAppKey, YoudaoSecret, AzureKey, AzureRegion,
+	VolcAccessKey, VolcSecretKey,
 }
 
 // Store is the app's KeyStore: a thin wrapper over mygo.Secrets. A missing
@@ -47,7 +50,18 @@ func (Store) Set(name, value string) error {
 	return mygo.Secrets.Set(name, []byte(value))
 }
 
-// Has reports whether the entry exists.
-func (s Store) Has(name string) bool {
-	return s.Get(name) != ""
+// Snapshot lets a settings operation evaluate the same set of credentials
+// throughout, including checking the effect of removing a credential.
+type Snapshot map[string]string
+
+func (s Snapshot) Get(name string) string { return s[name] }
+
+func (s Store) Snapshot() Snapshot {
+	out := make(Snapshot)
+	for _, name := range Names {
+		if value := s.Get(name); value != "" {
+			out[name] = value
+		}
+	}
+	return out
 }

@@ -22,10 +22,9 @@ import (
 // baiduEndpoint is the general translation API.
 const baiduEndpoint = "https://fanyi-api.baidu.com/api/trans/vip/translate"
 
-// baiduLimiter paces the free tier's one query a second.
-func baiduLimiter() *rate.Limiter {
-	return rate.NewLimiter(rate.Limit(1), 1)
-}
+// Share the free tier's one-query-per-second budget across bubbles and
+// connection tests. A fresh limiter per run would allow concurrent bursts.
+var baiduLimiter = rate.NewLimiter(rate.Limit(1), 1)
 
 // Baidu is the friendliest keyed service for users in China: the standard
 // tier is free and only signs its requests.
@@ -131,12 +130,22 @@ func baiduSign(appid, query, salt, secret string) string {
 // get their own error.
 func baiduError(code, msg string) error {
 	switch code {
-	case "54001", "52001", "52002":
-		return fmt.Errorf("百度: 凭证无效（%s）", code)
+	case "52001":
+		return context.DeadlineExceeded
+	case "52002":
+		return fmt.Errorf("百度翻译暂时不可用，请稍后重试")
+	case "52003":
+		return fmt.Errorf("请检查百度翻译的 APP ID，并确认已开通通用文本翻译")
+	case "54001":
+		return ErrAuth
 	case "54003":
 		return fmt.Errorf("百度: 请求过于频繁")
+	case "54004":
+		return fmt.Errorf("百度翻译账户余额不足，请前往控制台检查")
+	case "58002":
+		return ErrAccess
 	case "58003":
-		return ErrQuota
+		return fmt.Errorf("当前 IP 无法调用百度翻译，请检查控制台")
 	default:
 		return fmt.Errorf("百度: %s %s", code, msg)
 	}

@@ -51,7 +51,8 @@ export function speechTag(code: string): string {
 export const SERVICE_NAMES: Record<string, string> = {
   deepl: "DeepL",
   openai: "OpenAI",
-  baidu: "百度",
+  baidu: "百度翻译",
+  volcengine: "火山引擎",
   tencent: "腾讯云",
   youdao: "有道",
   azure: "微软翻译",
@@ -67,6 +68,10 @@ export const SERVICE_CREDENTIALS: Record<string, { name: string; label: string; 
     { name: "baidu-appid", label: "APP ID", placeholder: "百度翻译开放平台" },
     { name: "baidu-key", label: "密钥", placeholder: "" },
   ],
+  volcengine: [
+    { name: "volcengine-access-key", label: "Access Key ID", placeholder: "火山引擎访问控制" },
+    { name: "volcengine-secret-key", label: "Secret Access Key", placeholder: "" },
+  ],
   tencent: [
     { name: "tencent-secretid", label: "SecretId", placeholder: "访问管理的 API 密钥 Id" },
     { name: "tencent-secretkey", label: "SecretKey", placeholder: "" },
@@ -81,7 +86,3 @@ export const SERVICE_CREDENTIALS: Record<string, { name: string; label: string; 
   ],
   google: [],
 };
-
-/** The services whose credentials can be applied for online; the button
- * opens the page Go keeps whitelisted. */
-export const SERVICE_KEY_PAGES = new Set(["deepl", "openai", "baidu", "tencent", "youdao", "azure"]);

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"unicode"
@@ -42,6 +43,7 @@ var (
 	ErrNotConfigured = errors.New("service not configured")
 	ErrQuota         = errors.New("quota exceeded")
 	ErrAuth          = errors.New("invalid credentials")
+	ErrAccess        = errors.New("service access denied")
 	// ErrSkip: this service has nothing to add to the request — the
 	// fan-out leaves it off the bubble instead of showing an error.
 	ErrSkip = errors.New("service skipped")
@@ -58,13 +60,14 @@ type Translator interface {
 // Baidu's free tier allows one query a second, so it gets a limiter.
 func DefaultTranslators() []Translator {
 	return []Translator{
+		Google{},
+		Baidu{Limiter: baiduLimiter},
+		Volcengine{},
 		DeepL{},
 		OpenAI{},
-		Baidu{Limiter: baiduLimiter()},
 		Tencent{},
 		Youdao{},
 		Azure{},
-		Google{},
 		Dictionary{},
 	}
 }
@@ -79,13 +82,38 @@ func Run(ctx context.Context, cfg config.Settings, k KeyStore, req Request, emit
 // Available lists the enabled services that are ready to run, in card
 // order, so the UI can tell a slow service from an unconfigured one.
 func Available(cfg config.Settings, k KeyStore) []string {
-	var out []string
+	out := []string{}
 	for _, t := range orderTranslators(DefaultTranslators(), cfg.Services.Order) {
 		if contains(cfg.Services.Enabled, t.Name()) && t.Available(k, cfg) {
 			out = append(out, t.Name())
 		}
 	}
 	return out
+}
+
+// Configured includes services the user can turn on with the current credentials.
+func Configured(cfg config.Settings, k KeyStore) []string {
+	out := []string{}
+	for _, t := range DefaultTranslators() {
+		if t.Available(k, cfg) {
+			out = append(out, t.Name())
+		}
+	}
+	return out
+}
+
+// Test sends a fixed request to one service, including when it is disabled.
+func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
+	for _, t := range DefaultTranslators() {
+		if t.Name() == name {
+			if !t.Available(k, cfg) {
+				return ErrNotConfigured
+			}
+			_, err := t.Translate(ctx, Request{Text: "Hello world", SourceLang: "en", TargetLang: "zh-HANS"}, k, cfg)
+			return err
+		}
+	}
+	return fmt.Errorf("未知的翻译服务")
 }
 
 // maxChunkRunes is the largest piece sent in one request. Baidu's free
@@ -214,13 +242,20 @@ func orderTranslators(all []Translator, order []string) []Translator {
 
 // UserMessage turns a service error into the message the bubble shows.
 func UserMessage(err error) string {
+	var networkErr *url.Error
 	switch {
 	case errors.Is(err, ErrQuota):
 		return "本月额度已用完"
 	case errors.Is(err, ErrAuth):
 		return "凭证无效，请检查设置"
+	case errors.Is(err, ErrAccess):
+		return "请在服务商控制台开通翻译服务并检查调用权限"
 	case errors.Is(err, ErrNotConfigured):
 		return "未配置"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "连接超时，请稍后重试"
+	case errors.As(err, &networkErr):
+		return "网络连接失败，请检查网络后重试"
 	case err == nil:
 		return ""
 	default:

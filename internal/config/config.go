@@ -64,8 +64,8 @@ type Settings struct {
 func Default() Settings {
 	return Settings{
 		Services: ServiceSettings{
-			Enabled: []string{"deepl", "openai", "baidu", "tencent", "youdao", "azure", "google"},
-			Order:   []string{"deepl", "openai", "baidu", "tencent", "youdao", "azure", "google"},
+			Enabled: []string{"google"},
+			Order:   []string{"google", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "azure"},
 			OpenAI:  OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
 		},
 		TargetLanguage: "zh-HANS",
@@ -133,14 +133,13 @@ func Save(path string, s Settings) error {
 func Normalize(s Settings) Settings {
 	d := Default()
 	s.Services.Enabled = dedupe(s.Services.Enabled)
-	if len(s.Services.Enabled) == 0 {
-		s.Services.Enabled = d.Services.Enabled
-	}
 	s.Services.Order = dedupe(s.Services.Order)
-	if len(s.Services.Order) == 0 {
-		s.Services.Order = d.Services.Order
-	}
 	for _, name := range s.Services.Enabled {
+		if !slices.Contains(s.Services.Order, name) {
+			s.Services.Order = append(s.Services.Order, name)
+		}
+	}
+	for _, name := range d.Services.Order {
 		if !slices.Contains(s.Services.Order, name) {
 			s.Services.Order = append(s.Services.Order, name)
 		}
@@ -186,7 +185,7 @@ func validFormats(formats []string) []string {
 }
 
 func dedupe(xs []string) []string {
-	var out []string
+	out := make([]string, 0, len(xs))
 	for _, x := range xs {
 		if !slices.Contains(out, x) {
 			out = append(out, x)

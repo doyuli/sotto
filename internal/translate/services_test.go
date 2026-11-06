@@ -136,7 +136,9 @@ func TestBaiduErrors(t *testing.T) {
 		code    string
 		wantErr error
 	}{
-		{"58003", ErrQuota},
+		{"52001", context.DeadlineExceeded},
+		{"54001", ErrAuth},
+		{"58002", ErrAccess},
 	}
 	for _, tt := range tests {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

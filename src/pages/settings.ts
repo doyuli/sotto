@@ -1,5 +1,5 @@
-import { ConfigSvc, HotkeySvc, events, type Settings } from "../mygo";
-import { LANGUAGES, SERVICE_CREDENTIALS, SERVICE_KEY_PAGES, SERVICE_NAMES } from "../languages";
+import { ConfigSvc, HotkeySvc, events, type CredentialStatus, type Settings } from "../mygo";
+import { LANGUAGES, SERVICE_CREDENTIALS, SERVICE_NAMES } from "../languages";
 import { el, toast } from "../ui";
 
 // The canonical copy-format list, in display order; labels match Go's
@@ -12,8 +12,6 @@ const COPY_FORMATS = {
   kebab: { label: "短横线", example: "user-name" },
 };
 
-const SERVICE_ORDER = ["deepl", "openai", "baidu", "tencent", "youdao", "azure", "google"];
-
 const NAV = [
   { id: "general", label: "通用" },
   { id: "services", label: "翻译服务" },
@@ -24,14 +22,27 @@ const NAV = [
 type SectionID = (typeof NAV)[number]["id"];
 
 let settings: Settings;
+let credentials: CredentialStatus;
 let echoGuard = ""; // what we last saved, to ignore our own broadcast
+let pendingSave = Promise.resolve();
+let pendingCredentialWrite = Promise.resolve();
+let savesInFlight = 0;
 let sectionHosts: Record<string, HTMLElement> = {};
 let navButtons: Record<string, HTMLButtonElement> = {};
+const settingsRefreshers: (() => void)[] = [];
 
 /** renderSettings mounts the settings page. */
 export async function renderSettings(root: HTMLElement): Promise<void> {
-  settings = await ConfigSvc.get();
+  const params = new URLSearchParams(location.hash.split("?")[1] ?? "");
+  let initialSection: SectionID = params.get("tab") === "services" ? "services" : "general";
+  let mounted = false;
+  events.openTranslationSettings.on(() => {
+    if (mounted) showSection("services");
+    else initialSection = "services";
+  });
+  [settings, credentials] = await Promise.all([ConfigSvc.get(), ConfigSvc.credentials()]);
   echoGuard = JSON.stringify(settings);
+  settingsRefreshers.length = 0;
 
   const nav = el("nav", "settings-nav");
   for (const item of NAV) {
@@ -51,44 +62,59 @@ export async function renderSettings(root: HTMLElement): Promise<void> {
     sectionHosts[item.id] = host;
     main.append(host);
   }
+  renderServices();
   renderAll();
-  showSection("general");
+  showSection(initialSection);
+  mounted = true;
 
   events.settingsChanged.on((s: Settings) => {
-    if (JSON.stringify(s) === echoGuard) return;
+    if (savesInFlight || JSON.stringify(s) === echoGuard) return;
     settings = s;
     echoGuard = JSON.stringify(s);
-    renderAll();
-    showSection(currentSection);
+    refreshSettings();
   });
 }
 
-let currentSection: SectionID = "general";
-
 function showSection(id: SectionID): void {
-  currentSection = id;
   for (const item of NAV) {
     navButtons[item.id]!.classList.toggle("active", item.id === id);
     sectionHosts[item.id]!.classList.toggle("active", item.id === id);
   }
 }
 
-/** renderAll rebuilds every section from settings. */
+/** Build controls once so settings updates preserve focus and drafts. */
 function renderAll(): void {
   renderGeneral();
-  renderServices();
   renderHotkeys();
   renderNaming();
+  refreshSettings();
+}
+
+function refreshSettings(): void {
+  for (const refresh of settingsRefreshers) refresh();
+  refreshServiceRows();
 }
 
 /** save sends the whole settings; every change saves at once. */
 async function save(): Promise<void> {
-  echoGuard = JSON.stringify(settings);
-  try {
-    await ConfigSvc.set(settings);
-  } catch (err) {
-    toast(`保存失败：${String(err)}`);
-  }
+  const snapshot = structuredClone(settings);
+  savesInFlight++;
+  pendingSave = pendingSave.then(async () => {
+    try {
+      await ConfigSvc.set(snapshot);
+    } catch (err) {
+      toast(`保存失败：${String(err)}`);
+    } finally {
+      savesInFlight--;
+    }
+    if (savesInFlight) return;
+    const saved = await ConfigSvc.get();
+    if (savesInFlight) return;
+    settings = saved;
+    echoGuard = JSON.stringify(saved);
+    refreshSettings();
+  }).catch((err) => toast(`读取设置失败：${String(err)}`));
+  await pendingSave;
 }
 
 // ---- 通用 ----
@@ -107,17 +133,18 @@ function renderGeneral(): void {
     target.append(option);
   }
   target.value = settings.targetLanguage;
+  settingsRefreshers.push(() => { target.value = settings.targetLanguage; });
   target.addEventListener("change", () => {
     settings.targetLanguage = target.value;
     void save();
   });
   host.append(
     field("默认翻译到", "", target),
-    switchField("开机自启", "登录后常驻托盘", settings.openAtLogin, (v) => {
+    switchField("开机自启", "登录后常驻托盘", () => settings.openAtLogin, (v) => {
       settings.openAtLogin = v;
       void save();
     }),
-    switchField("失焦自动隐藏", "未钉住的气泡失去焦点即隐藏", settings.bubble.autoHide, (v) => {
+    switchField("失焦自动隐藏", "未钉住的气泡失去焦点即隐藏", () => settings.bubble.autoHide, (v) => {
       settings.bubble.autoHide = v;
       void save();
     }),
@@ -127,13 +154,14 @@ function renderGeneral(): void {
 function switchField(
   label: string,
   sub: string,
-  checked: boolean,
+  checked: () => boolean,
   onChange: (v: boolean) => void,
 ): HTMLElement {
   const input = el("input");
   input.type = "checkbox";
   input.className = "switch";
-  input.checked = checked;
+  input.checked = checked();
+  settingsRefreshers.push(() => { input.checked = checked(); });
   input.addEventListener("change", () => onChange(input.checked));
   return field(label, sub, input);
 }
@@ -148,140 +176,274 @@ function field(label: string, sub: string, control: HTMLElement): HTMLElement {
 
 // ---- 翻译服务 ----
 
+const serviceRows = new Map<string, { row: HTMLElement; refresh: () => void }>();
+let serviceList: HTMLElement;
+
 function renderServices(): void {
   const host = sectionHosts.services!;
-  host.replaceChildren(el("h2", undefined, "翻译服务"));
-  host.append(
-    el("div", "hint-bar", "勾选的服务会同时翻译并在气泡中各显示一张卡片；上下移动调整卡片顺序。凭证保存在系统密钥环，不写入配置文件。"),
+  serviceList = el("div", "service-list");
+  host.replaceChildren(
+    el("h2", undefined, "翻译服务"),
+    el("p", "hint-bar", "已启用的服务会同时翻译。凭证保存在系统密钥环。"),
+    serviceList,
   );
-
-  // Order the known services by the configured order, unknown ones last.
-  const order = [...settings.services.order];
-  for (const name of SERVICE_ORDER) {
-    if (!order.includes(name)) order.push(name);
-  }
-  for (const name of order) {
-    host.append(serviceRow(name));
+  serviceRows.clear();
+  for (const name of settings.services.order) {
+    if (Object.hasOwn(SERVICE_CREDENTIALS, name)) serviceRows.set(name, serviceRow(name));
   }
 }
 
-function serviceRow(name: string): HTMLElement {
-  const row = el("div", "service-row");
-  const enabled = settings.services.enabled.includes(name);
-
-  const head = el("div", "field");
-  const lab = el("label", undefined, SERVICE_NAMES[name] ?? name);
-  if (name === "google") lab.append(el("span", "sub", "免密钥，尽力而为（国内网络可能需要代理）"));
-  const right = el("div", "order-btns");
-  if (SERVICE_KEY_PAGES.has(name)) {
-    const keyPage = el("button", "text-btn", "获取密钥");
-    keyPage.title = "打开官方控制台申请密钥";
-    keyPage.addEventListener("click", () => {
-      void ConfigSvc.openKeyPage(name).catch((err) => toast(String(err)));
-    });
-    right.append(keyPage);
+function refreshServiceRows(): void {
+  let next = serviceList.firstChild;
+  for (const name of settings.services.order) {
+    const service = serviceRows.get(name);
+    if (!service) continue;
+    if (service.row !== next) serviceList.insertBefore(service.row, next);
+    next = service.row.nextSibling;
+    service.refresh();
   }
-  const up = el("button", undefined, "↑");
-  up.title = "上移";
-  up.addEventListener("click", () => moveService(name, -1));
-  const down = el("button", undefined, "↓");
-  down.title = "下移";
-  down.addEventListener("click", () => moveService(name, 1));
-  const toggle = el("input");
+}
+
+function enabledServiceOrder(): string[] {
+  return settings.services.order.filter(
+    (name) => settings.services.enabled.includes(name) && credentials.configured.includes(name),
+  );
+}
+
+function serviceRow(name: string): { row: HTMLElement; refresh: () => void } {
+  const title = SERVICE_NAMES[name] ?? name;
+  const fields = SERVICE_CREDENTIALS[name] ?? [];
+  const keyless = fields.length === 0;
+  let busy = false;
+  let testing = false;
+  const row = el("div", "service-row");
+  const head = el("div", "field service-head");
+  const label = el("div", "service-name", title);
+  const state = el("span", "sub");
+  state.setAttribute("aria-live", "polite");
+  label.append(state);
+
+  const actions = el("div", "order-btns");
+  const up = orderButton("上移", "m6 15 6-6 6 6", -1);
+  const down = orderButton("下移", "m6 9 6 6 6-6", 1);
+  const toggle = el("input", "switch");
   toggle.type = "checkbox";
-  toggle.className = "switch";
-  toggle.checked = enabled;
+  toggle.setAttribute("aria-label", `启用${title}`);
   toggle.addEventListener("change", () => {
-    const has = settings.services.enabled.includes(name);
-    settings.services.enabled = has
-      ? settings.services.enabled.filter((s) => s !== name)
-      : [...settings.services.enabled, name];
+    const enabled = settings.services.enabled.filter((service) => service !== name);
+    if (toggle.checked) enabled.push(name);
+    settings.services.enabled = enabled;
+    refreshServiceRows();
     void save();
   });
-  right.append(up, down, toggle);
-  head.append(lab, right);
+  const configure = el("button", "service-configure", "配置");
+  const panel = el("div", "service-details");
+  panel.id = `configure-${name}`;
+  panel.hidden = true;
+  configure.setAttribute("aria-controls", panel.id);
+  configure.setAttribute("aria-expanded", "false");
+  configure.setAttribute("aria-label", `配置${title}`);
+  configure.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    configure.setAttribute("aria-expanded", String(!panel.hidden));
+    configure.textContent = panel.hidden ? "配置" : "收起";
+    configure.setAttribute("aria-label", panel.hidden ? `配置${title}` : `收起${title}配置`);
+    if (!panel.hidden) refreshUsage();
+  });
+  if (!keyless) actions.append(configure);
+  actions.append(up, down, toggle);
+  head.append(label, actions);
   row.append(head);
+  if (keyless) {
+    row.append(el("p", "service-note", "免密钥 · 非官方接口，部分网络可能无法连接。"));
+    return { row, refresh };
+  }
 
-  if (name === "openai") {
-    row.append(openAIFields());
-  }
-  for (const cred of SERVICE_CREDENTIALS[name] ?? []) {
-    row.append(credentialField(cred.name, cred.label, cred.placeholder));
-  }
-  if (name === "deepl") {
-    row.append(deeplUsage());
-  }
-  return row;
-}
+  const hint = name === "baidu"
+    ? "在百度翻译开放平台开通「通用文本翻译」，再填写控制台里的 APP ID 和密钥。"
+    : name === "volcengine"
+      ? "在火山引擎控制台开通「机器翻译」，并在访问控制中创建有调用权限的 Access Key。"
+      : "";
+  const getKey = el("button", "text-btn", "获取凭证");
+  getKey.addEventListener("click", () => {
+    void ConfigSvc.openKeyPage(name).catch((err) => toast(String(err)));
+  });
+  if (hint) panel.append(el("p", "service-note", hint));
+  panel.append(getKey);
+  if (name === "openai") panel.append(openAIFields());
 
-function moveService(name: string, delta: number): void {
-  const order = settings.services.order;
-  const i = order.indexOf(name);
-  const j = i + delta;
-  if (i < 0 || j < 0 || j >= order.length) return;
-  [order[i], order[j]] = [order[j]!, order[i]!];
-  void save();
-  renderServices();
+  const form = el("form");
+  const inputs = fields.map(({ name: key, label, placeholder }) => {
+    const input = el("input");
+    input.type = "password";
+    input.placeholder = placeholder;
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", label);
+    const clear = el("button", "text-btn", "清除");
+    clear.type = "button";
+    clear.setAttribute("aria-label", `清除${label}`);
+    clear.addEventListener("click", () => {
+      void writeCredentials(async () => {
+        await ConfigSvc.setSecret(key, "");
+        input.value = "";
+      }, "凭证已清除");
+    });
+    const controls = el("div", "credential-controls");
+    controls.append(input, clear);
+    const note = key === "azure-region" ? "可选，全局资源留空" : "";
+    form.append(field(label, note, controls));
+    return { key, input, clear, placeholder };
+  });
+
+  const saveKey = el("button", "service-configure", "保存凭证");
+  saveKey.type = "submit";
+  const test = el("button", "service-configure", "测试连接");
+  test.type = "button";
+  const result = el("span", "usage-text");
+  result.setAttribute("role", "status");
+  const usage = el("div");
+  const footer = el("div", "service-footer");
+  footer.append(saveKey, test, result);
+  form.append(footer);
+  panel.append(form, usage);
+  row.append(panel);
+
+  form.addEventListener("input", () => {
+    result.textContent = "";
+    refresh();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (busy || testing || saveKey.disabled) return;
+    void writeCredentials(async () => {
+      for (const { key, input } of inputs) {
+        const value = input.value.trim();
+        if (!value) continue;
+        await ConfigSvc.setSecret(key, value);
+        input.value = "";
+      }
+    }, "凭证已保存");
+  });
+  test.addEventListener("click", async () => {
+    testing = true;
+    result.textContent = "正在测试…";
+    refresh();
+    try {
+      await pendingSave;
+      const error = await ConfigSvc.testService(name);
+      result.textContent = error || "连接成功";
+    } catch (err) {
+      result.textContent = `测试失败：${String(err)}`;
+    } finally {
+      testing = false;
+      refresh();
+    }
+  });
+  return { row, refresh };
+
+  function refresh(): void {
+    const configured = credentials.configured.includes(name);
+    const enabled = settings.services.enabled.includes(name) && configured;
+    state.textContent = enabled ? "已启用" : keyless ? "已关闭" : configured ? "已配置 · 已关闭" : "未配置";
+    toggle.checked = enabled;
+    toggle.disabled = !configured || busy;
+    const order = enabledServiceOrder();
+    const index = order.indexOf(name);
+    up.hidden = down.hidden = !enabled || order.length < 2;
+    up.disabled = index <= 0;
+    down.disabled = index < 0 || index === order.length - 1;
+    if (keyless) return;
+
+    const hasDraft = inputs.some(({ input }) => input.value.trim() !== "");
+    for (const { key, input, clear, placeholder } of inputs) {
+      const stored = credentials.stored.includes(key);
+      input.disabled = busy || testing;
+      input.placeholder = stored ? "已保存，输入可替换" : placeholder;
+      clear.hidden = !stored;
+      clear.disabled = busy || testing;
+    }
+    saveKey.disabled = busy || testing || !hasDraft;
+    test.disabled = busy || testing || !configured || hasDraft;
+  }
+
+  function orderButton(action: string, path: string, delta: number): HTMLButtonElement {
+    const button = el("button", "service-order");
+    button.title = action;
+    button.setAttribute("aria-label", `${action}${title}`);
+    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+    button.addEventListener("click", () => {
+      const enabled = enabledServiceOrder();
+      const neighbor = enabled[enabled.indexOf(name) + delta];
+      if (!neighbor) return;
+      const order = settings.services.order;
+      const from = order.indexOf(name);
+      const to = order.indexOf(neighbor);
+      [order[from], order[to]] = [order[to]!, order[from]!];
+      refreshServiceRows();
+      (button.disabled ? (delta < 0 ? down : up) : button).focus();
+      void save();
+    });
+    return button;
+  }
+
+  function writeCredentials(write: () => Promise<void>, success: string): void {
+    busy = true;
+    result.textContent = "";
+    refresh();
+    pendingCredentialWrite = pendingCredentialWrite.then(async () => {
+      try {
+        await pendingSave;
+        await write();
+        result.textContent = success;
+      } catch (err) {
+        result.textContent = `更新失败：${String(err)}`;
+      }
+      try {
+        credentials = await ConfigSvc.credentials();
+        refreshUsage();
+      } catch (err) {
+        toast(`读取凭证状态失败：${String(err)}`);
+      } finally {
+        busy = false;
+        refreshServiceRows();
+      }
+    });
+  }
+
+  function refreshUsage(): void {
+    if (name === "deepl" && !panel.hidden) {
+      usage.replaceChildren(...(credentials.stored.includes("deepl-key") ? [deeplUsage()] : []));
+    }
+  }
 }
 
 function openAIFields(): HTMLElement {
-  const base = el("input");
-  base.type = "text";
-  base.value = settings.services.openai.baseURL;
-  base.placeholder = "https://api.openai.com/v1";
-  base.addEventListener("change", () => {
-    settings.services.openai.baseURL = base.value.trim();
-    void save();
-  });
-  const model = el("input");
-  model.type = "text";
-  model.value = settings.services.openai.model;
-  model.placeholder = "gpt-4o-mini";
-  model.addEventListener("change", () => {
-    settings.services.openai.model = model.value.trim();
-    void save();
-  });
+  function option(key: "baseURL" | "model", placeholder: string): HTMLInputElement {
+    const input = el("input");
+    input.type = "text";
+    input.value = settings.services.openai[key];
+    input.placeholder = placeholder;
+    let draft = false;
+    input.addEventListener("input", () => { draft = input.value !== settings.services.openai[key]; });
+    input.addEventListener("change", () => {
+      draft = false;
+      settings.services.openai[key] = input.value.trim();
+      void save();
+    });
+    settingsRefreshers.push(() => {
+      // A readback may finish while the user is typing the next edit.
+      if (!draft) input.value = settings.services.openai[key];
+    });
+    return input;
+  }
+  const base = option("baseURL", "https://api.openai.com/v1");
+  const model = option("model", "gpt-4o-mini");
   const wrap = el("div");
   wrap.append(
     field("Base URL", "任何 OpenAI 兼容接口", base),
     field("模型", "", model),
   );
   return wrap;
-}
-
-function credentialField(name: string, label: string, placeholder: string): HTMLElement {
-  const input = el("input");
-  input.type = "password";
-  input.placeholder = placeholder;
-  const state = el("span", "usage-text");
-  const refresh = () => {
-    void ConfigSvc.hasSecret(name).then((has) => {
-      state.textContent = has ? "已配置" : "未配置";
-    });
-  };
-  refresh();
-  input.addEventListener("change", async () => {
-    if (!input.value) return;
-    try {
-      await ConfigSvc.setSecret(name, input.value);
-      input.value = "";
-      refresh();
-      toast("凭证已保存");
-    } catch (err) {
-      toast(`保存失败：${String(err)}`);
-    }
-  });
-  const clear = el("button", "text-btn", "清除");
-  clear.addEventListener("click", async () => {
-    await ConfigSvc.setSecret(name, "");
-    refresh();
-  });
-  const controls = el("div");
-  controls.append(input, state, clear);
-  controls.style.display = "flex";
-  controls.style.gap = "8px";
-  controls.style.alignItems = "center";
-  return field(label, "", controls);
 }
 
 function deeplUsage(): HTMLElement {
@@ -292,10 +454,6 @@ function deeplUsage(): HTMLElement {
   wrap.append(bar, text);
   void (async () => {
     try {
-      if (!(await ConfigSvc.hasSecret("deepl-key"))) {
-        text.textContent = "未配置 API Key";
-        return;
-      }
       const usage = await ConfigSvc.deeplUsage();
       const pct = usage.limit > 0 ? Math.min((usage.used / usage.limit) * 100, 100) : 0;
       (bar.firstElementChild as HTMLElement).style.width = `${pct}%`;
@@ -334,6 +492,9 @@ function recorderField(id: "panel" | "selection" | "ocr", label: string): HTMLEl
   const note = el("span", "conflict");
   const controls = el("div");
   controls.append(input);
+  settingsRefreshers.push(() => {
+    if (!input.classList.contains("listening")) input.value = settings.hotkeys[id];
+  });
   input.addEventListener("click", () => {
     note.textContent = "";
     input.classList.add("listening");
@@ -398,7 +559,7 @@ function renderNaming(): void {
   host.replaceChildren(el("h2", undefined, "命名转换"));
 
   host.append(
-    switchField("自动拆分标识符", "英文输入自动识别 camelCase / snake_case / kebab-case 并拆词后翻译", settings.identifier.autoSplit, (v) => {
+    switchField("自动拆分标识符", "英文输入自动识别 camelCase / snake_case / kebab-case 并拆词后翻译", () => settings.identifier.autoSplit, (v) => {
       settings.identifier.autoSplit = v;
       void save();
     }),
@@ -425,6 +586,7 @@ function renderNaming(): void {
     const toggle = el("input", "switch");
     toggle.type = "checkbox";
     toggle.checked = settings.copyFormats.includes(style);
+    settingsRefreshers.push(() => { toggle.checked = settings.copyFormats.includes(style); });
     toggle.setAttribute("role", "switch");
     toggle.setAttribute("aria-labelledby", name.id);
     toggle.setAttribute("aria-describedby", sample.id);
@@ -439,6 +601,7 @@ function renderNaming(): void {
     list.append(row);
   }
   updateDisabled();
+  settingsRefreshers.push(updateDisabled);
   group.append(el("legend", undefined, "复制格式"), hint, list);
   host.append(group);
 }

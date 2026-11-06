@@ -374,6 +374,11 @@ body[data-route="bubble"] {
 }
 
 .cards-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
   color: var(--muted);
   font-size: 12px;
   text-align: center;
@@ -561,6 +566,13 @@ body[data-route="bubble"] {
   font-size: 12px;
   cursor: pointer;
   padding: 2px 0;
+}
+
+.card-error-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .hidden {
@@ -823,19 +835,88 @@ body[data-route="bubble"] {
   padding: 4px 0;
 }
 
-.order-btns {
-  display: flex;
-  gap: 4px;
+.service-name {
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.order-btns button {
+.service-name .sub {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.order-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.service-configure,
+.service-order {
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--fg);
   border-radius: 6px;
   font-size: 12px;
-  padding: 1px 8px;
+  min-height: 28px;
+  padding: 3px 8px;
   cursor: pointer;
+}
+
+.service-order {
+  padding: 3px 5px;
+}
+
+.service-order svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.service-configure:disabled,
+.service-order:disabled,
+.service-row input:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.service-row :is(button, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.service-details {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.service-note {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.credential-controls,
+.service-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.service-footer {
+  margin-top: 8px;
+}
+
+.credential-controls .text-btn {
+  white-space: nowrap;
+}
+
+.service-details .field input[type="password"],
+.service-details .field input[type="text"] {
+  width: min(200px, 34vw);
 }
 
 .usage-bar {

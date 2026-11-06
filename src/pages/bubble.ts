@@ -46,6 +46,7 @@ function iconButton(icon: keyof typeof ICONS, title: string, className = ""): HT
 let bubbleID = 0;
 let state: BubbleState | null = null;
 let reqID = ""; // the run the cards are showing
+let runServices: Set<string> | null = null;
 let sourceLang = "auto";
 let targetLang = "zh-HANS";
 let detected = ""; // the concrete language a service reported, if any
@@ -210,11 +211,9 @@ function wireEvents(): void {
     targetLang = msg.targetLang;
     // Services without credentials never answer: drop their cards
     // instead of shimmering forever.
-    if (msg.services?.length) {
-      const live = new Set(msg.services);
-      for (const name of [...cards.keys()]) {
-        if (!live.has(name)) cards.delete(name);
-      }
+    runServices = new Set(msg.services ?? []);
+    for (const name of cards.keys()) {
+      if (!runServices.has(name)) cards.delete(name);
     }
     renderMeta();
     renderCards();
@@ -250,6 +249,7 @@ function wireEvents(): void {
 function apply(st: BubbleState): void {
   state = st;
   reqID = st.reqID;
+  runServices = null;
   detected = "";
   editing = false;
   sourceLang = st.sourceLang || "auto";
@@ -291,11 +291,14 @@ function swapLanguages(): void {
 function run(): void {
   const text = input.value.trim();
   if (!text || !state) {
+    reqID = "";
+    runServices = null;
     cards.clear();
     renderCards();
     return;
   }
   reqID = requestID();
+  runServices = null;
   detected = "";
   renderMeta();
   cards.clear();
@@ -386,10 +389,12 @@ function renderMeta(): void {
 function renderCards(): void {
   if (!state) return;
   cardsHost.replaceChildren();
-  const enabled = activeServices(state.settings);
+  const enabled = activeServices(state.settings).filter((name) => !runServices || runServices.has(name));
   if (enabled.length === 0) {
     cardsHost.classList.remove("hidden");
-    cardsHost.append(el("div", "cards-empty", "没有启用的翻译服务，请在设置中开启"));
+    const empty = el("div", "cards-empty", "没有可用的翻译服务");
+    empty.append(translationSettingsButton());
+    cardsHost.append(empty);
     return;
   }
   const showing = enabled.filter((name) => cards.has(name));
@@ -403,6 +408,14 @@ function renderCards(): void {
   for (const name of showing) {
     cardsHost.append(renderCard(name, cards.get(name) ?? { status: "loading" }));
   }
+}
+
+function translationSettingsButton(): HTMLButtonElement {
+  const button = el("button", "text-btn", "配置翻译服务");
+  button.addEventListener("click", () => {
+    void BubbleSvc.openTranslationSettings().catch((err) => toast(String(err)));
+  });
+  return button;
 }
 
 function renderCard(name: string, card: CardState): HTMLElement {
@@ -429,7 +442,10 @@ function renderCard(name: string, card: CardState): HTMLElement {
       body.append(el("div", "card-error", card.err ?? "出错了"));
       const retry = el("button", "text-btn", "重试");
       retry.addEventListener("click", () => run());
-      body.append(retry);
+      const actions = el("div", "card-error-actions");
+      actions.append(retry);
+      if (name === "google") actions.append(translationSettingsButton());
+      body.append(actions);
       break;
     }
     case "ok": {

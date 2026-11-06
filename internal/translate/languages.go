@@ -78,6 +78,18 @@ var languageMaps = map[string]map[string]string{
 		"pt":      "pt",
 		"it":      "it",
 	},
+	"volcengine": {
+		"zh-HANS": "zh",
+		"en":      "en",
+		"ja":      "ja",
+		"ko":      "ko",
+		"fr":      "fr",
+		"de":      "de",
+		"ru":      "ru",
+		"es":      "es",
+		"pt":      "pt",
+		"it":      "it",
+	},
 }
 
 // detectedMaps maps a service-reported source language back to an
@@ -111,6 +123,11 @@ var detectedMaps = map[string]map[string]string{
 	},
 	"google": {
 		"zh-CN": "zh-HANS", "en": "en", "ja": "ja", "ko": "ko",
+		"fr": "fr", "de": "de", "ru": "ru", "es": "es",
+		"pt": "pt", "it": "it",
+	},
+	"volcengine": {
+		"zh": "zh-HANS", "en": "en", "ja": "ja", "ko": "ko",
 		"fr": "fr", "de": "de", "ru": "ru", "es": "es",
 		"pt": "pt", "it": "it",
 	},

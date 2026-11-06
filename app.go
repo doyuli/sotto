@@ -49,7 +49,8 @@ var hotkeyLabels = map[string]string{
 // the bubble windows and the settings window. Its mutex guards the
 // fields and is never held across a call that waits for the main thread.
 type application struct {
-	cfgPath string
+	cfgPath       string
+	configWriteMu sync.Mutex
 
 	mu          sync.Mutex
 	cfg         config.Settings
@@ -91,6 +92,7 @@ func (a *application) ready() {
 	if err != nil {
 		log.Printf("settings: %v", err)
 	}
+	cfg.Services.Enabled = translate.Available(cfg, a.keys)
 	a.cfg = cfg
 
 	if err := mygo.App.SetOpenAtLogin(cfg.OpenAtLogin); err != nil {
@@ -125,9 +127,18 @@ func (a *application) settings() config.Settings {
 
 // updateSettings normalizes, saves and applies s.
 func (a *application) updateSettings(s config.Settings) error {
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+
 	s = config.Normalize(s)
+	s.Services.Enabled = translate.Available(s, a.keys)
+	return a.saveSettings(s)
+}
+
+// saveSettings commits settings while the caller holds configWriteMu.
+func (a *application) saveSettings(s config.Settings) error {
 	if err := config.Save(a.cfgPath, s); err != nil {
-		return err
+		return fmt.Errorf("保存设置：%w", err)
 	}
 	a.applySettings(s)
 	return nil
@@ -409,7 +420,7 @@ func (a *application) trayMenu() *mygo.Menu {
 			a.snip.Show()
 		}},
 		mygo.Separator(),
-		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings() }},
+		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) }},
 		{Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
 			Click: func(it *mygo.MenuItem, _ *mygo.Window) {
 				go a.setTrayOpenAtLogin(it.IsChecked())
@@ -420,6 +431,9 @@ func (a *application) trayMenu() *mygo.Menu {
 }
 
 func (a *application) setTrayOpenAtLogin(open bool) {
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+
 	cfg := a.settings()
 	if cfg.OpenAtLogin == open {
 		// Windows can change the startup entry independently of our settings.
@@ -430,7 +444,7 @@ func (a *application) setTrayOpenAtLogin(open bool) {
 		return
 	}
 	cfg.OpenAtLogin = open
-	if err := a.updateSettings(cfg); err != nil {
+	if err := a.saveSettings(cfg); err != nil {
 		log.Printf("save settings: %v", err)
 		a.refreshTrayMenu()
 	}
@@ -439,18 +453,25 @@ func (a *application) setTrayOpenAtLogin(open bool) {
 // showSettings opens the settings window, or focuses the one there is.
 // It runs on the main thread (the tray); NewWindow executes directly
 // there, outside the mutex.
-func (a *application) showSettings() {
+func (a *application) showSettings(services bool) {
 	a.mu.Lock()
 	win := a.settingsWin
 	a.mu.Unlock()
 	if win != nil {
+		if services {
+			OpenTranslationSettings.Emit(win, true)
+		}
 		win.Show()
 		win.Focus()
 		return
 	}
+	url := "/#/settings"
+	if services {
+		url += "?tab=services"
+	}
 	w := mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto 设置",
-		URL:             "/#/settings",
+		URL:             url,
 		Width:           780,
 		Height:          600,
 		MinWidth:        660,

@@ -24,6 +24,12 @@ export interface BubbleState {
   settings: Settings;
 }
 
+/** CredentialStatus contains presence information without exposing stored values. */
+export interface CredentialStatus {
+  stored: string[];
+  configured: string[];
+}
+
 /** DeeplUsage is DeepL's monthly character count and limit. */
 export interface DeeplUsage {
   used: number;
@@ -119,16 +125,16 @@ export interface TranslationUpdateMsg {
 
 /** ConfigSvc reads and writes the settings. */
 export const ConfigSvc = {
+  /** Credentials reports which credentials are stored and which services can be enabled. */
+  credentials(): Promise<CredentialStatus> {
+    return call("ConfigSvc.Credentials");
+  },
   /** DeeplUsage reports this month's DeepL character count and limit. */
   deeplUsage(): Promise<DeeplUsage> {
     return call("ConfigSvc.DeeplUsage");
   },
   get(): Promise<Settings> {
     return call("ConfigSvc.Get");
-  },
-  /** HasSecret reports whether a credential is stored. */
-  hasSecret(name: string): Promise<boolean> {
-    return call("ConfigSvc.HasSecret", name);
   },
   /** OcrLanguages lists the languages the installed OCR engine recognizes. */
   ocrLanguages(): Promise<string[]> {
@@ -145,6 +151,10 @@ export const ConfigSvc = {
   /** SetSecret stores a credential; an empty value deletes it. */
   setSecret(name: string, value: string): Promise<void> {
     return call("ConfigSvc.SetSecret", name, value);
+  },
+  /** TestService returns a user-facing error, or an empty string on success. */
+  testService(name: string): Promise<string> {
+    return call("ConfigSvc.TestService", name);
   },
 } as const;
 
@@ -182,6 +192,10 @@ export const BubbleSvc = {
   /** Copy puts text on the clipboard. */
   copy(text: string): Promise<void> {
     return call("BubbleSvc.Copy", text);
+  },
+  /** OpenTranslationSettings opens the services tab from the bubble. */
+  openTranslationSettings(): Promise<void> {
+    return call("BubbleSvc.OpenTranslationSettings");
   },
   /** Pin keeps the bubble on screen when it loses focus. */
   pin(id: number): Promise<void> {
@@ -235,4 +249,6 @@ export const events = {
   runMeta: event<RunMetaMsg>("run-meta"),
   /** SettingsChanged tells every page the new settings. */
   settingsChanged: event<Settings>("settings-changed"),
+  /** OpenTranslationSettings selects the services tab in an existing window. */
+  openTranslationSettings: event<boolean>("open-translation-settings"),
 } as const;

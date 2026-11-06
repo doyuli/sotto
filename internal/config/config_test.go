@@ -18,8 +18,11 @@ func TestDefault(t *testing.T) {
 	if !s.Identifier.AutoSplit || !s.Bubble.AutoHide {
 		t.Errorf("autoSplit/autoHide should default to on")
 	}
-	if len(s.CopyFormats) == 0 || len(s.Services.Enabled) == 0 {
-		t.Errorf("copy formats and services must default to a list")
+	if len(s.CopyFormats) == 0 {
+		t.Error("copy formats must default to a list")
+	}
+	if !reflect.DeepEqual(s.Services.Enabled, []string{"google"}) {
+		t.Errorf("enabled = %v, want only Google", s.Services.Enabled)
 	}
 }
 
@@ -59,6 +62,22 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Services.Enabled, []string{"deepl", "google"}) {
 		t.Errorf("enabled = %v", got.Services.Enabled)
+	}
+}
+
+func TestAllServicesDisabledRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := Default()
+	s.Services.Enabled = []string{}
+	if err := Save(path, Normalize(s)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Services.Enabled, []string{}) {
+		t.Errorf("enabled = %#v, want an empty list", got.Services.Enabled)
 	}
 }
 
@@ -102,8 +121,8 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 	if !reflect.DeepEqual(got.Services.Enabled, []string{"deepl", "potato"}) {
 		t.Errorf("enabled = %v", got.Services.Enabled)
 	}
-	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato"}) {
-		t.Errorf("order = %v, want enabled services appended", got.Services.Order)
+	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "google", "baidu", "volcengine", "openai", "tencent", "youdao", "azure"}) {
+		t.Errorf("order = %v, want enabled and built-in services appended", got.Services.Order)
 	}
 	if got.Hotkeys.Ocr != "Ctrl+Alt+S" {
 		t.Errorf("ocr hotkey = %q, want default", got.Hotkeys.Ocr)
