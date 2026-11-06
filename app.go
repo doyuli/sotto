@@ -472,7 +472,7 @@ func (a *application) showSettings(services bool) {
 		win.Focus()
 		return
 	}
-	url := "/#/settings"
+	url := "/settings.html"
 	if services {
 		url += "?tab=services"
 	}

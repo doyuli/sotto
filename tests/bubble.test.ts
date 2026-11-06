@@ -1,279 +1,359 @@
-import { beforeEach, expect, test } from "bun:test";
-import { renderBubble, disposeBubble } from "../src/pages/bubble";
-import { renderSnip, disposeSnip } from "../src/pages/snip";
-import type { BubbleState, RunReq } from "../src/mygo";
-import { Element, TestDocument } from "./dom";
+// @vitest-environment jsdom
+import { expect, test, vi } from "vitest";
+import { mount, tick } from "svelte";
+import BubblePage from "../src/components/BubblePage.svelte";
+import type { BubbleState, FormatOption, RunReq } from "../src/mygo";
+import { deferred, settle, setupPageTest } from "./support/page";
 
-let doc: TestDocument, root: Element, calls: {method:string;args:any[]}[];
-let listeners: Map<string, Set<(message:any)=>void>>;
-let initial: BubbleState;
-let callOverride: ((method:string, args:any[])=>unknown) | undefined;
-function emit(name:string, message:any) { for (const handler of listeners.get(name) ?? []) handler(message); }
-function button(text:string) {
- const found = root.querySelectorAll("button").find(n=>n.textContent===text || n.title===text);
- if (!found) throw new Error(`missing button ${text}`);
- return found;
+const page = setupPageTest();
+
+function input(): HTMLTextAreaElement {
+  return page.target.querySelector("textarea")!;
 }
-function input() { return root.querySelector("textarea")!; }
-function currentRequest(): RunReq { return calls.filter(c=>c.method==="TranslateSvc.Run").at(-1)!.args[0]; }
-beforeEach(async () => {
- doc=new TestDocument(); root=doc.createElement("div"); doc.body.append(root);
- calls=[]; listeners=new Map(); callOverride=undefined;
- initial={id:1,showID:1,clipboardRecoveryID:"",serviceRequests:{google:"r",baidu:"r"},sessionID:"s",generation:1,revision:0,reqID:"r",trigger:"selection",text:"hello",sourceLang:"auto",targetLang:"zh-HANS",pinned:false,phase:"",message:"",meta:null,results:[],settings:{
-  services:{enabled:["google","baidu"],order:["google","baidu"],openai:{baseURL:"",model:""}},
-  targetLanguage:"zh-HANS",identifier:{autoSplit:true},copyFormats:["snake"],hotkeys:{panel:"",selection:"",ocr:""},bubble:{autoHide:true},openAtLogin:false,
- }};
- const storage=new Map<string,string>();
- Object.assign(globalThis,{document:doc,location:{hash:"#/bubble?b=1"},sessionStorage:{getItem:(k:string)=>storage.get(k)??null,setItem:(k:string,v:string)=>storage.set(k,v)},mygo:{
-  on:(name:string,fn:(m:any)=>void)=>{ if(!listeners.has(name))listeners.set(name,new Set()); listeners.get(name)!.add(fn); return ()=>listeners.get(name)?.delete(fn); },
-  call:async (method:string,...args:any[])=>{ calls.push({method,args}); if(callOverride)return callOverride(method,args); if(method==="BubbleSvc.Ready")return structuredClone(initial); if(method==="TranslateSvc.Formats")return []; },
- }});
- await renderBubble(root as unknown as HTMLElement);
+
+function button(name: string, root: ParentNode = page.target): HTMLButtonElement {
+  const found = [...root.querySelectorAll("button")].find((node) =>
+    node.textContent?.trim() === name || node.title === name || node.getAttribute("aria-label") === name
+  );
+  if (!found) throw new Error(`Missing button: ${name}`);
+  return found;
+}
+
+async function openBubble(): Promise<void> {
+  page.track(mount(BubblePage, { target: page.target, props: { id: 1 } }));
+  await vi.waitFor(() => expect(input().value).toBe(page.backend.bubble.text));
+  await settle();
+}
+
+function edit(text: string): void {
+  input().value = text;
+  input().dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function keydown(key: string, target: EventTarget = document): void {
+  target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+}
+
+function run(text: string): RunReq {
+  edit(text);
+  keydown("Enter", input());
+  return lastRun();
+}
+
+function lastRun(): RunReq {
+  return page.backend.calls("TranslateSvc.Run").at(-1)![0] as RunReq;
+}
+
+function update(service: string, text: string, reqID = "initial", err = ""): void {
+  page.backend.emit("translation-update", { reqID, service, text, err, detectedLang: "en" });
+}
+
+function cardTexts(): (string | null)[] {
+  return [...page.target.querySelectorAll(".card-text")].map((node) => node.textContent);
+}
+
+function present(showID: number, revision = 1, clipboardRecoveryID = ""): void {
+  page.backend.emit("bubble-presented", {
+    sessionID: page.backend.bubble.sessionID, showID, revision, clipboardRecoveryID, focus: true,
+  });
+}
+
+test("another result preserves card identity, scroll and focus", async () => {
+  await openBubble();
+  update("google", "你好");
+  await tick();
+  const card = page.target.querySelector(".card-ok")!;
+  const scroll = card.querySelector(".card-scroll")!;
+  scroll.scrollTop = 80;
+  const copy = button("复制", card);
+  copy.focus();
+
+  update("baidu", "您好");
+  await tick();
+  expect(page.target.querySelector(".card-ok")).toBe(card);
+  expect(scroll.scrollTop).toBe(80);
+  expect(document.activeElement).toBe(copy);
 });
 
-test("another service result preserves the selected card node and scroll position", () => {
- emit("translation-update",{reqID:"r",service:"google",text:"你好",err:"",detectedLang:"en"});
- const card=root.querySelector(".card-ok")!;
- const scroll=card.querySelector(".card-scroll")!; scroll.scrollTop=80;
- const copy=card.querySelectorAll("button").find(n=>n.title==="复制")!; copy.focus();
- emit("translation-update",{reqID:"r",service:"baidu",text:"您好",err:"",detectedLang:"en"});
- expect(root.querySelector(".card-ok")).toBe(card);
- expect(scroll.scrollTop).toBe(80); expect(doc.activeElement).toBe(copy);
+test("retry requests only the failed service and retains the successful card", async () => {
+  await openBubble();
+  update("google", "你好");
+  update("baidu", "", "initial", "网络错误");
+  await tick();
+  const card = page.target.querySelector(".card-ok");
+  button("重试").click();
+  await tick();
+  expect(lastRun().service).toBe("baidu");
+  expect(page.target.querySelector(".card-ok")).toBe(card);
 });
 
-test("retry calls only the failed service and keeps successful card", () => {
- emit("translation-update",{reqID:"r",service:"google",text:"你好",err:""});
- const card=root.querySelector(".card-ok");
- emit("translation-update",{reqID:"r",service:"baidu",text:"",err:"网络错误"});
- button("重试").emit("click");
- expect(currentRequest().service).toBe("baidu");
- expect(root.querySelector(".card-ok")).toBe(card);
-});
-
-test("clearing captured text cancels work and leaves an editable composer", () => {
- button("清空输入").emit("click");
- expect(input().value).toBe(""); expect(input().readOnly).toBe(false);
- expect(calls.at(-1)?.method).toBe("TranslateSvc.Cancel");
- expect(calls.at(-1)?.args).toEqual(["s",1]);
-});
-
-test("late results and capture resets cannot overwrite a manual revision", () => {
- input().value="new text"; input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
- const request=currentRequest(); expect(request.revision).toBe(1);
- emit("bubble-reset",{...initial,revision:-1,text:"late OCR"});
- expect(input().value).toBe("new text");
- emit("translation-update",{reqID:"r",service:"google",text:"old result",err:""});
- expect(root.querySelector(".card-ok")).toBeNull();
- emit("translation-update",{reqID:request.reqID,service:"google",text:"new result",err:""});
- expect(root.querySelector(".card-text")?.textContent).toBe("new result");
-});
-
-test("recognition cancel exposes recovery and prevents a late capture reset", () => {
- emit("bubble-reset",{...initial,sessionID:"ocr",generation:2,reqID:"ocr",revision:-1,trigger:"ocr",phase:"recognizing",text:""});
- expect(input().readOnly).toBe(true);
- button("取消识别").emit("click");
- expect(input().readOnly).toBe(false); expect(button("重新框选")).toBeDefined();
- emit("bubble-reset",{...initial,sessionID:"ocr",generation:2,reqID:"ocr",revision:-1,text:"late capture"});
- expect(input().value).toBe("");
-});
-
-test("initial snapshot keeps results if an older reset is delivered afterward", () => {
- emit("translation-update",{reqID:"r",service:"google",text:"你好",err:""});
- emit("bubble-reset",{...initial,generation:0,text:"older session"});
- expect(input().value).toBe("hello");
- expect(root.querySelector(".card-text")?.textContent).toBe("你好");
-});
-
-test("Escape still cancels screenshot after another key, and remount removes old handlers", () => {
- Object.assign(globalThis,{location:{hash:"#/snip?t=10"},innerWidth:1000,innerHeight:800});
- renderSnip(root as unknown as HTMLElement);
- doc.emit("keydown",{key:"Shift"});
- doc.emit("keydown",{key:"Escape"});
- expect(calls.filter(c=>c.method==="SnipSvc.Done").map(c=>c.args)).toEqual([[10,null]]);
- Object.assign(globalThis,{location:{hash:"#/snip?t=11"}});
- renderSnip(root as unknown as HTMLElement);
- doc.emit("keydown",{key:"Escape"});
- expect(calls.filter(c=>c.method==="SnipSvc.Done").map(c=>c.args)).toEqual([[10,null],[11,null]]);
-});
-
-test("native close invalidates pending results and the next run advances the revision", () => {
- emit("run-stopped",{sessionID:"s",showID:1,revision:3});
- expect(root.querySelectorAll(".card-loading")).toHaveLength(0);
- input().value="resume";
- input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
- expect(currentRequest().revision).toBe(4);
- emit("translation-update",{reqID:"r",service:"google",text:"late",err:""});
- expect(root.querySelector(".card-ok")).toBeNull();
-});
-
-test("retrying one failure still accepts another service's pending original response", () => {
- emit("run-meta",{reqID:"r",sourceLang:"auto",targetLang:"zh-HANS",services:["google","baidu"]});
- emit("translation-update",{reqID:"r",service:"baidu",text:"",err:"offline"});
- button("重试").emit("click");
- const retry=currentRequest();
- emit("translation-update",{reqID:"r",service:"google",text:"original peer completed",err:""});
- expect(root.querySelectorAll(".card-text").map(n=>n.textContent)).toContain("original peer completed");
- emit("translation-update",{reqID:retry.reqID,service:"baidu",text:"retry completed",err:""});
- expect(root.querySelectorAll(".card-ok")).toHaveLength(2);
-});
-
-test("peer retry IPC errors and unavailable metadata settle their own cards", async () => {
- emit("translation-update",{reqID:"r",service:"google",text:"",err:"offline"});
- emit("translation-update",{reqID:"r",service:"baidu",text:"",err:"offline"});
- let rejectFirst!: (reason:Error)=>void;
- callOverride=(method,args)=> {
-  if(method==="TranslateSvc.Run" && args[0].service==="google") {
-   return new Promise((_,reject)=>{rejectFirst=reject;});
+test("language changes use the new selection and deleting the last character cancels", async () => {
+  await openBubble();
+  for (const [selector, property, language] of [
+    [".source-select", "sourceLang", "fr"],
+    [".lang-select", "targetLang", "en"],
+  ] as const) {
+    const select = page.target.querySelector<HTMLSelectElement>(selector)!;
+    select.value = language;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(lastRun()[property]).toBe(language);
   }
- };
- button("重试").emit("click"); const first=currentRequest();
- button("重试").emit("click"); const second=currentRequest();
- rejectFirst(new Error("IPC failed"));
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(root.querySelectorAll(".card-error").map(n=>n.textContent)).toContain("Error: IPC failed");
- emit("translation-update",{reqID:second.reqID,service:"baidu",text:"peer done",err:""});
- expect(root.querySelectorAll(".card-loading")).toHaveLength(0);
- button("重试").emit("click"); const third=currentRequest();
- // Start another retry so the unavailable metadata no longer matches global reqID.
- emit("translation-update",{reqID:second.reqID,service:"baidu",text:"",err:"offline"});
- button("重试").emit("click");
- emit("run-meta",{reqID:third.reqID,services:["baidu"],sourceLang:"auto",targetLang:"zh-HANS"});
- expect(root.querySelectorAll(".card-error").map(n=>n.textContent)).toContain("该服务当前不可用，请检查设置");
- emit("translation-update",{reqID:first.reqID,service:"google",text:"stale",err:""});
- expect(root.querySelectorAll(".card-text").map(n=>n.textContent)).not.toContain("stale");
+  edit("");
+  await tick();
+  expect(page.backend.calls("TranslateSvc.Cancel")).toEqual([["test-session", 4]]);
+  expect(page.target.querySelector(".card")).toBeNull();
 });
 
-test("English Ready snapshot restores naming buttons and keeps copy and speech controls", async () => {
- initial.targetLang="en";
- initial.results=[{reqID:"r",service:"google",text:"hello world",err:"",detectedLang:"zh"}];
- callOverride=(method)=> {
-  if(method==="BubbleSvc.Ready")return structuredClone(initial);
-  if(method==="TranslateSvc.Formats")return [{style:"snake",label:"蛇形",value:"hello_world"}];
- };
- await renderBubble(root as unknown as HTMLElement);
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(button("蛇形：hello_world")).toBeDefined();
- expect(button("复制")).toBeDefined(); expect(button("朗读")).toBeDefined();
- button("蛇形：hello_world").emit("click");
- expect(calls.filter(c=>c.method==="BubbleSvc.Copy").at(-1)?.args).toEqual(["hello_world"]);
+test("clear button cancels and leaves an editable composer", async () => {
+  await openBubble();
+  button("清空输入").click();
+  await tick();
+  expect(input().value).toBe("");
+  expect(input().readOnly).toBe(false);
+  expect(page.backend.calls("TranslateSvc.Cancel")).toEqual([["test-session", 2]]);
 });
 
-test("close sends one guarded command and presentation updates preserve unsent drafts", () => {
- input().value="unsent draft";
- emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:""});
- expect(input().value).toBe("unsent draft");
- emit("bubble-presented",{sessionID:"s",showID:1,revision:0,focus:true,clipboardRecoveryID:""});
- button("关闭").emit("click");
- expect(calls.filter(c=>c.method==="TranslateSvc.Cancel")).toHaveLength(0);
- expect(calls.filter(c=>c.method==="BubbleSvc.Close").at(-1)?.args).toEqual([1,"s",2,1]);
+test("late results and capture resets cannot replace a manual translation", async () => {
+  await openBubble();
+  const request = run("new text");
+  expect(request.revision).toBe(2);
+  page.backend.emit("bubble-reset", { ...page.backend.bubble, revision: 1, text: "late OCR" });
+  update("google", "old result");
+  await tick();
+  expect(input().value).toBe("new text");
+  expect(cardTexts()).toEqual([]);
+  update("google", "new result", request.reqID);
+  await tick();
+  expect(cardTexts()).toEqual(["new result"]);
 });
 
-test("old close events cannot cancel a reopened panel's new translation", () => {
- emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:""});
- input().value="new"; input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
- const request=currentRequest();
- emit("run-stopped",{sessionID:"s",showID:1,revision:99});
- emit("translation-update",{reqID:request.reqID,service:"google",text:"new result",err:""});
- expect(root.querySelector(".card-text")?.textContent).toBe("new result");
+test("cancelled OCR stays editable when a late recognition snapshot arrives", async () => {
+  await openBubble();
+  const recognizing = {
+    ...page.backend.bubble, sessionID: "ocr", generation: 2, reqID: "ocr",
+    revision: -1, trigger: "ocr", phase: "recognizing", text: "",
+  };
+  page.backend.emit("bubble-reset", recognizing);
+  await tick();
+  expect(input().readOnly).toBe(true);
+  button("取消识别").click();
+  await tick();
+  expect(input().readOnly).toBe(false);
+  expect(button("重新框选")).toBeDefined();
+  page.backend.emit("bubble-reset", { ...recognizing, text: "late capture" });
+  await tick();
+  expect(input().value).toBe("");
 });
 
-test("presentation reconciles a native close without erasing the draft", () => {
- input().value="keep draft";
- emit("bubble-presented",{sessionID:"s",showID:2,revision:3,focus:true,clipboardRecoveryID:""});
- expect(input().value).toBe("keep draft");
- expect(root.querySelectorAll(".card-loading")).toHaveLength(0);
- input().emit("keydown",{key:"Enter",isComposing:false,shiftKey:false});
- expect(currentRequest().revision).toBe(4);
+test("Ready results survive an older reset queued before the snapshot returns", async () => {
+  const ready = deferred<BubbleState>();
+  page.backend.override("BubbleSvc.Ready", () => ready.promise);
+  page.track(mount(BubblePage, { target: page.target, props: { id: 1 } }));
+  await tick();
+  page.backend.emit("bubble-reset", { ...page.backend.bubble, generation: 0, text: "old session" });
+  ready.resolve({
+    ...page.backend.bubble,
+    results: [{ reqID: "initial", service: "google", text: "你好", detectedLang: "en", err: "" }],
+  });
+  await settle();
+  expect(input().value).toBe(page.backend.bubble.text);
+  expect(cardTexts()).toEqual(["你好"]);
 });
 
-test("failed clipboard recovery stays available until explicit successful retry", async () => {
- emit("bubble-presented",{sessionID:"s",showID:2,revision:0,focus:true,clipboardRecoveryID:"backup"});
- let fail=true;
- callOverride=(method)=> { if(method==="BubbleSvc.RestoreClipboard" && fail) throw new Error("clipboard changed"); };
- button("重试恢复剪贴板").emit("click");
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(button("重试恢复剪贴板").disabled).toBe(false);
- expect(button("放弃恢复，继续取词")).toBeDefined();
- fail=false; button("重试恢复剪贴板").emit("click");
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(root.querySelectorAll("button").some(b=>b.textContent==="重试恢复剪贴板")).toBe(false);
+test("native stop invalidates pending results and the next run advances the revision", async () => {
+  await openBubble();
+  page.backend.emit("run-stopped", { sessionID: "test-session", showID: 1, revision: 3 });
+  await tick();
+  expect(page.target.querySelector(".card-loading")).toBeNull();
+  expect(run("resume").revision).toBe(4);
+  update("google", "late");
+  await tick();
+  expect(cardTexts()).toEqual([]);
 });
 
-test("remounting bubbles leaves exactly one Escape handler", async () => {
- await renderBubble(root as unknown as HTMLElement);
- await renderBubble(root as unknown as HTMLElement);
- doc.emit("keydown",{key:"Escape",isComposing:false});
- expect(calls.filter(c=>c.method==="BubbleSvc.Close")).toHaveLength(1);
+test("a retry can receive both the peer's original result and its own result", async () => {
+  await openBubble();
+  page.backend.emit("run-meta", {
+    reqID: "initial", sourceLang: "en", targetLang: "zh-HANS", services: ["google", "baidu"],
+  });
+  update("baidu", "", "initial", "offline");
+  await tick();
+  button("重试").click();
+  const retry = lastRun();
+  update("google", "original peer completed");
+  update("baidu", "retry completed", retry.reqID);
+  await tick();
+  expect(cardTexts()).toEqual(["original peer completed", "retry completed"]);
 });
 
-test("leaving bubble and snip routes releases document handlers and subscriptions", () => {
- disposeBubble();
- const pendingBefore=calls.length;
- doc.emit("keydown",{key:"Escape",isComposing:false});
- emit("bubble-presented",{...initial,showID:99,focus:true});
- expect(calls).toHaveLength(pendingBefore);
- expect([...listeners.values()].every(handlers=>handlers.size===0)).toBe(true);
- Object.assign(globalThis,{location:{hash:"#/snip?t=10"},innerWidth:1000,innerHeight:800});
- renderSnip(root as unknown as HTMLElement);
- disposeSnip();
- doc.emit("keydown",{key:"Escape"});
- doc.emit("contextmenu");
- expect(calls.filter(c=>c.method==="SnipSvc.Done")).toHaveLength(0);
+test("peer retry failures and unavailable metadata settle their own cards", async () => {
+  const failed = deferred<null>();
+  page.backend.override("TranslateSvc.Run", (req) =>
+    (req as RunReq).service === "google" ? failed.promise : null
+  );
+  await openBubble();
+  update("google", "", "initial", "offline");
+  update("baidu", "", "initial", "offline");
+  await tick();
+  const [googleRetry, baiduRetry] = page.target.querySelectorAll<HTMLButtonElement>(".card-error-actions button:first-child");
+  googleRetry!.click();
+  const first = lastRun();
+  baiduRetry!.click();
+  const second = lastRun();
+  failed.reject(new Error("IPC failed"));
+  await settle();
+  expect(page.target.querySelector(".card-error")?.textContent).toContain("IPC failed");
+
+  update("baidu", "peer done", second.reqID);
+  await tick();
+  expect(page.target.querySelector(".card-loading")).toBeNull();
+  button("重试").click();
+  const third = lastRun();
+  update("baidu", "", second.reqID, "offline");
+  await tick();
+  button("重试").click();
+  page.backend.emit("run-meta", { reqID: third.reqID, services: ["baidu"] });
+  update("google", "stale", first.reqID);
+  await tick();
+  expect(page.target.querySelector(".card-error")?.textContent).toContain("该服务当前不可用");
+  expect(cardTexts()).not.toContain("stale");
 });
 
-test("late Ready cannot overwrite a newer mount or another route", async () => {
- let finishReady!: (value:BubbleState)=>void;
- callOverride=(method)=> {
-  if(method==="BubbleSvc.Ready") return new Promise(resolve=>{finishReady=resolve;});
- };
- const oldMount=renderBubble(root as unknown as HTMLElement);
- const finishOld=finishReady;
- callOverride=undefined;
- initial.text="new mount";
- await renderBubble(root as unknown as HTMLElement);
- finishOld({...initial,text:"stale mount"}); await oldMount;
- expect(input().value).toBe("new mount");
-
- callOverride=(method)=> {
-  if(method==="BubbleSvc.Ready") return new Promise(resolve=>{finishReady=resolve;});
- };
- const leaving=renderBubble(root as unknown as HTMLElement);
- disposeBubble();
- const other=doc.createElement("div"); other.textContent="another route"; root.replaceChildren(other);
- finishReady(initial); await leaving;
- expect(root.firstChild).toBe(other);
- expect([...listeners.values()].every(handlers=>handlers.size===0)).toBe(true);
+test("English Ready snapshot renders copy, speech and naming controls", async () => {
+  page.backend.bubble.targetLang = "en";
+  page.backend.bubble.results = [{
+    reqID: "initial", service: "google", text: "user name", detectedLang: "", err: "",
+  }];
+  await openBubble();
+  const card = page.target.querySelector(".card-ok")!;
+  expect(button("朗读", card)).toBeDefined();
+  expect(button("复制", card)).toBeDefined();
+  button("小驼峰：userName", card).click();
+  expect(page.backend.calls("BubbleSvc.Copy")).toEqual([["userName"]]);
+  await vi.waitFor(() => expect(page.target.querySelector(".toast-host")?.textContent).toContain("已复制 小驼峰"));
 });
 
-test("late failed Ready cannot erase another route", async () => {
- let rejectReady!: (reason:Error)=>void;
- callOverride=(method)=> {
-  if(method==="BubbleSvc.Ready") return new Promise((_,reject)=>{rejectReady=reject;});
- };
- const mounting=renderBubble(root as unknown as HTMLElement);
- disposeBubble();
- const other=doc.createElement("div"); root.replaceChildren(other);
- rejectReady(new Error("old page closed")); await mounting;
- expect(root.firstChild).toBe(other);
+test("copy waits for IPC and reports clipboard failures", async () => {
+  const copy = deferred<void>();
+  page.backend.override("BubbleSvc.Copy", () => copy.promise);
+  await openBubble();
+  button("复制输入").click();
+  await tick();
+  const toasts = page.target.querySelector(".toast-host")!;
+  expect(toasts.textContent).not.toContain("已复制");
+  copy.reject(new Error("复制失败"));
+  await settle();
+  expect(toasts.textContent).toContain("复制失败");
+  expect(toasts.textContent).not.toContain("已复制");
 });
 
-test("format loading preserves copy focus and peer updates preserve format focus", async () => {
- emit("bubble-reset",{...initial,targetLang:"en"});
- let finishFormats!: (value:unknown)=>void;
- callOverride=(method)=> {
-  if(method==="TranslateSvc.Formats") return new Promise(resolve=>{finishFormats=resolve;});
- };
- emit("translation-update",{reqID:"r",service:"google",text:"hello world",err:""});
- const card=root.querySelector(".card-ok")!;
- const copy=button("复制"); copy.focus();
- finishFormats([{style:"snake",label:"蛇形",value:"hello_world"}]);
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(doc.activeElement).toBe(copy);
- expect(root.querySelector(".card-ok")).toBe(card);
- const format=button("蛇形：hello_world"); format.focus();
- emit("translation-update",{reqID:"r",service:"baidu",text:"peer result",err:""});
- finishFormats([{style:"snake",label:"蛇形",value:"peer_result"}]);
- await new Promise(resolve=>setTimeout(resolve,0));
- expect(button("蛇形：hello_world")).toBe(format);
- expect(doc.activeElement).toBe(format);
+test("close uses the newest presentation and preserves the draft until closing", async () => {
+  await openBubble();
+  edit("unsent draft");
+  present(2);
+  present(1);
+  await tick();
+  expect(input().value).toBe("unsent draft");
+  expect(document.activeElement).toBe(input());
+  button("关闭").click();
+  expect(page.backend.calls("TranslateSvc.Cancel")).toEqual([]);
+  expect(page.backend.calls("BubbleSvc.Close")).toEqual([[1, "test-session", 2, 2]]);
+});
+
+test("a stop from an earlier presentation cannot cancel a reopened panel's run", async () => {
+  await openBubble();
+  present(2);
+  const request = run("new");
+  page.backend.emit("run-stopped", { sessionID: "test-session", showID: 1, revision: 99 });
+  update("google", "new result", request.reqID);
+  await tick();
+  expect(cardTexts()).toEqual(["new result"]);
+});
+
+test("presentation reconciles a native stop without erasing the draft", async () => {
+  await openBubble();
+  edit("keep draft");
+  present(2, 3);
+  await tick();
+  expect(input().value).toBe("keep draft");
+  expect(page.target.querySelector(".card-loading")).toBeNull();
+  keydown("Enter", input());
+  expect(lastRun().revision).toBe(4);
+});
+
+test("clipboard recovery remains available after an error and can be retried", async () => {
+  let fail = true;
+  page.backend.override("BubbleSvc.RestoreClipboard", () => {
+    if (fail) throw new Error("clipboard busy");
+  });
+  await openBubble();
+  present(2, 1, "backup");
+  await tick();
+  const restore = button("重试恢复剪贴板");
+  restore.click();
+  await settle();
+  expect(page.target.querySelector(".toast-host")?.textContent).toContain("clipboard busy");
+  expect(restore.disabled).toBe(false);
+  expect(button("放弃恢复，继续取词")).toBeDefined();
+
+  fail = false;
+  restore.click();
+  await settle();
+  expect(page.target.contains(restore)).toBe(false);
+  expect(page.target.querySelector(".toast-host")?.textContent).toContain("剪贴板已恢复");
+  expect(page.backend.calls("BubbleSvc.RestoreClipboard")).toEqual([["backup"], ["backup"]]);
+});
+
+test("unmount releases bubble subscriptions and remount adds only one Escape handler", async () => {
+  await openBubble();
+  await page.destroy();
+  expect([...page.backend.events.values()].every((listeners) => listeners.size === 0)).toBe(true);
+  keydown("Escape");
+  expect(page.backend.calls("BubbleSvc.Close")).toEqual([]);
+  await openBubble();
+  keydown("Escape");
+  expect(page.backend.calls("BubbleSvc.Close")).toHaveLength(1);
+});
+
+test.each(["resolve", "reject"] as const)("late Ready %s does not change a new mount", async (outcome) => {
+  const ready = deferred<BubbleState>();
+  const call = page.backend.call.getMockImplementation()!;
+  page.backend.call.mockImplementationOnce((method, ...args) =>
+    method === "BubbleSvc.Ready" ? ready.promise : call(method, ...args)
+  );
+  page.track(mount(BubblePage, { target: page.target, props: { id: 1 } }));
+  await tick();
+  expect(page.backend.calls("BubbleSvc.Ready")).toHaveLength(1);
+  await page.destroy();
+
+  page.backend.bubble.text = "new mount";
+  await openBubble();
+  if (outcome === "resolve") ready.resolve({ ...page.backend.bubble, text: "stale mount" });
+  else ready.reject(new Error("old page closed"));
+  await settle();
+  expect(input().value).toBe("new mount");
+  expect(page.target.querySelector(".bubble-error")).toBeNull();
+});
+
+test("naming format resolution and peer updates retain focused controls", async () => {
+  const formats = deferred<FormatOption[]>();
+  page.backend.override("TranslateSvc.Formats", (text) => text === "hello world" ? formats.promise : []);
+  page.backend.bubble.targetLang = "en";
+  await openBubble();
+  update("google", "hello world");
+  await tick();
+  const card = page.target.querySelector(".card-ok")!;
+  const copy = button("复制", card);
+  copy.focus();
+  formats.resolve([{ style: "snake", label: "下划线", value: "hello_world" }]);
+  await settle();
+  expect(document.activeElement).toBe(copy);
+  expect(page.target.querySelector(".card-ok")).toBe(card);
+
+  const format = button("下划线：hello_world");
+  format.focus();
+  update("baidu", "peer result");
+  await settle();
+  expect(button("下划线：hello_world")).toBe(format);
+  expect(document.activeElement).toBe(format);
 });

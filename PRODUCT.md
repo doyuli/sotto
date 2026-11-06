@@ -48,7 +48,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 ## Evidence on Hand
 
 - `DESIGN.md` — reusable brand and bubble design tokens.
-- Running implementation: `src/pages/bubble.ts`, `src/style.css`, `bubbles.go`.
+- Running implementation: `src/components/BubblePage.svelte`, `src/style.css`, `bubbles.go`.
 
 ## Product Principles
 

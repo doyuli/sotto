@@ -46,7 +46,7 @@ func main() {
 		ConfigSvc{app},
 		TranslateSvc{app},
 		BubbleSvc{app},
-		HotkeySvc{app},
+		HotkeySvc{},
 		SnipSvc{app},
 	)
 	mygo.App.WhenReady(app.ready)

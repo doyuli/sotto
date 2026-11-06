@@ -6,7 +6,7 @@
 #   in:  {"png":"<base64>","lang":"zh-Hans"}    lang optional
 #   out: {"ok":true,"text":"...","lines":[{"text":"...","box":[x,y,w,h]}]}
 #        {"ok":false,"error":"..."}
-# Startup emits {"ready":true,"languages":[...]} once the engine is up,
+# Startup emits {"ready":true} once the engine is up,
 # or {"ready":false,"error":"..."} when no OCR language pack is usable.
 
 $ErrorActionPreference = 'Stop'
@@ -68,7 +68,7 @@ if (-not $default) {
   Send-Line ('{"ready":false,"error":"no OCR language pack installed"}')
   exit 1
 }
-Send-Line (('{"ready":true,"languages":' + (ConvertTo-Json -InputObject @($langs) -Compress) + '}'))
+Send-Line '{"ready":true}'
 
 $stdin = [Console]::OpenStandardInput()
 while ($true) {
