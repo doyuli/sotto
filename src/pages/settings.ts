@@ -4,12 +4,12 @@ import { el, toast } from "../ui";
 
 // The canonical copy-format list, in display order; labels match Go's
 // naming.Labels.
-const FORMAT_LABELS: Record<string, string> = {
-  lowerCamel: "小驼峰",
-  upperCamel: "大驼峰",
-  snake: "下划线",
-  constant: "常量",
-  kebab: "短横线",
+const COPY_FORMATS = {
+  lowerCamel: { label: "小驼峰", example: "userName" },
+  upperCamel: { label: "大驼峰", example: "UserName" },
+  snake: { label: "下划线", example: "user_name" },
+  constant: { label: "常量", example: "USER_NAME" },
+  kebab: { label: "短横线", example: "user-name" },
 };
 
 const SERVICE_ORDER = ["deepl", "openai", "baidu", "tencent", "youdao", "azure", "google"];
@@ -404,23 +404,41 @@ function renderNaming(): void {
     }),
   );
 
-  const wrap = el("div", "field");
-  const lab = el("label", undefined, "复制格式");
-  lab.append(el("span", "sub", "目标语言为英语时，译文下方显示这些复制项"));
-  const chips = el("div", "format-chips");
-  for (const [style, label] of Object.entries(FORMAT_LABELS)) {
-    const chip = el("button", "chip", label);
-    chip.classList.toggle("off", !settings.copyFormats.includes(style));
-    chip.addEventListener("click", () => {
-      const has = settings.copyFormats.includes(style);
-      settings.copyFormats = has
-        ? settings.copyFormats.filter((s) => s !== style)
-        : [...settings.copyFormats, style];
-      chip.classList.toggle("off", !settings.copyFormats.includes(style));
+  const group = el("fieldset", "copy-formats");
+  const hint = el("p", "copy-formats-hint", "英语译文下方会显示已开启的复制格式。至少开启一种。");
+  hint.id = "copy-formats-hint";
+  group.setAttribute("aria-describedby", hint.id);
+  const list = el("div", "copy-format-list");
+
+  function updateDisabled(): void {
+    for (const toggle of list.querySelectorAll("input")) {
+      toggle.disabled = toggle.checked && settings.copyFormats.length === 1;
+    }
+  }
+
+  for (const [style, { label, example }] of Object.entries(COPY_FORMATS)) {
+    const row = el("label", "copy-format");
+    const name = el("span", undefined, label);
+    name.id = `copy-format-${style}`;
+    const sample = el("code", undefined, example);
+    sample.id = `${name.id}-example`;
+    const toggle = el("input", "switch");
+    toggle.type = "checkbox";
+    toggle.checked = settings.copyFormats.includes(style);
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-labelledby", name.id);
+    toggle.setAttribute("aria-describedby", sample.id);
+    toggle.addEventListener("change", () => {
+      settings.copyFormats = toggle.checked
+        ? [...settings.copyFormats, style]
+        : settings.copyFormats.filter((s) => s !== style);
+      updateDisabled();
       void save();
     });
-    chips.append(chip);
+    row.append(name, sample, toggle);
+    list.append(row);
   }
-  wrap.append(lab, chips);
-  host.append(wrap);
+  updateDisabled();
+  group.append(el("legend", undefined, "复制格式"), hint, list);
+  host.append(group);
 }
