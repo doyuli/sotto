@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 
 	"github.com/egoist/mygo"
@@ -165,23 +166,26 @@ func (m *bubbleManager) Close(id int64) {
 	}
 }
 
-// setAutoHide turns the unpinned bubble's automatic hiding on or off.
+// setAutoHide also updates visible bubbles displaced by Unpin.
 func (m *bubbleManager) setAutoHide(on bool) {
 	m.mu.Lock()
-	b := m.current
-	if b == nil {
-		m.mu.Unlock()
-		return
-	}
-	switch {
-	case on && b.offBlur == nil:
-		b.offBlur = b.win.OnBlur(b.win.Hide)
-	case !on && b.offBlur != nil:
-		b.offBlur()
-		b.offBlur = nil
+	var changed []*bubble
+	for _, b := range m.byID {
+		if b.pinned || (b.offBlur != nil) == on {
+			continue
+		}
+		if on {
+			b.offBlur = b.win.OnBlur(b.win.Hide)
+		} else {
+			b.offBlur()
+			b.offBlur = nil
+		}
+		changed = append(changed, b)
 	}
 	m.mu.Unlock()
-	m.refreshOutsideClick(b)
+	for _, b := range changed {
+		m.refreshOutsideClick(b)
+	}
 }
 
 // State returns the bubble's current state for its page.
@@ -238,13 +242,16 @@ func (m *bubbleManager) showWin(b *bubble) {
 	m.mu.Unlock()
 }
 
-// Windows can deny foreground activation after an asynchronous selection
-// grab. A bubble that never acquired focus cannot dismiss itself on blur.
+// Windows can deny foreground activation when a bubble shows. If it never
+// acquires focus, an outside click must dismiss it without a blur event.
 func (m *bubbleManager) refreshOutsideClick(b *bubble) {
+	if runtime.GOOS != "windows" {
+		return
+	}
 	mygo.RunOnMain(func() {
 		b.stopOutsideClick()
 		m.mu.Lock()
-		needsWatch := b.trigger == "selection" && b.offBlur != nil
+		needsWatch := b.offBlur != nil
 		reqID := b.reqID
 		m.mu.Unlock()
 		if !needsWatch || !b.win.IsVisible() || b.win.IsFocused() {
@@ -306,6 +313,8 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		BackgroundColor: "light-dark(#ffffff, #222325)",
 		Page:            mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 	})
+	// Once the bubble has focus, the blur listener can handle dismissal.
+	b.win.OnFocus(b.stopOutsideClick)
 	b.win.OnReadyToShow(func() {
 		m.mu.Lock()
 		b.ready = true
