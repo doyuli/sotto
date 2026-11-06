@@ -63,6 +63,7 @@ export class Element {
   get firstChild(): Element | null { return this.children[0] ?? null; }
   get nextSibling(): Element | null { return this.parent?.children[this.parent.children.indexOf(this) + 1] ?? null; }
   setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  removeAttribute(name: string) { this.attributes.delete(name); }
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
 
   addEventListener(name: string, listener: (event: any) => void, options?: {once?:boolean;signal?:AbortSignal}) {
