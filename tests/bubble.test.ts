@@ -63,7 +63,7 @@ test("another result preserves card identity, scroll and focus", async () => {
   update("google", "你好");
   await tick();
   const card = page.target.querySelector(".card-ok")!;
-  const scroll = page.target.querySelector(".bubble")!;
+  const scroll = page.target.querySelector(".bubble-scroll")!;
   scroll.scrollTop = 80;
   const copy = button("复制", card);
   copy.focus();
@@ -368,13 +368,14 @@ test("display height changes preserve the translation, scroll and focus", async 
   const bubble = page.target.querySelector<HTMLElement>(".bubble")!;
   expect(bubble.style.getPropertyValue("--bubble-max-height")).toBe("540px");
   const card = page.target.querySelector(".card-ok")!;
-  bubble.scrollTop = 80;
+  const scroll = page.target.querySelector<HTMLElement>(".bubble-scroll")!;
+  scroll.scrollTop = 80;
   button("复制", card).focus();
   page.backend.emit("bubble-layout-changed", 480);
   await tick();
   expect(bubble.style.getPropertyValue("--bubble-max-height")).toBe("480px");
   expect(page.target.querySelector(".card-ok")).toBe(card);
-  expect(bubble.scrollTop).toBe(80);
+  expect(scroll.scrollTop).toBe(80);
   expect(document.activeElement).toBe(button("复制", card));
 });
 
@@ -383,12 +384,12 @@ test("a full translation starts at the top, while retry retains the reading posi
   update("google", "你好");
   update("baidu", "", "initial", "网络错误");
   await tick();
-  const bubble = page.target.querySelector<HTMLElement>(".bubble")!;
-  bubble.scrollTop = 100;
+  const scroll = page.target.querySelector<HTMLElement>(".bubble-scroll")!;
+  scroll.scrollTop = 100;
   button("重试").click();
   await tick();
-  expect(bubble.scrollTop).toBe(100);
+  expect(scroll.scrollTop).toBe(100);
   run("A new paragraph");
   await tick();
-  expect(bubble.scrollTop).toBe(0);
+  expect(scroll.scrollTop).toBe(0);
 });

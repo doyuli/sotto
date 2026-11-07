@@ -114,15 +114,18 @@ body[data-route="bubble"] {
   color: var(--fg);
   border-radius: 14px;
   box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.bubble-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
 }
 
 .bubble-top {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   background: var(--panel);
   flex-shrink: 0;
   display: flex;
@@ -138,7 +141,8 @@ body[data-route="bubble"] {
   --app-region: no-drag;
 }
 
-.bubble.pinned > :is(.bubble-top, .bubble-body) {
+.bubble.pinned > .bubble-top,
+.bubble.pinned .bubble-body > * {
   --app-region: drag;
   cursor: grab;
 }
@@ -168,11 +172,14 @@ body[data-route="bubble"] {
 }
 
 .bubble-body {
-  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 2px 12px 12px;
+}
+
+.bubble-body > * {
+  flex-shrink: 0;
 }
 
 /* The textarea and its actions share one recessed surface. */
@@ -345,12 +352,12 @@ body[data-route="bubble"] {
 }
 
 .bubble button:focus-visible,
-.bubble:focus-visible {
+.bubble-scroll:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.bubble:focus-visible {
+.bubble-scroll:focus-visible {
   outline-offset: -2px;
 }
 
@@ -372,7 +379,7 @@ body[data-route="bubble"] {
 }
 
 /* Scroll activity changes only the thumb; its gutter always occupies space. */
-.bubble,
+.bubble-scroll,
 .bubble-input {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -380,29 +387,29 @@ body[data-route="bubble"] {
   transition: scrollbar-color 150ms;
 }
 
-.bubble.scrolling,
+.bubble-scroll.scrolling,
 .bubble-input.scrolling {
   scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.bubble::-webkit-scrollbar,
+.bubble-scroll::-webkit-scrollbar,
 .bubble-input::-webkit-scrollbar {
   width: 6px;
 }
 
-.bubble::-webkit-scrollbar-thumb,
+.bubble-scroll::-webkit-scrollbar-thumb,
 .bubble-input::-webkit-scrollbar-thumb {
   background: transparent;
   border-radius: 3px;
   transition: background-color 150ms;
 }
 
-.bubble.scrolling::-webkit-scrollbar-thumb,
+.bubble-scroll.scrolling::-webkit-scrollbar-thumb,
 .bubble-input.scrolling::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
 }
 
-.bubble::-webkit-scrollbar-track,
+.bubble-scroll::-webkit-scrollbar-track,
 .bubble-input::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -411,9 +418,9 @@ body[data-route="bubble"] {
    Chromium. Use its fixed-width scrollbar so OS overlay settings cannot
    remove the reserved gutter or hide the thumb during scroll activity. */
 @supports selector(::-webkit-scrollbar) {
-  .bubble,
+  .bubble-scroll,
   .bubble-input,
-  .bubble.scrolling,
+  .bubble-scroll.scrolling,
   .bubble-input.scrolling {
     scrollbar-width: auto;
     scrollbar-color: auto;
@@ -421,7 +428,7 @@ body[data-route="bubble"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bubble::-webkit-scrollbar-thumb,
+  .bubble-scroll::-webkit-scrollbar-thumb,
   .bubble-input::-webkit-scrollbar-thumb {
     transition: none;
   }

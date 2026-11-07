@@ -38,7 +38,7 @@
 
   let inputText: string = $state("");
   let textareaElem: HTMLTextAreaElement | undefined = $state();
-  let bubbleElem: HTMLDivElement | undefined = $state();
+  let scrollElem: HTMLDivElement | undefined = $state();
   let maxHeight = $state(760);
 
   const cards = new SvelteMap<string, CardState>();
@@ -129,7 +129,7 @@
     void tick().then(() => {
       if (bubbleState !== appliedState) return;
       growTextarea();
-      if (bubbleElem) bubbleElem.scrollTop = 0;
+      if (scrollElem) scrollElem.scrollTop = 0;
       if (st.trigger === "input") textareaElem?.focus();
     });
   }
@@ -234,7 +234,7 @@
     detected = "";
 
     if (!service) {
-      if (bubbleElem) bubbleElem.scrollTop = 0;
+      if (scrollElem) scrollElem.scrollTop = 0;
       runServices = null;
       cards.clear();
       cardRequests.clear();
@@ -432,10 +432,8 @@
 {#if readyFailed}
   <div class="bubble-error" role="status">气泡已关闭</div>
 {:else}
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable bubble needs keyboard access.) -->
-  <div class="bubble" class:pinned={isPinned} bind:this={bubbleElem} use:scrollActivity
+  <div class="bubble" class:pinned={isPinned}
     style:--bubble-max-height={`${maxHeight}px`}
-    role="region" aria-label="翻译气泡" tabindex="0"
   >
     <!-- Top Bar -->
     <div class="bubble-top">
@@ -470,8 +468,11 @@
       </div>
     </div>
 
-    <!-- Body -->
-    <div class="bubble-body">
+    <!-- Keep the header and its native drag region outside the scroller. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable content needs keyboard access.) -->
+    <div class="bubble-body bubble-scroll" bind:this={scrollElem} use:scrollActivity
+      role="region" aria-label="翻译内容" tabindex="0"
+    >
       <!-- Capture Status & Clipboard Recovery -->
       {#if statusMessage || isRecognizing || bubbleState?.clipboardRecoveryID}
         <div class="capture-status" role="status">
