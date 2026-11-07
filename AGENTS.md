@@ -40,6 +40,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌
 ## Git 约定
 
 - 提交信息遵循 Conventional Commits 规范（`<type>[optional scope]: <description>`），保持项目一致性。
+- PR 描述遵循 `.github/pull_request_template.md`，按 `Summary`、`Verification`、`Scope` 组织，说明最终改动、实际验证结果和改动范围，并注明待验证项。
 - 不提交生成物以外的杂物；`node_modules/ dist/ build/` 已忽略。
 - 提交前跑验证命令（见上）。
 
