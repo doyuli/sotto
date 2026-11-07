@@ -478,3 +478,40 @@ test("Ready restores in-progress text and a native stop retains it", async () =>
   await tick();
   expect(cardTexts()).toEqual(["恢复中的译文"]);
 });
+
+test("appending streamed text preserves earlier spans and the reader's selection", async () => {
+  await openBubble();
+  stream("你好");
+  await tick();
+  const text = page.target.querySelector(".card-text")!;
+  const first = text.querySelector("span")!;
+  const selection = window.getSelection()!;
+  const range = document.createRange();
+  range.selectNodeContents(first);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  stream("你好，世界");
+  await tick();
+  expect(text.textContent).toBe("你好，世界");
+  expect(text.querySelector("span")).toBe(first);
+  expect(selection.toString()).toBe("你好");
+  update("google", "你好，世界。");
+  await tick();
+  expect(text.textContent).toBe("你好，世界。");
+  expect(text.querySelector("span")).toBe(first);
+  expect(selection.toString()).toBe("你好");
+  selection.removeAllRanges();
+});
+
+test("a provider correction replaces the old text without duplicating it", async () => {
+  await openBubble();
+  stream("原来的文字");
+  await tick();
+  stream("修正后的文字");
+  await tick();
+  expect(cardTexts()).toEqual(["修正后的文字"]);
+  update("google", "最终译文");
+  await tick();
+  expect(cardTexts()).toEqual(["最终译文"]);
+});

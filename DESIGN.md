@@ -82,4 +82,4 @@ The service title strip is darker than the card in light mode and lighter in dar
 
 ## Motion
 
-150 ms state transitions only: hover, collapse, badge/state changes. Shimmer runs only while loading. `prefers-reduced-motion` disables both.
+150 ms state transitions only: hover, collapse, badge/state changes, and a subtle fade-in on newly appended translation text. Previously displayed text stays still; streaming never adds an artificial typing delay. Shimmer runs only while loading. `prefers-reduced-motion` disables reveal and shimmer animations and reduces transitions.

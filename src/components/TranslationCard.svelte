@@ -11,6 +11,7 @@
 
 <script lang="ts">
   import BubbleIcon from "./BubbleIcon.svelte";
+  import StreamingText from "./StreamingText.svelte";
 
   let { name, title, card, isCollapsed, onToggle, onRetry, onOpenSettings, onSpeak, onCopy }: {
     name: string;
@@ -58,7 +59,7 @@
       <div class="skeleton short"></div>
     {:else}
       {#if card.text}
-        <div class="card-text">{card.text}</div>
+        <div class="card-text"><StreamingText text={card.text} streaming={card.status === "streaming"} /></div>
       {/if}
       {#if card.status === "error"}
         <div class="card-error" role="status">{card.text ? "译文未完成。" : ""}{card.err ?? "出错了"}</div>
