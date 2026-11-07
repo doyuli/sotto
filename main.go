@@ -97,15 +97,12 @@ func handleOCRCommand() bool {
 		text, err = ocr.RecognizeWith(ctx, img, lang)
 	}
 	report := struct {
-		Elapsed string     `json:"elapsed"`
-		Text    string     `json:"text"`
-		Lines   []ocr.Line `json:"lines"`
-		Err     string     `json:"err,omitempty"`
-	}{Elapsed: time.Since(start).Round(time.Millisecond).String()}
+		ocr.Text
+		Err string `json:"err,omitempty"`
+	}{Text: text}
+	report.Elapsed = time.Since(start).Round(time.Millisecond).String()
 	if err != nil {
 		report.Err = err.Error()
-	} else {
-		report.Text, report.Lines = text.Text, text.Lines
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
 		log.Fatal(err)

@@ -4,10 +4,10 @@
 #
 # Protocol: one JSON object per line.
 #   in:  {"png":"<base64>","lang":"zh-Hans"}    lang optional
-#   out: {"ok":true,"text":"...","lines":[{"text":"...","box":[x,y,w,h]}]}
+#   out: {"ok":true,"lines":[{"text":"...","box":[x,y,w,h]}]}
 #        {"ok":false,"error":"..."}
-# Startup emits {"ready":true} once the engine is up,
-# or {"ready":false,"error":"..."} when no OCR language pack is usable.
+# Startup emits {"ready":true,"maxDimension":4096} once the engine is up,
+# Missing language packs are reported for the requested language.
 
 $ErrorActionPreference = 'Stop'
 $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -46,8 +46,10 @@ function Get-Engine([string]$langTag) {
     }
     return $script:defaultEngine
   }
-  if (-not $script:engines.ContainsKey($langTag)) {
-    $script:engines[$langTag] = New-Engine $langTag
+  if (-not $script:engines[$langTag]) {
+    # Do not cache missing packs: they can be installed while Sotto is running.
+    $engine = New-Engine $langTag
+    if ($engine) { $script:engines[$langTag] = $engine }
   }
   return $script:engines[$langTag]
 }
@@ -57,18 +59,9 @@ function Send-Line([string]$line) {
   [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
 }
 
-# Languages the installed packs cover, as BCP-47 tags.
-$langs = @()
-try {
-  [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | ForEach-Object { $langs += $_.LanguageTag }
-} catch {}
-
-$default = New-Engine ''
-if (-not $default) {
-  Send-Line ('{"ready":false,"error":"no OCR language pack installed"}')
-  exit 1
-}
-Send-Line '{"ready":true}'
+# An explicit request can use an installed pack outside the profile languages.
+$script:defaultEngine = New-Engine ''
+Send-Line (ConvertTo-Json -Compress @{ready=$true; maxDimension=[Windows.Media.Ocr.OcrEngine]::MaxImageDimension})
 
 $stdin = [Console]::OpenStandardInput()
 while ($true) {
@@ -83,6 +76,10 @@ while ($true) {
   }
   if ($ms.Length -eq 0) { continue }
   $line = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+  $ms.Dispose()
+  $bitmap = $null
+  $ras = $null
+  $stream = $null
   try {
     $req = $line | ConvertFrom-Json
     $engine = Get-Engine $req.lang
@@ -100,25 +97,6 @@ while ($true) {
     $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])
     $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
     $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-
-    # A Windows OCR engine recognizes its own language only: an English
-    # engine reads no Chinese at all. When the user-profile engine comes
-    # back empty (or nearly so), try every other installed engine and keep
-    # the longest text — the matching pack is then found without asking.
-    if (-not $req.lang -and $langs.Count -gt 1 -and (($result.Text -replace '\s', '').Length -lt 3)) {
-      $best = $result
-      foreach ($tag in $langs) {
-        try {
-          $alt = Get-Engine $tag
-          if (-not $alt) { continue }
-          $r2 = Await ($alt.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-          if (($r2.Text -replace '\s', '').Length -gt ($best.Text -replace '\s', '').Length) {
-            $best = $r2
-          }
-        } catch {}
-      }
-      $result = $best
-    }
 
     # The WinRT collections come through as __ComObject: piping them
     # enumerates the elements, while @(...) can wrap the whole collection
@@ -148,7 +126,7 @@ while ($true) {
       # minus, so $right - $x, $bottom - $y would subtract an array.
       $lines += @{ text = $text; box = @($x, $y, ($right - $x), ($bottom - $y)) }
     }
-    $out = @{ ok = $true; text = $result.Text; lines = @($lines) }
+    $out = @{ ok = $true; lines = @($lines) }
     Send-Line (ConvertTo-Json -InputObject $out -Compress -Depth 4)
   } catch {
     $msg = ($_.Exception.Message -replace '"', "'")
@@ -156,6 +134,10 @@ while ($true) {
     if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
       $at = ' (line ' + $_.InvocationInfo.ScriptLineNumber + ')'
     }
-    Send-Line ('{"ok":false,"error":"' + $msg + $at + '"}')
+    Send-Line (ConvertTo-Json -Compress @{ok=$false; error=($msg + $at)})
+  } finally {
+    foreach ($resource in @($bitmap, $ras, $stream)) {
+      if ($resource) { try { $resource.Dispose() } catch {} }
+    }
   }
 }

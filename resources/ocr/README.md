@@ -1,33 +1,66 @@
-# PP-OCR resources
+# Offline OCR
 
-In a checkout, the models and dictionary live in `resources/ocr`.
-The runtime DLLs live in `resources/windows-amd64/ocr` and
-`resources/windows-arm64/ocr`. MyGo merges the shared files and the
-target architecture's DLLs into the `ocr` directory next to `Sotto.exe`.
-`SOTTO_OCR_DIR` can point to a directory containing both the models and
-the DLLs for the running architecture.
+Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. Chinese and English use the local models first; other explicit language tags use Windows.Media.Ocr.
 
-| File | What it is |
+## Resources
+
+| File | Purpose |
 |---|---|
-| `det.onnx` | PP-OCRv3 text detector |
-| `rec.onnx` | PP-OCRv3 recognizer (Chinese + English) |
-| `ppocr_keys.txt` | Recognizer character dictionary |
-| `onnxruntime.dll` | ONNX Runtime 1.31.1 runtime |
-| `onnxruntime_providers_shared.dll` | ONNX Runtime shared provider library |
+| `det.onnx` | Text detection |
+| `rec.onnx` | Text recognition |
+| `ppocr_keys.txt` | Ordered recognition dictionary |
+| `LICENSE`, `NOTICE` | Licenses and copyright notices |
 
-## Sources and licences
+[`internal/ocr/models.json`](../../internal/ocr/models.json) records asset sizes, SHA-256 hashes, download URLs and tensor contracts. Update both models and the dictionary together. Tests and the first local initialization verify asset integrity.
 
-- `det.onnx` and `rec.onnx` are the `ch_PP-OCRv3_det_infer.onnx` and
-  `ch_PP-OCRv3_rec_infer.onnx` models bundled with
-  [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr_onnxruntime`
-  on PyPI). They come from PaddleOCR, licensed under the Apache License
-  2.0.
-- `ppocr_keys.txt` is the recognizer's `character` metadata, exported
-  from `rec.onnx` (the PaddleOCR `ppocr_keys_v1.txt` dictionary).
-- `onnxruntime.dll` and `onnxruntime_providers_shared.dll` are from
-  [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.31.1,
-  licensed under the MIT License.
+Keep the dictionary's original LF bytes, whitespace entries and final newline. `.gitattributes` enforces LF on checkout. To repair an old CRLF checkout, restore the tracked dictionary and rebuild:
 
-Keep the models and the runtime version in step: the Go wrapper walks
-the ONNX Runtime C API table for API version 31, matching the 1.31
-runtime shipped here.
+```powershell
+git checkout-index --force -- resources/ocr/ppocr_keys.txt
+bun run build:win:x64
+```
+
+Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/ocr`. Builds combine the shared assets and architecture-specific DLLs into `ocr/` beside `Sotto.exe`. `SOTTO_OCR_DIR` overrides that directory and must contain the complete model set and matching DLLs.
+
+## Recognition behavior
+
+- Sessions initialize on first use and are reused serially. Detection defaults to `min(4, runtime.NumCPU())` inference threads; recognition uses 2.
+- Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
+- Empty local results or text-confidence risks can trigger one system OCR fallback. Discarded low-score detection regions, low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
+- Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation prevents stale results from being published but cannot interrupt native inference already running.
+
+Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 1,000 candidates; recognition inputs to 2,048 pixels wide. Exceeded budgets return an error or use system fallback. Complex tables, vertical/inverted text and exact code indentation are not guaranteed.
+
+## Diagnostics
+
+During development, capture the same region several times in the app and inspect the terminal's `ocr:` summary: total time, selected engine, detection size, main stage durations, risk reasons and fallback costs. Failed requests additionally log full attempt details. These logs exclude recognized text and image data. Full diagnostics remain available in the recognition result; numeric fields ending in `Us` are microseconds.
+
+The first successful local call includes model verification and session initialization. Later calls reuse the sessions. Detection/recognition inference timings include the native bridge and output copy. Total OCR time includes queue wait, but excludes screenshot capture and translation. Both engine attempts remain visible when fallback supplies the final result.
+
+For comparisons, set environment variables before launching a fresh app process:
+
+| `SOTTO_OCR_PROFILE` | Short-side target | Long-side cap | Pixel budget |
+|---|---:|---:|---:|
+| `balanced` (default) | 448 | 4,096 | 1 Mi |
+| `legacy` | 736 | 4,096 | 4 Mi |
+| `bounded` (experimental) | 64 | 960 | 1 Mi |
+
+`SOTTO_OCR_DETECTOR_THREADS` overrides detector threads (1–16). The default uses up to 4 threads, capped by the logical CPU count; explicit overrides are not capped. Recognition stays at 2. Configuration is cached after successful initialization. Smaller detection inputs and additional threads require accuracy and performance checks on the target device.
+
+## Build and verification
+
+```powershell
+$env:CGO_ENABLED = "0"
+go test ./internal/ocr/...
+bun run build:win
+```
+
+On Windows, verify packaged runtime loading and model output shapes:
+
+```powershell
+$env:SOTTO_OCR_PREFLIGHT = "1"
+go test ./internal/ocr -run '^TestV6SmallRuntimePreflight$' -count=1 -v
+Remove-Item Env:SOTTO_OCR_PREFLIGHT
+```
+
+The preflight does not measure recognition accuracy. Check real screenshots on x64 and ARM64: small text, light/dark backgrounds, mixed Chinese/English, code and numbers. Also check repeated captures, cancellation, missing language packs and corrupt resources.

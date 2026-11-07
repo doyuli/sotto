@@ -138,13 +138,34 @@ test("cancelled OCR stays editable when a late recognition snapshot arrives", as
   page.backend.emit("bubble-reset", recognizing);
   await tick();
   expect(input().readOnly).toBe(true);
+  expect(page.target.querySelector(".ocr-loading")?.getAttribute("aria-hidden")).toBe("true");
+  expect(page.target.querySelector(".composer")?.getAttribute("aria-busy")).toBe("true");
   button("取消识别").click();
   await tick();
   expect(input().readOnly).toBe(false);
+  expect(page.target.querySelector(".ocr-loading")).toBeNull();
+  expect(page.target.querySelector(".composer")?.getAttribute("aria-busy")).toBe("false");
   expect(button("重新框选")).toBeDefined();
   page.backend.emit("bubble-reset", { ...recognizing, text: "late capture" });
   await tick();
   expect(input().value).toBe("");
+});
+
+test("OCR loading state ends when recognition completes or fails", async () => {
+  page.backend.bubble = { ...page.backend.bubble, trigger: "ocr", phase: "recognizing", text: "" };
+  await openBubble();
+  expect(page.target.querySelector(".capture-status")?.textContent).toContain("正在识别文字");
+  expect(page.target.querySelector(".ocr-loading")).not.toBeNull();
+  page.backend.emit("bubble-reset", { ...page.backend.bubble, revision: 2, phase: "", text: "recognized" });
+  await tick();
+  expect(page.target.querySelector(".ocr-loading")).toBeNull();
+  page.backend.emit("bubble-reset", { ...page.backend.bubble, generation: 2, sessionID: "next-ocr", phase: "recognizing" });
+  await tick();
+  expect(page.target.querySelector(".ocr-loading")).not.toBeNull();
+  page.backend.emit("bubble-reset", { ...page.backend.bubble, generation: 2, sessionID: "next-ocr", revision: 3, phase: "error", message: "文字识别失败，请重新框选。" });
+  await tick();
+  expect(page.target.querySelector(".ocr-loading")).toBeNull();
+  expect(page.target.querySelector(".capture-status")?.textContent).toContain("文字识别失败");
 });
 
 test("Ready results survive an older reset queued before the snapshot returns", async () => {

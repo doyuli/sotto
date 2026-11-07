@@ -3,6 +3,7 @@
 package ocr
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,15 +12,13 @@ import (
 	"syscall"
 	"unsafe"
 
+	"sotto/internal/ocr/pipeline"
+
 	"golang.org/x/sys/windows"
 )
 
 // A thin, cgo-free wrapper over the ONNX Runtime C API. The project is
-// built with CGO_ENABLED=0, so the official Go bindings (which use cgo)
-// cannot be used; this file loads onnxruntime.dll and walks the OrtApi
-// function table directly. The slot numbers come from onnxruntime's
-// onnxruntime_c_api.h for API version 31 (ORT 1.31), which is the
-// version shipped next to the PP-OCR models.
+// built with CGO_ENABLED=0; the function table ABI is fixed to API 31.
 
 const (
 	ortAPIVersion = 31
@@ -33,12 +32,13 @@ const (
 	ortSlotSetIntraOpNumThreads           = 24
 	ortSlotCreateTensorWithDataAsOrtValue = 49
 	ortSlotGetTensorMutableData           = 51
+	ortSlotGetTensorElementType           = 60
 	ortSlotGetDimensionsCount             = 61
 	ortSlotGetDimensions                  = 62
 	ortSlotGetTensorShapeElementCount     = 64
 	ortSlotGetTensorTypeAndShape          = 65
 	ortSlotCreateCpuMemoryInfo            = 69
-	ortSlotReleaseMemoryInfo              = 94
+	ortSlotReleaseEnv                     = 92
 	ortSlotReleaseStatus                  = 93
 	ortSlotReleaseSession                 = 95
 	ortSlotReleaseValue                   = 96
@@ -61,70 +61,84 @@ type ortRuntime struct {
 }
 
 var (
-	ortOnce sync.Once
-	ortRT   *ortRuntime
-	ortErr  error
+	ortMu sync.Mutex
+	ortRT *ortRuntime
 )
 
-// sharedORT returns the process-wide runtime, initializing it on first
-// use. A missing onnxruntime.dll or model directory surfaces as err so
-// the engine chain can fall back to the Windows recognizer.
+// Cache only successful initialization so repairing runtime files can recover
+// on the next request, just like repairing model assets.
 func sharedORT() (*ortRuntime, error) {
-	ortOnce.Do(func() {
-		_, dll := ocrResourcePaths()
-		if _, err := os.Stat(dll); err != nil {
-			ortErr = fmt.Errorf("ocr: %s not found", dll)
-			return
-		}
-		h, err := windows.LoadLibraryEx(dll, 0, ortLoadLibraryFlags)
-		if err != nil {
-			// Older loaders reject the flag combination; the plain call
-			// still resolves onnxruntime_providers_shared.dll when it sits
-			// beside the executable or in the resource directory on PATH.
-			h, err = windows.LoadLibrary(dll)
-			if err != nil {
-				ortErr = fmt.Errorf("ocr: load onnxruntime: %w", err)
-				return
-			}
-		}
-		proc, err := windows.GetProcAddress(h, "OrtGetApiBase")
-		if err != nil {
-			ortErr = fmt.Errorf("ocr: OrtGetApiBase: %w", err)
-			return
-		}
-		base, _, _ := syscall.SyscallN(proc)
-		if base == 0 {
-			ortErr = fmt.Errorf("ocr: OrtGetApiBase returned nil")
-			return
-		}
-		// OrtApiBase is a struct of two function pointers; GetApi is first.
-		getAPI := *(*uintptr)(native(base))
-		api, _, _ := syscall.SyscallN(getAPI, ortAPIVersion)
-		if api == 0 {
-			ortErr = fmt.Errorf("ocr: onnxruntime API %d unavailable", ortAPIVersion)
-			return
-		}
-		rt := &ortRuntime{lib: h, api: api}
+	ortMu.Lock()
+	defer ortMu.Unlock()
+	if ortRT != nil {
+		return ortRT, nil
+	}
+	rt, err := loadORT()
+	if err != nil {
+		return nil, err
+	}
+	ortRT = rt
+	return rt, nil
+}
 
-		logid, _ := syscall.BytePtrFromString("sotto")
-		var env uintptr
-		if err := rt.check(rt.call(ortSlotCreateEnv, ortLoggingError,
-			uintptr(unsafe.Pointer(logid)), uintptr(unsafe.Pointer(&env))), "CreateEnv"); err != nil {
-			ortErr = err
-			return
+func loadORT() (*ortRuntime, error) {
+	_, dll := ocrResourcePaths()
+	if _, err := os.Stat(dll); err != nil {
+		return nil, fmt.Errorf("ocr: stat %s: %w", dll, err)
+	}
+	h, err := windows.LoadLibraryEx(dll, 0, ortLoadLibraryFlags)
+	if err != nil {
+		// Older loaders reject the flag combination; the plain call
+		// still resolves onnxruntime_providers_shared.dll when it sits
+		// beside the executable or in the resource directory on PATH.
+		h, err = windows.LoadLibrary(dll)
+		if err != nil {
+			return nil, fmt.Errorf("ocr: load onnxruntime: %w", err)
 		}
-		rt.env = env
+	}
+	proc, err := windows.GetProcAddress(h, "OrtGetApiBase")
+	loaded := false
+	defer func() {
+		if !loaded {
+			_ = windows.FreeLibrary(h)
+		}
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("ocr: OrtGetApiBase: %w", err)
+	}
+	base, _, _ := syscall.SyscallN(proc)
+	if base == 0 {
+		return nil, fmt.Errorf("ocr: OrtGetApiBase returned nil")
+	}
+	// OrtApiBase is a struct of two function pointers; GetApi is first.
+	getAPI := *(*uintptr)(native(base))
+	api, _, _ := syscall.SyscallN(getAPI, ortAPIVersion)
+	if api == 0 {
+		return nil, fmt.Errorf("ocr: onnxruntime API %d unavailable", ortAPIVersion)
+	}
+	rt := &ortRuntime{lib: h, api: api}
 
-		var mem uintptr
-		if err := rt.check(rt.call(ortSlotCreateCpuMemoryInfo,
-			ortDeviceAllocator, ortMemTypeDefault, uintptr(unsafe.Pointer(&mem))), "CreateCpuMemoryInfo"); err != nil {
-			ortErr = err
-			return
+	logid, _ := syscall.BytePtrFromString("sotto")
+	var env uintptr
+	if err := rt.check(rt.call(ortSlotCreateEnv, ortLoggingError,
+		uintptr(unsafe.Pointer(logid)), uintptr(unsafe.Pointer(&env))), "CreateEnv"); err != nil {
+		return nil, err
+	}
+	rt.env = env
+	defer func() {
+		if !loaded {
+			rt.call(ortSlotReleaseEnv, env)
 		}
-		rt.memInfo = mem
-		ortRT = rt
-	})
-	return ortRT, ortErr
+	}()
+
+	var mem uintptr
+	if err := rt.check(rt.call(ortSlotCreateCpuMemoryInfo,
+		ortDeviceAllocator, ortMemTypeDefault, uintptr(unsafe.Pointer(&mem))), "CreateCpuMemoryInfo"); err != nil {
+		return nil, err
+	}
+	rt.memInfo = mem
+	loaded = true
+	return rt, nil
 }
 
 // ocrResourcePaths returns the model directory and runtime DLL path.
@@ -164,6 +178,9 @@ func ocrResourcePaths() (modelDir, dll string) {
 	return ".", "onnxruntime.dll"
 }
 
+// Arguments may point to Go storage consumed by the synchronous native call.
+//
+//go:uintptrescapes
 func (o *ortRuntime) call(slot int, args ...uintptr) uintptr {
 	fn := *(*uintptr)(unsafe.Add(native(o.api), slot*8))
 	r, _, _ := syscall.SyscallN(fn, args...)
@@ -192,6 +209,13 @@ type ortSession struct {
 }
 
 func newORTSession(modelPath, inputName, outputName string) (*ortSession, error) {
+	return newORTSessionWithThreads(modelPath, inputName, outputName, 2)
+}
+
+func newORTSessionWithThreads(modelPath, inputName, outputName string, threads int) (*ortSession, error) {
+	if threads < 1 || threads > 16 {
+		return nil, fmt.Errorf("ocr: invalid inference thread count: %d", threads)
+	}
 	rt, err := sharedORT()
 	if err != nil {
 		return nil, err
@@ -200,7 +224,7 @@ func newORTSession(modelPath, inputName, outputName string) (*ortSession, error)
 	if err := rt.check(rt.call(ortSlotCreateSessionOptions, uintptr(unsafe.Pointer(&opts))), "CreateSessionOptions"); err != nil {
 		return nil, err
 	}
-	if err := rt.check(rt.call(ortSlotSetIntraOpNumThreads, opts, 2), "SetIntraOpNumThreads"); err != nil {
+	if err := rt.check(rt.call(ortSlotSetIntraOpNumThreads, opts, uintptr(threads)), "SetIntraOpNumThreads"); err != nil {
 		rt.call(ortSlotReleaseSessionOptions, opts)
 		return nil, err
 	}
@@ -223,10 +247,43 @@ func newORTSession(modelPath, inputName, outputName string) (*ortSession, error)
 	return &ortSession{rt: rt, ptr: sess, inputName: inputName, outputName: outputName}, nil
 }
 
+func (s *ortSession) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != 0 {
+		s.rt.call(ortSlotReleaseSession, s.ptr)
+		s.ptr = 0
+	}
+}
+
+func (s *ortSession) Run(ctx context.Context, input pipeline.Tensor) (pipeline.Tensor, error) {
+	if err := ctx.Err(); err != nil {
+		return pipeline.Tensor{}, err
+	}
+	data, shape, err := s.run(input.Data, input.Shape)
+	if canceled := ctx.Err(); canceled != nil {
+		return pipeline.Tensor{}, canceled
+	}
+	return pipeline.Tensor{Data: data, Shape: shape}, err
+}
+
 // run feeds one float32 tensor and returns the first output tensor.
 func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ptr == 0 {
+		return nil, nil, fmt.Errorf("ocr: session closed")
+	}
+	n, err := tensorElements(shape)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(input) != n {
+		return nil, nil, fmt.Errorf("ocr: input shape/data mismatch")
+	}
+	// The DLL borrows these buffers until Run returns; uintptr arguments
+	// alone do not keep their backing storage reachable to the GC.
+	defer func() { runtime.KeepAlive(input); runtime.KeepAlive(shape) }()
 
 	var in uintptr
 	if err := s.rt.check(s.rt.call(ortSlotCreateTensorWithDataAsOrtValue, s.rt.memInfo,
@@ -245,6 +302,7 @@ func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, er
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() { runtime.KeepAlive(inName); runtime.KeepAlive(outName) }()
 	inNames := []uintptr{uintptr(unsafe.Pointer(inName))}
 	inputs := []uintptr{in}
 	outNames := []uintptr{uintptr(unsafe.Pointer(outName))}
@@ -256,6 +314,9 @@ func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, er
 		return nil, nil, err
 	}
 	out := outputs[0]
+	if out == 0 {
+		return nil, nil, fmt.Errorf("ocr: missing output tensor")
+	}
 	defer s.rt.call(ortSlotReleaseValue, out)
 
 	var info uintptr
@@ -264,11 +325,22 @@ func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, er
 		return nil, nil, err
 	}
 	defer s.rt.call(ortSlotReleaseTensorTypeAndShape, info)
+	var elementType int32
+	if err := s.rt.check(s.rt.call(ortSlotGetTensorElementType, info,
+		uintptr(unsafe.Pointer(&elementType))), "GetTensorElementType"); err != nil {
+		return nil, nil, err
+	}
+	if elementType != ortTensorFloat {
+		return nil, nil, fmt.Errorf("ocr: output is not float32")
+	}
 
 	var dimCount uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetDimensionsCount, info,
 		uintptr(unsafe.Pointer(&dimCount))), "GetDimensionsCount"); err != nil {
 		return nil, nil, err
+	}
+	if dimCount == 0 || dimCount > 4 {
+		return nil, nil, fmt.Errorf("ocr: invalid output rank %d", dimCount)
 	}
 	dims := make([]int64, dimCount)
 	if dimCount > 0 {
@@ -282,15 +354,23 @@ func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, er
 		uintptr(unsafe.Pointer(&count))), "GetTensorShapeElementCount"); err != nil {
 		return nil, nil, err
 	}
+	expected, err := tensorElements(dims)
+	if err != nil {
+		return nil, nil, err
+	}
+	if count != uintptr(expected) {
+		return nil, nil, fmt.Errorf("ocr: output shape/count mismatch")
+	}
 	var dataPtr uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetTensorMutableData, out,
 		uintptr(unsafe.Pointer(&dataPtr))), "GetTensorMutableData"); err != nil {
 		return nil, nil, err
 	}
-	result := make([]float32, count)
-	if count > 0 {
-		copy(result, unsafe.Slice((*float32)(native(dataPtr)), count))
+	if dataPtr == 0 || dataPtr%4 != 0 {
+		return nil, nil, fmt.Errorf("ocr: invalid output data pointer")
 	}
+	result := make([]float32, expected)
+	copy(result, unsafe.Slice((*float32)(native(dataPtr)), expected))
 	return result, dims, nil
 }
 
@@ -307,8 +387,7 @@ func cString(p uintptr) string {
 }
 
 // native turns an address the DLL handed back into a pointer Go can look
-// through; the round trip through its own address keeps go vet content,
-// as in internal/selection and internal/capture.
+// through without an intermediate integer-to-pointer conversion.
 func native(addr uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
 }

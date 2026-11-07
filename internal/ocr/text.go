@@ -5,11 +5,6 @@ import (
 	"unicode"
 )
 
-// CleanText is the post-processing pass for text from any source — a
-// selection grab or an OCR engine — so a caller outside the package gets
-// the same control-character and CJK-spacing cleanup.
-func CleanText(s string) string { return cleanText(s) }
-
 // cleanText is the single post-processing step every engine's output goes
 // through: it removes the characters no consumer should see — control and
 // zero-width code points, BOM, replacement characters, private-use glyphs

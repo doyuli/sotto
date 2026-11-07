@@ -1435,4 +1435,12 @@ body[data-route="snip"] {
 
 
 .capture-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:var(--muted); font-size:12px; line-height:1.55; }
-.capture-message { flex:1; min-width:180px; }
+.capture-message { display:flex; align-items:center; gap:8px; flex:1; min-width:180px; }
+
+.ocr-loading { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:20px; height:16px; flex:none; }
+.ocr-loading span { width:4px; height:4px; border-radius:50%; background:currentColor; animation:ocr-pulse 1s ease-in-out infinite; }
+.ocr-loading span:nth-child(2) { animation-delay:150ms; }
+.ocr-loading span:nth-child(3) { animation-delay:300ms; }
+.ocr-loading.paused span { animation-play-state:paused; }
+@keyframes ocr-pulse { 0%, 70%, 100% { opacity:.35; } 35% { opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .ocr-loading span { animation:none; opacity:1; } }
