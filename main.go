@@ -37,7 +37,8 @@ func main() {
 		Icon:                   iconPNG,
 		DisableAutomaticChecks: true,
 	}))
-	// A saved preference takes precedence over the plugin's default.
+	// Gate checks until ready has loaded the app's preference: the plugin's
+	// own persisted preference otherwise overrides DisableAutomaticChecks.
 	if updater.AutomaticChecks() {
 		updater.SetAutomaticChecks(false)
 	}

@@ -22,6 +22,9 @@ func TestDefault(t *testing.T) {
 	if s.Identifier.StripCodeComments || s.Identifier.FlattenNewlines || s.Identifier.StripMarkdown {
 		t.Error("source cleanup should default to off")
 	}
+	if s.AutoUpdate {
+		t.Error("automatic updates should default to off")
+	}
 	if len(s.CopyFormats) == 0 {
 		t.Error("copy formats must default to a list")
 	}
@@ -48,6 +51,7 @@ func TestRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	s := Default()
 	s.TargetLanguage = "en"
+	s.AutoUpdate = true
 	s.CopyFormats = []string{"snake", "kebab"}
 	s.Services.Enabled = []string{"deepl", "google"}
 	s.Services.Order = []string{"deepl", "google"}
@@ -61,6 +65,9 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got.TargetLanguage != "en" {
 		t.Errorf("target = %q, want en", got.TargetLanguage)
+	}
+	if !got.AutoUpdate {
+		t.Error("automatic update preference was not saved")
 	}
 	if !reflect.DeepEqual(got.CopyFormats, []string{"snake", "kebab"}) {
 		t.Errorf("copy formats = %v", got.CopyFormats)
@@ -172,5 +179,8 @@ func TestNormalizePartialFile(t *testing.T) {
 	}
 	if got.Identifier != (IdentifierSettings{}) {
 		t.Errorf("legacy identifier settings = %+v, want all switches off", got.Identifier)
+	}
+	if got.AutoUpdate {
+		t.Error("legacy settings should keep automatic updates off")
 	}
 }

@@ -87,6 +87,21 @@ test("initial services tab and native requests select the service section", asyn
   expect(select(".settings-section.active").id).toBe("section-services");
 });
 
+test("automatic updates default to off and persist both switch states", async () => {
+  await openSettings();
+  await tab("通用");
+  const selector = "#auto-update-switch";
+  expect(select<HTMLInputElement>(selector).checked).toBe(false);
+  change(selector, true);
+  await settle();
+  expect(page.backend.settings.autoUpdate).toBe(true);
+  expect(select<HTMLInputElement>(selector).checked).toBe(true);
+  change(selector, false);
+  await settle();
+  expect(page.backend.settings.autoUpdate).toBe(false);
+  expect(select<HTMLInputElement>(selector).checked).toBe(false);
+});
+
 test("Bilibili can be turned off independently of OpenAI", async () => {
   await openSettings();
   const bilibili = '[aria-label="启用Bilibili"]';

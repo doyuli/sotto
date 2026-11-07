@@ -11,6 +11,7 @@ class MockBackend {
     },
     targetLanguage: "zh-HANS",
     openAtLogin: false,
+    autoUpdate: false,
     bubble: { autoHide: true },
     identifier: { autoSplit: true, stripCodeComments: false, flattenNewlines: false, stripMarkdown: false },
     copyFormats: ["lowerCamel", "snake"],
