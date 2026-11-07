@@ -208,3 +208,77 @@ func TestStreamProgressStopsScheduledUpdates(t *testing.T) {
 	case <-time.After(80 * time.Millisecond):
 	}
 }
+
+func TestChatStreamAllowsLargeReasoningEnvelope(t *testing.T) {
+	// Repeated SSE metadata can exceed the JSON response limit even when the
+	// combined reasoning and translation are small. Reasoning is not output.
+	reasoning := `data: {"id":"` + strings.Repeat("a", 100) + `","object":"chat.completion.chunk","model":"compatible-reasoning-model","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}` + "\n\n"
+	body := strings.Repeat(reasoning, 4000) + "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你好\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	if len(body) <= 1<<20 {
+		t.Fatal("fixture must exceed the former whole-response limit")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+	cfg := config.Default()
+	cfg.Services.OpenAI.BaseURL = server.URL
+	var progress []string
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	res, err := (OpenAI{Client: server.Client()}).Stream(ctx,
+		Request{Text: strings.Repeat("字", maxChunkRunes), TargetLang: "zh-HANS"},
+		fakeKeys{keys.OpenAIKey: "test"}, cfg, func(r Result) { progress = append(progress, r.Text) })
+	if err != nil || res.Text != "你好" || !reflect.DeepEqual(progress, []string{"你好"}) {
+		t.Fatalf("large reasoning envelope: result = %+v, progress = %v, err = %v", res, progress, err)
+	}
+}
+
+func TestChatStreamSizeLimitsKeepPartialTranslation(t *testing.T) {
+	const translated = "已有译文"
+	prefix := "data: {\"choices\":[{\"delta\":{\"content\":\"" + translated + "\"}}]}\n\n"
+	part := strings.Repeat("界", maxChatTextBytes/6)
+	contentEvent := "data: {\"choices\":[{\"delta\":{\"content\":\"" + part + "\"}}]}\n\n"
+	for _, tc := range []struct{ name, tail, wantText, wantError string }{
+		{
+			name:     "oversized single line event",
+			tail:     "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"" + strings.Repeat("x", maxChatEventBytes) + "\"}}]}\n\n",
+			wantText: translated, wantError: "单条响应过大",
+		},
+		{
+			name: "oversized multiline event",
+			tail: strings.Repeat("data: "+strings.Repeat(" ", 1024)+"\n", maxChatEventBytes/1024+1) +
+				"data: {\"choices\":[{\"delta\":{\"content\":\"not accepted\"}}]}\n\n",
+			wantText: translated, wantError: "单条响应过大",
+		},
+		{
+			name:     "cumulative translation across bounded events",
+			tail:     contentEvent + contentEvent + "data: [DONE]\n\n",
+			wantText: translated + part, wantError: "译文过长",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := readChatStream(strings.NewReader(prefix+tc.tail), "test", nil)
+			if res.Message.Content != tc.wantText || err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("retained bytes = %d, want %d; err = %v, want %q", len(res.Message.Content), len(tc.wantText), err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestChatJSONFallbackRemainsBounded(t *testing.T) {
+	body := `{"choices":[{"message":{"content":"` + strings.Repeat("x", maxChatJSONBytes) + `"}}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+	cfg := config.Default()
+	cfg.Services.OpenAI.BaseURL = server.URL
+	res, err := (OpenAI{Client: server.Client()}).Translate(context.Background(),
+		Request{Text: "hi", TargetLang: "zh-HANS"}, fakeKeys{keys.OpenAIKey: "test"}, cfg)
+	if res.Text != "" || err == nil || !strings.Contains(err.Error(), "响应过大") {
+		t.Fatalf("oversized JSON: text bytes = %d, err = %v", len(res.Text), err)
+	}
+}

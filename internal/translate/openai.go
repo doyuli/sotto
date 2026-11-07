@@ -85,6 +85,12 @@ type chatChoice struct {
 
 var defaultChatClient = &http.Client{Timeout: 30 * time.Second}
 
+const (
+	maxChatJSONBytes  = 1 << 20
+	maxChatEventBytes = 1 << 20
+	maxChatTextBytes  = 1 << 20
+)
+
 // requestChatCompletion shares the wire protocol between independent services.
 func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string, emit func(string)) (chatChoice, error) {
 	if client == nil {
@@ -132,7 +138,9 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 	}
 	// Some compatible endpoints ignore stream and return a regular JSON body.
 	// Sniff the body since relays may omit or mislabel the content type.
-	reader := bufio.NewReader(io.LimitReader(resp.Body, (1<<20)+1))
+	// Bound retained events and text separately: repeated SSE metadata and
+	// discarded reasoning must not consume the translation's size budget.
+	reader := bufio.NewReader(resp.Body)
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
@@ -148,7 +156,14 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 		var out struct {
 			Choices []chatChoice `json:"choices"`
 		}
-		if err := json.NewDecoder(reader).Decode(&out); err != nil {
+		body, err := io.ReadAll(io.LimitReader(reader, maxChatJSONBytes+1))
+		if err != nil {
+			return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
+		}
+		if len(body) > maxChatJSONBytes {
+			return chatChoice{}, fmt.Errorf("%s：响应过大，请缩短原文后重试", service)
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
 			return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
 		}
 		if len(out.Choices) == 0 {
@@ -164,13 +179,15 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 func readChatStream(reader io.Reader, service string, emit func(string)) (chatChoice, error) {
 	var choice chatChoice
 	var text strings.Builder
-	var data []string
+	var data strings.Builder
+	hasData := false
 	consume := func() (bool, error) {
-		if len(data) == 0 {
+		if !hasData {
 			return false, nil
 		}
-		payload := strings.Join(data, "\n")
-		data = nil
+		payload := data.String()
+		data.Reset()
+		hasData = false
 		if payload == "[DONE]" {
 			return true, nil
 		}
@@ -195,6 +212,9 @@ func readChatStream(reader io.Reader, service string, emit func(string)) (chatCh
 				continue
 			}
 			if part.Delta.Content != "" {
+				if len(part.Delta.Content) > maxChatTextBytes-text.Len() {
+					return false, fmt.Errorf("%s：译文过长，请缩短原文后重试", service)
+				}
 				text.WriteString(part.Delta.Content)
 				choice.Message.Content = text.String()
 				if emit != nil {
@@ -208,7 +228,9 @@ func readChatStream(reader io.Reader, service string, emit func(string)) (chatCh
 		return false, nil
 	}
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
+	// The scanner bounds individual lines; the builder also bounds multiline
+	// events, including separators and empty data fields.
+	scanner.Buffer(make([]byte, 4096), maxChatEventBytes+16)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -220,10 +242,25 @@ func readChatStream(reader io.Reader, service string, emit func(string)) (chatCh
 				return choice, chatCompletionError(choice, service)
 			}
 		} else if strings.HasPrefix(line, "data:") {
-			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+			value := strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ")
+			separator := 0
+			if hasData {
+				separator = 1
+			}
+			if len(value) > maxChatEventBytes-data.Len()-separator {
+				return choice, fmt.Errorf("%s：单条响应过大，请缩短原文后重试", service)
+			}
+			if hasData {
+				data.WriteByte('\n')
+			}
+			data.WriteString(value)
+			hasData = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if err == bufio.ErrTooLong {
+			return choice, fmt.Errorf("%s：单条响应过大，请缩短原文后重试", service)
+		}
 		return choice, fmt.Errorf("%s：读取流式响应：%w", service, err)
 	}
 	// Accept a final event without a trailing blank line, but never silently
