@@ -78,7 +78,7 @@ The service title strip is darker than the card in light mode and lighter in dar
 - **Language bar**: one control with source select, swap, target select. Carets are drawn; source supports automatic detection or a manual language. No flags.
 - **Result cards**: deeper title strip, lighter body, collapse chevron (down expanded, left collapsed), full-height translation text with no card scrollbar, tools row with naming-style icons then speak/copy.
 - **Overflow and placement**: the bubble grows to 760 DIPs or the display work area minus 12 DIPs on each edge, whichever is smaller. The header is outside the scroll region; the composer, language bar, and results scroll together below it. Content and composer scrollbar gutters always occupy space; thumbs appear during scrolling and fade after 900 ms of inactivity. Prefer an opening side with reading space, keep that side while results grow, and stay inside the work area. Pinned windows retain their dragged position.
-- **States**: skeleton lines for loading, red text plus retry for errors, empty composer hides the cards; focus rings use the accent.
+- **States**: skeleton lines until the first text arrives; streamed translations show cumulative text with a quiet “生成中” label in the title strip. Copy, speech, and naming formats become available only after successful completion. Interrupted translations retain their text with an incomplete notice and retry action. Red text plus retry for errors; empty composer hides the cards; focus rings use the accent.
 
 ## Motion
 

@@ -125,7 +125,7 @@ func (ConfigSvc) DeeplUsage() (DeeplUsage, error) {
 type TranslateSvc struct{ app *application }
 
 // Run translates req and pushes the results to the calling window as
-// translation-update events, one per service as it arrives.
+// translation-update events, including cumulative text while a service streams.
 func (s TranslateSvc) Run(ctx context.Context, req RunReq) error {
 	win := mygo.CallerWindow(ctx)
 	if win == nil {

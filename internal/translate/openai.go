@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -28,6 +29,10 @@ func (OpenAI) Available(k KeyStore, _ config.Settings) bool {
 }
 
 func (o OpenAI) Translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings) (Result, error) {
+	return o.Stream(ctx, req, k, cfg, nil)
+}
+
+func (o OpenAI) Stream(ctx context.Context, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
 	key := k.Get(keys.OpenAIKey)
 	if key == "" {
 		return Result{}, ErrNotConfigured
@@ -58,14 +63,17 @@ func (o OpenAI) Translate(ctx context.Context, req Request, k KeyStore, cfg conf
 		},
 		"temperature": 0.1,
 	}
-	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI")
-	if err != nil {
-		return Result{}, err
-	}
+	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", func(text string) {
+		if emit != nil {
+			emit(Result{Service: o.Name(), Text: cleanOpenAIText(text), Streaming: true})
+		}
+	})
 	// The reply may wrap the translation in quotes despite the prompt.
-	text := strings.TrimSpace(choice.Message.Content)
-	text = strings.Trim(text, "\"'“”‘’")
-	return Result{Service: o.Name(), Text: text}, nil
+	return Result{Service: o.Name(), Text: cleanOpenAIText(choice.Message.Content)}, err
+}
+
+func cleanOpenAIText(text string) string {
+	return strings.Trim(strings.TrimSpace(text), "\"'“”‘’")
 }
 
 type chatChoice struct {
@@ -78,10 +86,11 @@ type chatChoice struct {
 var defaultChatClient = &http.Client{Timeout: 30 * time.Second}
 
 // requestChatCompletion shares the wire protocol between independent services.
-func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string) (chatChoice, error) {
+func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string, emit func(string)) (chatChoice, error) {
 	if client == nil {
 		client = defaultChatClient
 	}
+	payload["stream"] = true
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return chatChoice{}, fmt.Errorf("%s：构造请求：%w", service, err)
@@ -94,6 +103,7 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return chatChoice{}, fmt.Errorf("%s：%w", service, err)
@@ -114,24 +124,132 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 			return chatChoice{}, fmt.Errorf("%s：请求失败（HTTP %d）", service, status)
 		}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
-	}
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == 401 {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return chatChoice{}, ErrAuth
 		}
-		return chatChoice{}, fmt.Errorf("%s: HTTP %d: %s", service, resp.StatusCode, strings.TrimSpace(string(body)))
+		return chatChoice{}, fmt.Errorf("%s：请求失败（HTTP %d）", service, resp.StatusCode)
 	}
-	var out struct {
-		Choices []chatChoice `json:"choices"`
+	// Some compatible endpoints ignore stream and return a regular JSON body.
+	// Sniff the body since relays may omit or mislabel the content type.
+	reader := bufio.NewReader(io.LimitReader(resp.Body, (1<<20)+1))
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
+		}
+		if b != ' ' && b != '\n' && b != '\r' && b != '\t' {
+			_ = reader.UnreadByte()
+			break
+		}
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
+	first, _ := reader.Peek(1)
+	if first[0] == '{' {
+		var out struct {
+			Choices []chatChoice `json:"choices"`
+		}
+		if err := json.NewDecoder(reader).Decode(&out); err != nil {
+			return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
+		}
+		if len(out.Choices) == 0 {
+			return chatChoice{}, fmt.Errorf("%s：空响应", service)
+		}
+		return out.Choices[0], chatCompletionError(out.Choices[0], service)
 	}
-	if len(out.Choices) == 0 {
-		return chatChoice{}, fmt.Errorf("%s：空响应", service)
+	return readChatStream(reader, service, emit)
+}
+
+// Each callback is a cumulative snapshot, so Ready can restore a stream without
+// replaying tokens. Only content from the first choice is translation text.
+func readChatStream(reader io.Reader, service string, emit func(string)) (chatChoice, error) {
+	var choice chatChoice
+	var text strings.Builder
+	var data []string
+	consume := func() (bool, error) {
+		if len(data) == 0 {
+			return false, nil
+		}
+		payload := strings.Join(data, "\n")
+		data = nil
+		if payload == "[DONE]" {
+			return true, nil
+		}
+		var chunk struct {
+			Choices []struct {
+				Index int `json:"index"`
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Error json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return false, fmt.Errorf("%s：解析流式响应：%w", service, err)
+		}
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			return false, fmt.Errorf("%s：生成中断，请重试", service)
+		}
+		for _, part := range chunk.Choices {
+			if part.Index != 0 {
+				continue
+			}
+			if part.Delta.Content != "" {
+				text.WriteString(part.Delta.Content)
+				choice.Message.Content = text.String()
+				if emit != nil {
+					emit(choice.Message.Content)
+				}
+			}
+			if part.FinishReason != "" {
+				choice.FinishReason = part.FinishReason
+			}
+		}
+		return false, nil
 	}
-	return out.Choices[0], nil
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			done, err := consume()
+			if err != nil {
+				return choice, err
+			}
+			if done {
+				return choice, chatCompletionError(choice, service)
+			}
+		} else if strings.HasPrefix(line, "data:") {
+			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return choice, fmt.Errorf("%s：读取流式响应：%w", service, err)
+	}
+	// Accept a final event without a trailing blank line, but never silently
+	// treat an interrupted stream as a complete translation.
+	done, err := consume()
+	if err != nil {
+		return choice, err
+	}
+	if !done && choice.FinishReason == "" {
+		return choice, fmt.Errorf("%s：连接中断，译文未完成，请重试", service)
+	}
+	return choice, chatCompletionError(choice, service)
+}
+
+func chatCompletionError(choice chatChoice, service string) error {
+	switch choice.FinishReason {
+	case "length":
+		return fmt.Errorf("%s：译文被截断，请缩短原文后重试", service)
+	case "content_filter":
+		return fmt.Errorf("%s：译文被服务拦截，请修改原文后重试", service)
+	case "", "stop":
+	default:
+		return fmt.Errorf("%s：未完成翻译，请重试", service)
+	}
+	if strings.TrimSpace(choice.Message.Content) == "" {
+		return fmt.Errorf("%s：未返回译文", service)
+	}
+	return nil
 }

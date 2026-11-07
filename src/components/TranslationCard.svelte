@@ -2,7 +2,7 @@
   import type { FormatOption } from "../mygo";
 
   export interface CardState {
-    status: "loading" | "ok" | "error";
+    status: "loading" | "streaming" | "ok" | "error";
     text?: string;
     err?: string;
     formats?: FormatOption[];
@@ -39,6 +39,7 @@
 <div class="card card-{card.status}" class:collapsed={isCollapsed}>
   <div class="card-head">
     <span class="card-name">{title}</span>
+    <span class="card-status" role="status">{card.status === "streaming" ? "生成中" : ""}</span>
     <button
       type="button"
       class="icon-btn card-toggle"
@@ -51,54 +52,61 @@
     </button>
   </div>
 
-  <div class="card-body">
+  <div class="card-body" aria-busy={card.status === "loading" || card.status === "streaming"}>
     {#if card.status === "loading"}
       <div class="skeleton"></div>
       <div class="skeleton short"></div>
-    {:else if card.status === "error"}
-      <div class="card-error">{card.err ?? "出错了"}</div>
-      <div class="card-error-actions">
-        <button type="button" class="text-btn" onclick={onRetry}>重试</button>
-        {#if name === "google" || name === "index-translate"}
-          <button type="button" class="text-btn" onclick={onOpenSettings}>
-            配置翻译服务
-          </button>
-        {/if}
-      </div>
-    {:else if card.status === "ok"}
-      <div class="card-text">{card.text ?? ""}</div>
-      <div class="card-tools">
-        {#if card.formats?.length}
-          {#each card.formats as f (f.style)}
-            <button
-              type="button"
-              class="format-btn"
-              title={`${f.label}：${f.value}`}
-              onclick={() => onCopy(f.value, `已复制 ${f.label}`)}
-            >
-              <span class="format-icon">{formatIcon(f.style)}</span>
+    {:else}
+      {#if card.text}
+        <div class="card-text">{card.text}</div>
+      {/if}
+      {#if card.status === "error"}
+        <div class="card-error" role="status">{card.text ? "译文未完成。" : ""}{card.err ?? "出错了"}</div>
+        <div class="card-error-actions">
+          <button type="button" class="text-btn" onclick={onRetry}>重试</button>
+          {#if name === "google" || name === "index-translate"}
+            <button type="button" class="text-btn" onclick={onOpenSettings}>
+              配置翻译服务
             </button>
-          {/each}
-        {/if}
-        <button
-          type="button"
-          class="icon-btn"
-          title="朗读"
-          aria-label="朗读"
-          onclick={() => onSpeak(card.text ?? "")}
-        >
-          <BubbleIcon name="speak" />
-        </button>
-        <button
-          type="button"
-          class="icon-btn"
-          title="复制"
-          aria-label="复制"
-          onclick={() => onCopy(card.text ?? "")}
-        >
-          <BubbleIcon name="copy" />
-        </button>
-      </div>
+          {/if}
+        </div>
+      {/if}
+      {#if card.text}
+        <div class="card-tools">
+          {#if card.formats?.length}
+            {#each card.formats as f (f.style)}
+              <button
+                type="button"
+                class="format-btn"
+                title={`${f.label}：${f.value}`}
+                onclick={() => onCopy(f.value, `已复制 ${f.label}`)}
+              >
+                <span class="format-icon">{formatIcon(f.style)}</span>
+              </button>
+            {/each}
+          {/if}
+          <button
+            type="button"
+            class="icon-btn"
+            title={card.status === "ok" ? "朗读" : "译文完成后可朗读"}
+            aria-label="朗读"
+            disabled={card.status !== "ok"}
+            onclick={() => onSpeak(card.text ?? "")}
+          >
+            <BubbleIcon name="speak" />
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            title={card.status === "ok" ? "复制" : "译文完成后可复制"}
+            aria-label="复制"
+            disabled={card.status !== "ok"}
+            onclick={() => onCopy(card.text ?? "")}
+          >
+            <BubbleIcon name="copy" />
+          </button>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -119,6 +127,13 @@
     padding: 10px 14px;
     background: var(--card-head);
     font-size: 13px;
+    color: var(--muted);
+  }
+
+  .card-status {
+    margin-left: auto;
+    padding-right: 8px;
+    font-size: 12px;
     color: var(--muted);
   }
 
@@ -164,7 +179,7 @@
     word-break: break-word;
   }
 
-  .card-error {
+  .card-body > .card-error {
     font-size: 12px;
     color: var(--error);
     padding: 2px 0;
@@ -233,6 +248,13 @@
   .card .icon-btn:hover {
     background: var(--hover);
     color: var(--icon-strong);
+  }
+
+  .card .icon-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+    background: transparent;
+    color: var(--icon);
   }
 
   .card-error-actions {
