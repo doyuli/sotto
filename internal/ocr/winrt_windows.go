@@ -27,19 +27,17 @@ var script string
 const (
 	startTimeout = 10 * time.Second
 	askTimeout   = 15 * time.Second
-	maxRestart   = 3
 )
 
 // winrt runs the resident PowerShell process. mu serializes requests —
-// one stdin, one stdout — and covers the restart bookkeeping.
+// one stdin, one stdout — and covers process replacement.
 type winrt struct {
 	mu           sync.Mutex
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
 	stdout       *bufio.Reader
-	startErr     error
-	restarts     int
 	maxDimension int
+	command      func() *exec.Cmd // Optional worker factory for protocol tests.
 }
 
 var engine = &winrt{}
@@ -99,8 +97,19 @@ func (w *winrt) ask(ctx context.Context, img image.Image, lang string) ([]system
 	if err != nil {
 		return nil, err
 	}
-	if err := w.writeRequest(ctx, append(req, '\n')); err != nil {
-		return nil, fmt.Errorf("ocr: send image: %w", err)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := w.ensure(ctx); err != nil {
+			return nil, err
+		}
+		if err := w.writeRequest(ctx, append(req, '\n')); err != nil {
+			if attempt == 0 && ctx.Err() == nil {
+				// writeRequest discarded the broken worker. Retry the transfer
+				// once; never replay a request after receiving a response.
+				continue
+			}
+			return nil, fmt.Errorf("ocr: send image: %w", err)
+		}
+		break
 	}
 
 	line, err := w.readLine(ctx, askTimeout)
@@ -130,19 +139,17 @@ func (w *winrt) ensure(ctx context.Context) error {
 	if w.cmd != nil && w.cmd.Process != nil {
 		return nil // already up
 	}
-	if w.restarts >= maxRestart {
-		if w.startErr != nil {
-			return w.startErr
-		}
-		return fmt.Errorf("ocr: engine failed to start %d times", w.restarts)
-	}
-	w.restarts++
+	// One startup attempt per ensure, with no permanent failure cache. A later
+	// request can recover after the environment or language packs are repaired.
 	cmd := exec.Command("powershell.exe",
 		"-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass",
 		"-Command", script)
 	// A GUI process starting a console one flashes a PowerShell window
 	// over everything; HideWindow keeps the engine invisible.
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if w.command != nil {
+		cmd = w.command()
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("ocr: %w", err)
@@ -174,21 +181,13 @@ func (w *winrt) ensure(ctx context.Context) error {
 	}
 	if !ready.Ready {
 		w.killLocked()
-		w.startErr = fmt.Errorf("ocr: %s", ready.Error)
-		if w.restarts >= maxRestart {
-			return w.startErr
-		}
-		return w.ensure(ctx)
+		return fmt.Errorf("ocr: %s", ready.Error)
 	}
-	// A successful start clears the failure budget: the limit is there
-	// to stop a crash-restart loop, not to cap the process's lifetime.
 	w.maxDimension = min(maxOCRDimension, ready.MaxDimension)
 	if w.maxDimension < 32 {
 		w.killLocked()
 		return fmt.Errorf("ocr: invalid system image limit")
 	}
-	w.restarts = 0
-	w.startErr = nil
 	return nil
 }
 

@@ -48,7 +48,7 @@ func TestRecognizeWithInjectedRunners(t *testing.T) {
 	if !line.HasScore || len(line.Tokens) != 2 || line.Score >= .8 || line.Quad[0].X >= 64 {
 		t.Fatalf("lost score/coordinates %+v", line)
 	}
-	if !Assess(result).SuggestRetry {
+	if len(Assess(result).Risks) == 0 {
 		t.Fatal("low confidence not retained")
 	}
 	doc, err := Layout(result.Lines, LayoutOptions{})
@@ -118,7 +118,7 @@ func TestEmptyDetectionAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := r.Recognize(context.Background(), image.NewNRGBA(image.Rect(0, 0, 32, 32)))
-	if err != nil || len(result.Lines) != 0 || !Assess(result).SuggestRetry {
+	if err != nil || len(result.Lines) != 0 || len(Assess(result).Risks) == 0 {
 		t.Fatalf("empty result %+v %v", result, err)
 	}
 	if _, err := New(det, rec, testDictionary(), Config{}); err == nil {

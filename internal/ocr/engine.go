@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log"
 	"strings"
 	"unicode"
 
@@ -33,6 +34,9 @@ func recognizeEngines(ctx context.Context, img image.Image, lang string, local, 
 	}
 	if firstErr == nil && strings.TrimSpace(first.Text) != "" && !hasReplaceableRisk(first.Risks) {
 		return first, nil
+	}
+	if firstErr != nil {
+		log.Printf("ocr: local engine unavailable, trying system OCR: %v", firstErr)
 	}
 	second, secondErr := runEngine(ctx, img, lang, system)
 	if err := ctx.Err(); err != nil {

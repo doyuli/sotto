@@ -216,6 +216,8 @@ func cropQuad(ctx context.Context, src pixels, q Quad, c Config) (crop, error) {
 			}
 			nx, ny := x, y
 			if rotate {
+				// Source-to-destination mapping for 90 degrees counterclockwise,
+				// matching np.rot90 with image coordinates (Y points down).
 				nx, ny = y, w-1-x
 			}
 			for k := range p {

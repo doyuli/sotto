@@ -91,7 +91,7 @@ func TestLayoutPreserveAndInvalid(t *testing.T) {
 
 func TestAssessKnownAndUnknownScores(t *testing.T) {
 	unknown := line("System OCR text", 0, 0, 200, 20)
-	if got := Assess(Result{Lines: []Line{unknown}}); got.SuggestRetry {
+	if got := Assess(Result{Lines: []Line{unknown}}); len(got.Risks) != 0 {
 		t.Fatalf("invented WinRT score: %+v", got)
 	}
 	small := line("A\ufffd", 0, 0, 100, 10)

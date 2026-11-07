@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"sotto/internal/ocr/pipeline"
 )
 
 //go:embed models.json
@@ -28,20 +30,47 @@ type assetSpec struct {
 	SHA256 string `json:"sha256"`
 }
 type manifest struct {
-	Models     []modelSpec `json:"models"`
-	Assets     []assetSpec `json:"assets"`
-	Dictionary struct {
-		File string `json:"file"`
+	SchemaVersion int         `json:"schemaVersion"`
+	Models        []modelSpec `json:"models"`
+	Assets        []assetSpec `json:"assets"`
+	Dictionary    struct {
+		File    string `json:"file"`
+		Entries int    `json:"entries"`
+		Classes int    `json:"classes"`
 	} `json:"dictionary"`
 }
 
 func readManifest() (manifest, error) {
+	return parseManifest(modelManifest)
+}
+
+func parseManifest(data []byte) (manifest, error) {
 	var m manifest
-	if err := json.Unmarshal(modelManifest, &m); err != nil {
+	if err := json.Unmarshal(data, &m); err != nil {
 		return m, fmt.Errorf("ocr: model manifest: %w", err)
 	}
-	if len(m.Models) != 2 || len(m.Assets) != 3 {
+	if m.SchemaVersion != 1 || len(m.Models) != 2 || len(m.Assets) != 3 {
 		return m, fmt.Errorf("ocr: incomplete model manifest")
+	}
+	// Session construction relies on this order and the decoder's fixed class
+	// contract. Reject incompatible metadata before opening any native session.
+	if m.Models[0].File != "det.onnx" || m.Models[0].OutputRank != 4 ||
+		m.Models[1].File != "rec.onnx" || m.Models[1].OutputRank != 3 || m.Models[1].OutputClasses != pipeline.Classes ||
+		m.Dictionary.File != "ppocr_keys.txt" || m.Dictionary.Entries != pipeline.DictionaryEntries || m.Dictionary.Classes != pipeline.Classes {
+		return m, fmt.Errorf("ocr: incompatible model manifest")
+	}
+	for _, model := range m.Models {
+		if model.InputName == "" || model.OutputName == "" {
+			return m, fmt.Errorf("ocr: missing model tensor name")
+		}
+	}
+	wanted := map[string]bool{"det.onnx": true, "rec.onnx": true, "ppocr_keys.txt": true}
+	for _, asset := range m.Assets {
+		hash, err := hex.DecodeString(asset.SHA256)
+		if !wanted[asset.File] || asset.Bytes <= 0 || err != nil || len(hash) != sha256.Size {
+			return m, fmt.Errorf("ocr: invalid manifest asset: %s", asset.File)
+		}
+		delete(wanted, asset.File)
 	}
 	return m, nil
 }

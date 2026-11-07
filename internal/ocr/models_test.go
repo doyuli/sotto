@@ -4,11 +4,45 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestManifestContract(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*manifest)
+	}{
+		{"schema", func(m *manifest) { m.SchemaVersion++ }},
+		{"model order", func(m *manifest) { m.Models[0], m.Models[1] = m.Models[1], m.Models[0] }},
+		{"dictionary entries", func(m *manifest) { m.Dictionary.Entries-- }},
+		{"dictionary classes", func(m *manifest) { m.Dictionary.Classes-- }},
+		{"model classes", func(m *manifest) { m.Models[1].OutputClasses-- }},
+		{"model rank", func(m *manifest) { m.Models[0].OutputRank-- }},
+		{"tensor name", func(m *manifest) { m.Models[1].InputName = "" }},
+		{"duplicate asset", func(m *manifest) { m.Assets[1] = m.Assets[0] }},
+		{"asset path", func(m *manifest) { m.Assets[0].File = "../det.onnx" }},
+		{"asset hash", func(m *manifest) { m.Assets[0].SHA256 = "bad" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := readManifest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.change(&m)
+			data, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseManifest(data); err == nil {
+				t.Fatal("accepted incompatible manifest")
+			}
+		})
+	}
+}
 
 func TestPackagedModels(t *testing.T) {
 	m, err := readManifest()

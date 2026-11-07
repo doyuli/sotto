@@ -202,6 +202,11 @@ func TestPerspectiveCropAndRotation(t *testing.T) {
 	if rot.w != 10 || rot.h != 4 || rot.at(0, 0) != [3]float64{0, 30, 50} {
 		t.Fatalf("rotation %dx%d %v", rot.w, rot.h, rot.at(0, 0))
 	}
+	// Counterclockwise: the source's right edge becomes the top row, and
+	// its left edge becomes the bottom row. Check all four corners.
+	if rot.at(9, 0) != [3]float64{0, 120, 50} || rot.at(0, 3) != [3]float64{0, 30, 20} || rot.at(9, 3) != [3]float64{0, 120, 20} {
+		t.Fatal("crop rotation is not counterclockwise")
+	}
 	q := Quad{{2, 1}, {12, 3}, {10, 15}, {4, 11}}
 	m, err := projective(q)
 	if err != nil {

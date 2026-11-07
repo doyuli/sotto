@@ -1,16 +1,66 @@
 package ocr
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"image"
+	"log"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
 	"sotto/internal/ocr/pipeline"
 )
+
+func TestLocalFailureIsLoggedBeforeFallback(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	failure := errors.New("invalid asset size: ppocr_keys.txt")
+	local := func(context.Context, image.Image, string) (Text, error) { return Text{}, failure }
+	system := func(context.Context, image.Image, string) (Text, error) {
+		if !strings.Contains(output.String(), failure.Error()) {
+			t.Fatal("local failure was not logged before fallback")
+		}
+		return Text{Engine: "winrt", Lines: []pipeline.Line{testLine("system text", 0, 0, 100, 24, -1)}}, nil
+	}
+	got, err := recognizeEngines(context.Background(), nil, "", local, system)
+	if err != nil || got.Selection != "local-unavailable" || got.RetryCount != 1 {
+		t.Fatalf("result %+v error %v", got, err)
+	}
+}
+
+func TestLowConfidenceWhitespaceDoesNotScheduleFallback(t *testing.T) {
+	for _, token := range []string{" ", "\t", "\u3000", "x"} {
+		t.Run(fmt.Sprintf("%q", token), func(t *testing.T) {
+			line := testLine("Hello Sotto", 0, 0, 200, 24, .95)
+			line.Tokens = []pipeline.Token{{Text: "Hello", Score: .99}, {Text: token, Score: .54}, {Text: "Sotto", Score: .99}}
+			local := func(context.Context, image.Image, string) (Text, error) {
+				return Text{Engine: "local", Lines: []pipeline.Line{line}}, nil
+			}
+			calls := 0
+			system := func(context.Context, image.Image, string) (Text, error) {
+				calls++
+				return Text{}, nil
+			}
+			got, err := recognizeEngines(context.Background(), nil, "", local, system)
+			wantCalls := 0
+			if token == "x" {
+				wantCalls = 1
+			}
+			if err != nil || calls != wantCalls || got.RetryCount != wantCalls || got.Engine != "local" {
+				t.Fatalf("result %+v error %v calls=%d want=%d", got, err, calls, wantCalls)
+			}
+			if wantCalls == 1 && !reflect.DeepEqual(got.Risks[0].Tokens, []int{1}) {
+				t.Fatalf("lost original token index: %+v", got.Risks)
+			}
+		})
+	}
+}
 
 func testLine(text string, x, y, w, h, score float64) pipeline.Line {
 	return pipeline.Line{Text: text, Quad: pipeline.Quad{{X: x, Y: y}, {X: x + w, Y: y}, {X: x + w, Y: y + h}, {X: x, Y: y + h}}, Score: score, HasScore: score >= 0}
@@ -56,7 +106,7 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 			if got.RetryCount > 1 {
 				t.Fatal("retry budget exceeded")
 			}
-			if errors.Is(err, failure) && UserMessage(err) != UserMessage(failure) {
+			if errors.Is(err, failure) && !strings.Contains(UserMessage(err), "语言包") {
 				t.Fatalf("lost language-pack message: %s", UserMessage(err))
 			}
 		})

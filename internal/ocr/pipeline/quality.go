@@ -13,8 +13,7 @@ type Risk struct {
 }
 
 type Assessment struct {
-	Risks        []Risk `json:"risks"`
-	SuggestRetry bool   `json:"suggestRetry"`
+	Risks []Risk `json:"risks"`
 }
 
 // Assess reports observable risks, not accuracy or cross-engine scores. It
@@ -52,6 +51,10 @@ func Assess(result Result) Assessment {
 		}
 		var low []int
 		for j, token := range line.Tokens {
+			// Spacing uncertainty alone does not justify another engine call.
+			if strings.TrimSpace(token.Text) == "" {
+				continue
+			}
 			if !probability(token.Score) || token.Score < .6 {
 				low = append(low, j)
 			}
@@ -66,6 +69,5 @@ func Assess(result Result) Assessment {
 			}
 		}
 	}
-	a.SuggestRetry = len(a.Risks) > 0
 	return a
 }

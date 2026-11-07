@@ -46,8 +46,10 @@ function Get-Engine([string]$langTag) {
     }
     return $script:defaultEngine
   }
-  if (-not $script:engines.ContainsKey($langTag)) {
-    $script:engines[$langTag] = New-Engine $langTag
+  if (-not $script:engines[$langTag]) {
+    # Do not cache missing packs: they can be installed while Sotto is running.
+    $engine = New-Engine $langTag
+    if ($engine) { $script:engines[$langTag] = $engine }
   }
   return $script:engines[$langTag]
 }
