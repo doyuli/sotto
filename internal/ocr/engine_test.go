@@ -165,6 +165,7 @@ func TestGeometryRisksDoNotScheduleUnusableFallback(t *testing.T) {
 		{"small-text", small, pipeline.Diagnostics{}},
 		{"steep-line", steep, pipeline.Diagnostics{}},
 		{"degenerate-regions", testLine("Hello Sotto", 0, 0, 200, 24, .99), pipeline.Diagnostics{DegenerateBoxes: 1}},
+		{"discarded-low-score-regions", testLine("Hello Sotto", 0, 0, 200, 24, .99), pipeline.Diagnostics{LowScoreRegions: 2}},
 	} {
 		for _, weak := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/weak=%t", tc.name, weak), func(t *testing.T) {

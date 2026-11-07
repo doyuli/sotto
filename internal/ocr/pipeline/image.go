@@ -74,14 +74,50 @@ func detectorInput(ctx context.Context, src pixels, c Config) (Tensor, detectorT
 		}
 		return src.at(x, y-pad)
 	}
+	// Reuse horizontal interpolation for adjacent output rows. Enlargement
+	// often samples the same source rows many times; do the pixel conversion
+	// and horizontal blend once, preserving the original arithmetic order.
+	type column struct {
+		x      int
+		weight float64
+	}
+	columns := make([]column, w)
+	for x := range columns {
+		sx := (float64(x)+.5)*float64(src.w)/float64(w) - .5
+		x0 := int(math.Floor(sx))
+		columns[x] = column{x0, sx - float64(x0)}
+	}
+	rows := [2][][3]float64{make([][3]float64, w), make([][3]float64, w)}
+	rowY := [2]int{-2, -2}
+	loadRow := func(slot, sy int) {
+		if rowY[slot] == sy {
+			return
+		}
+		for x, sample := range columns {
+			a, b := get(sample.x, sy), get(sample.x+1, sy)
+			for k := 0; k < 3; k++ {
+				rows[slot][x][k] = a[k]*(1-sample.weight) + b[k]*sample.weight
+			}
+		}
+		rowY[slot] = sy
+	}
 	for y := 0; y < h; y++ {
 		if err := ctx.Err(); err != nil {
 			return Tensor{}, tr, err
 		}
+		sy := (float64(y)+.5)*float64(ph)/float64(h) - .5
+		y0 := int(math.Floor(sy))
+		dy := sy - float64(y0)
+		if rowY[1] == y0 {
+			rows[0], rows[1] = rows[1], rows[0]
+			rowY[0], rowY[1] = rowY[1], rowY[0]
+		}
+		loadRow(0, y0)
+		loadRow(1, y0+1)
 		for x := 0; x < w; x++ {
-			p := bilinear(get, (float64(x)+.5)*float64(src.w)/float64(w)-.5, (float64(y)+.5)*float64(ph)/float64(h)-.5)
 			for channel := 0; channel < 3; channel++ {
-				data[channel*w*h+y*w+x] = (float32(p[channel])/255 - .5) / .5
+				p := math.Round(rows[0][x][channel]*(1-dy) + rows[1][x][channel]*dy)
+				data[channel*w*h+y*w+x] = (float32(p)/255 - .5) / .5
 			}
 		}
 	}

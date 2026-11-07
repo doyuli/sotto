@@ -36,6 +36,7 @@ type EngineAttempt struct {
 	ElapsedUS   int64                `json:"elapsedUs"`
 	Timings     EngineTimings        `json:"timings"`
 	Diagnostics pipeline.Diagnostics `json:"diagnostics"`
+	Risks       []string             `json:"risks,omitempty"`
 	Error       string               `json:"error,omitempty"`
 }
 
@@ -59,7 +60,10 @@ func RecognizeWith(ctx context.Context, img image.Image, lang string) (result Te
 	start := time.Now()
 	defer func() {
 		result.Elapsed = time.Since(start).Round(time.Millisecond).String()
-		log.Printf("ocr: engine=%s elapsed=%s queueUs=%d retries=%d selection=%s attempts=%+v err=%v", result.Engine, result.Elapsed, result.QueueWaitUS, result.RetryCount, result.Selection, result.Attempts, err)
+		log.Print(recognitionSummary(result, err))
+		if err != nil {
+			log.Printf("ocr: failed attempts=%+v", result.Attempts)
+		}
 	}()
 	select {
 	case admission <- struct{}{}:

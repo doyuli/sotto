@@ -26,14 +26,14 @@ Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/
 
 - Sessions initialize on first use and are reused serially, with two inference threads per session by default.
 - Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
-- Empty local results or text-confidence risks can trigger one system OCR fallback. Low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
+- Empty local results or text-confidence risks can trigger one system OCR fallback. Discarded low-score detection regions, low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
 - Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation prevents stale results from being published but cannot interrupt native inference already running.
 
 Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 1,000 candidates; recognition inputs to 2,048 pixels wide. Exceeded budgets return an error or use system fallback. Complex tables, vertical/inverted text and exact code indentation are not guaranteed.
 
 ## Diagnostics
 
-During development, capture the same region several times in the app and inspect the terminal's `ocr:` logs. They record the selected engine, queue wait, detection dimensions, recognition call count, per-stage timings and fallback attempts, without recognized text or image data. Numeric timing fields ending in `Us` are microseconds.
+During development, capture the same region several times in the app and inspect the terminal's `ocr:` summary: total time, selected engine, detection size, main stage durations, risk reasons and fallback costs. Failed requests additionally log full attempt details. These logs exclude recognized text and image data. Full diagnostics remain available in the recognition result; numeric fields ending in `Us` are microseconds.
 
 The first successful local call includes model verification and session initialization. Later calls reuse the sessions. Detection/recognition inference timings include the native bridge and output copy. Total OCR time includes queue wait, but excludes screenshot capture and translation. Both engine attempts remain visible when fallback supplies the final result.
 
@@ -46,6 +46,8 @@ For comparisons, set environment variables before launching a fresh app process:
 | `bounded` (experimental) | 64 | 960 | 1 Mi |
 
 `SOTTO_OCR_DETECTOR_THREADS` overrides detector threads (1–16, default 2); recognition stays at 2. Configuration is cached after successful initialization. Smaller detection inputs and additional threads require accuracy and performance checks on the target device.
+
+For a same-image 2/4-thread comparison on Windows, set `SOTTO_OCR_BENCH_IMAGE` to an absolute PNG path and run `go test ./internal/ocr -run '^$' -bench '^BenchmarkDetectorThreads$' -benchtime=3x`. The benchmark warms both configurations, checks their recognized text matches, and reports full pipeline and detector timings. CPU usage and thermal impact require observation on the target device.
 
 ## Build and verification
 

@@ -51,6 +51,7 @@
   const showingServices = $derived(enabledServices.filter((name) => cards.has(name)));
 
   let isRecognizing: boolean = $derived(bubbleState?.phase === "recognizing");
+  let pageVisible = $state(!document.hidden);
   let isPinned: boolean = $derived(bubbleState?.pinned ?? false);
 
   let statusMessage: string = $derived.by(() => {
@@ -429,7 +430,7 @@
   });
 </script>
 
-<svelte:document onkeydown={(e) => {
+<svelte:document onvisibilitychange={() => { pageVisible = !document.hidden; }} onkeydown={(e) => {
   if (e.key === "Escape" && !e.isComposing) closeBubble();
 }} />
 
@@ -479,9 +480,14 @@
     >
       <!-- Capture Status & Clipboard Recovery -->
       {#if statusMessage || isRecognizing || bubbleState?.clipboardRecoveryID}
-        <div class="capture-status" role="status">
+        <div class="capture-status" role="status" aria-atomic="true">
           {#if statusMessage}
-            <span class="capture-message">{statusMessage}</span>
+            <span class="capture-message">
+              {#if isRecognizing}
+                <span class="ocr-loading" class:paused={!pageVisible} aria-hidden="true"><span></span><span></span><span></span></span>
+              {/if}
+              <span>{statusMessage}</span>
+            </span>
           {/if}
 
           {#if isRecognizing}
@@ -535,7 +541,7 @@
       {/if}
 
       <!-- Composer -->
-      <div class="composer">
+      <div class="composer" aria-busy={isRecognizing}>
         <textarea
           bind:this={textareaElem}
           value={inputText}

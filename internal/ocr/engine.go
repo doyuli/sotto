@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -26,6 +27,11 @@ func recognizeEngines(ctx context.Context, img image.Image, lang string, local, 
 		start := time.Now()
 		t, err := runEngine(ctx, img, lang, engine)
 		attempt := EngineAttempt{Engine: name, ElapsedUS: time.Since(start).Microseconds(), Timings: t.timings, Diagnostics: t.Diagnostics}
+		for _, risk := range t.Risks {
+			if !slices.Contains(attempt.Risks, risk.Reason) {
+				attempt.Risks = append(attempt.Risks, risk.Reason)
+			}
+		}
 		if err != nil {
 			attempt.Error = err.Error()
 		}
@@ -157,7 +163,7 @@ func preferSystem(first, second Text) bool {
 func hasReplaceableRisk(risks []pipeline.Risk) bool {
 	for _, risk := range risks {
 		switch risk.Reason {
-		case "low-line-confidence", "low-token-confidence", "suspicious-character", "empty-line", "discarded-low-score-regions":
+		case "low-line-confidence", "low-token-confidence", "suspicious-character", "empty-line":
 			return true
 		}
 	}
