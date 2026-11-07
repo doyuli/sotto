@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"time"
 )
 
 type Recognizer struct {
@@ -33,19 +34,26 @@ func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, er
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	stage := time.Now()
 	src, err := source(img, r.config)
 	if err != nil {
 		return result, fmt.Errorf("ocr input: %w", err)
 	}
 	input, tr, err := detectorInput(ctx, src, r.config)
+	result.Timings.DetectionPreprocessUS = time.Since(stage).Microseconds()
+	result.Diagnostics.DetectorWidth, result.Diagnostics.DetectorHeight = tr.width, tr.height
 	if err != nil {
 		return result, fmt.Errorf("ocr detection preprocessing: %w", err)
 	}
+	stage = time.Now()
 	out, err := run(ctx, r.det, input)
+	result.Timings.DetectionInferenceUS = time.Since(stage).Microseconds()
 	if err != nil {
 		return result, fmt.Errorf("ocr detection inference: %w", err)
 	}
+	stage = time.Now()
 	boxes, stats, err := detect(ctx, out, tr, r.config)
+	result.Timings.DetectionPostprocessUS = time.Since(stage).Microseconds()
 	result.Diagnostics = stats
 	if err != nil {
 		return result, fmt.Errorf("ocr detection postprocessing: %w", err)
@@ -55,22 +63,31 @@ func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, er
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
+		stage = time.Now()
 		cropped, err := cropQuad(ctx, src, box.quad, r.config)
+		result.Timings.CropUS += time.Since(stage).Microseconds()
 		if err != nil {
 			return result, fmt.Errorf("ocr crop %d: %w", i, err)
 		}
+		stage = time.Now()
 		input, err := recognitionInput(ctx, cropped, r.config)
+		result.Timings.RecognitionPreprocessUS += time.Since(stage).Microseconds()
 		if err != nil {
 			return result, fmt.Errorf("ocr recognition preprocessing %d: %w", i, err)
 		}
+		stage = time.Now()
+		result.Diagnostics.RecognitionCalls++
 		out, err := run(ctx, r.rec, input)
+		result.Timings.RecognitionInferenceUS += time.Since(stage).Microseconds()
 		if err != nil {
 			return result, fmt.Errorf("ocr recognition inference %d: %w", i, err)
 		}
 		if len(out.Shape) != 3 || out.Shape[0] != 1 {
 			return result, fmt.Errorf("ocr recognition expected [1,T,C], got %v", out.Shape)
 		}
+		stage = time.Now()
 		decoded, err := decode(ctx, out, r.labels, r.config.MaxTensorElements)
+		result.Timings.DecodeUS += time.Since(stage).Microseconds()
 		if err != nil {
 			return result, fmt.Errorf("ocr CTC %d: %w", i, err)
 		}

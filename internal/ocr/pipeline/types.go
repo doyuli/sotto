@@ -43,25 +43,41 @@ type Line struct {
 }
 
 type Diagnostics struct {
-	Components      int `json:"components"`
-	SmallRegions    int `json:"smallRegions"`
-	LowScoreRegions int `json:"lowScoreRegions"`
-	DegenerateBoxes int `json:"degenerateBoxes"`
-	EmptyLines      int `json:"emptyLines"`
-	DetectorWidth   int `json:"detectorWidth"`
-	DetectorHeight  int `json:"detectorHeight"`
+	Components       int `json:"components"`
+	SmallRegions     int `json:"smallRegions"`
+	LowScoreRegions  int `json:"lowScoreRegions"`
+	DegenerateBoxes  int `json:"degenerateBoxes"`
+	EmptyLines       int `json:"emptyLines"`
+	DetectorWidth    int `json:"detectorWidth"`
+	DetectorHeight   int `json:"detectorHeight"`
+	RecognitionCalls int `json:"recognitionCalls"`
+}
+
+// Timings uses microseconds, accumulated across all recognition lines. Runner
+// time includes the native bridge and output transfer, not just model compute.
+type Timings struct {
+	DetectionPreprocessUS   int64 `json:"detectionPreprocessUs"`
+	DetectionInferenceUS    int64 `json:"detectionInferenceUs"`
+	DetectionPostprocessUS  int64 `json:"detectionPostprocessUs"`
+	CropUS                  int64 `json:"cropUs"`
+	RecognitionPreprocessUS int64 `json:"recognitionPreprocessUs"`
+	RecognitionInferenceUS  int64 `json:"recognitionInferenceUs"`
+	DecodeUS                int64 `json:"decodeUs"`
 }
 
 type Result struct {
 	Lines       []Line
 	Diagnostics Diagnostics
+	Timings     Timings
 }
 
 // Config is explicit: start with DefaultConfig and change individual fields.
 // Detection resizes the full image to its budget. Other limits reject the
 // request, never truncate text or silently squeeze long recognition crops.
 type Config struct {
-	DetectorSide      int
+	DetectorSide      int  // Minimum short-side target before resource caps.
+	DetectorLongSide  int  // Normal long-side cap, independent of the hard limit.
+	DetectorRoundUp   bool // Bounded comparison profile preserves small glyphs at alignment.
 	Threshold         float64
 	BoxThreshold      float64
 	UnclipRatio       float64
@@ -80,23 +96,23 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		DetectorSide: 736, Threshold: .3, BoxThreshold: .5, UnclipRatio: 1.6, Dilation: true,
+		DetectorSide: 448, DetectorLongSide: 4096, Threshold: .3, BoxThreshold: .5, UnclipRatio: 1.6, Dilation: true,
 		MaxImagePixels: 16 << 20, MaxImageSide: 16384,
-		MaxDetectorPixels: 4 << 20, MaxDetectorSide: 4096,
+		MaxDetectorPixels: 1 << 20, MaxDetectorSide: 4096,
 		MaxCandidates: 1000, MaxBoundaryPoints: 256 << 10, MaxScorePixels: 16 << 20,
 		MaxCropPixels: 4 << 20, MaxRecWidth: 2048, MaxTensorElements: 32 << 20,
 	}
 }
 
 func (c Config) validate() error {
-	for _, v := range []int{c.DetectorSide, c.MaxImagePixels, c.MaxImageSide,
+	for _, v := range []int{c.DetectorSide, c.DetectorLongSide, c.MaxImagePixels, c.MaxImageSide,
 		c.MaxDetectorPixels, c.MaxDetectorSide, c.MaxCandidates, c.MaxBoundaryPoints,
 		c.MaxScorePixels, c.MaxCropPixels, c.MaxRecWidth, c.MaxTensorElements} {
 		if v <= 0 || v > 1<<28 {
 			return fmt.Errorf("ocr pipeline: limits must be in [1, 2^28]")
 		}
 	}
-	if c.DetectorSide < 32 || c.MaxDetectorSide < c.DetectorSide || c.MaxRecWidth < 320 ||
+	if c.DetectorSide < 32 || c.DetectorLongSide < 32 || c.DetectorLongSide%32 != 0 || c.MaxDetectorSide < c.DetectorLongSide || c.MaxDetectorSide < c.DetectorSide || c.MaxRecWidth < 320 ||
 		!probability(c.Threshold) || !probability(c.BoxThreshold) ||
 		!finite(c.UnclipRatio) || c.UnclipRatio <= 0 || c.UnclipRatio > 10 {
 		return fmt.Errorf("ocr pipeline: invalid detector/recognizer configuration")

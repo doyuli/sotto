@@ -59,28 +59,40 @@ func recognizeWith(ctx context.Context, img image.Image, lang string) (Text, err
 }
 
 func recognizeWinRT(ctx context.Context, img image.Image, lang string) (Text, error) {
+	t := Text{Engine: "winrt"}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
-	if err := engine.ensure(ctx); err != nil {
-		return Text{}, err
+	start := time.Now()
+	starting := engine.cmd == nil
+	err := engine.ensure(ctx)
+	if starting {
+		t.timings.InitializationUS = time.Since(start).Microseconds()
+	}
+	if err != nil {
+		return t, err
 	}
 	original := img.Bounds()
-	img, err := fitSystemImage(ctx, img, engine.maxDimension)
+	start = time.Now()
+	img, err = fitSystemImage(ctx, img, engine.maxDimension)
+	t.timings.SystemPreprocessUS = time.Since(start).Microseconds()
 	if err != nil {
-		return Text{}, err
+		return t, err
 	}
+	start = time.Now()
 	lines, err := engine.ask(ctx, img, lang)
+	t.timings.SystemRequestUS = time.Since(start).Microseconds()
 	if err != nil {
-		return Text{}, err
+		return t, err
 	}
 	mapped, err := systemLines(lines, original, img.Bounds())
 	if err != nil {
-		return Text{}, err
+		return t, err
 	}
-	return Text{Lines: mapped, Engine: "winrt"}, nil
+	t.Lines = mapped
+	return t, nil
 }
 
 // ask sends one image to the resident recognizer and returns what it

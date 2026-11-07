@@ -15,6 +15,62 @@ type genericImage struct{ image.Image }
 
 func smallConfig() Config { c := DefaultConfig(); c.DetectorSide = 32; return c }
 
+func TestScreenshotDetectionSizes(t *testing.T) {
+	balanced := DefaultConfig()
+	legacy := balanced
+	legacy.DetectorSide, legacy.MaxDetectorPixels = 736, 4<<20
+	bounded := balanced
+	bounded.DetectorSide, bounded.DetectorLongSide, bounded.DetectorRoundUp = 64, 960, true
+	for _, tc := range []struct {
+		w, h                      int
+		balanced, legacy, bounded [2]int
+	}{
+		{658, 137, [2]int{2144, 448}, [2]int{3520, 736}, [2]int{672, 160}},
+		{800, 180, [2]int{1984, 448}, [2]int{3264, 736}, [2]int{800, 192}},
+		{1920, 1080, [2]int{1344, 768}, [2]int{1920, 1088}, [2]int{960, 544}},
+		{2048, 2048, [2]int{1024, 1024}, [2]int{2048, 2048}, [2]int{960, 960}},
+		{225, 46, [2]int{2176, 448}, [2]int{3584, 736}, [2]int{320, 64}},
+	} {
+		for _, profile := range []struct {
+			name string
+			c    Config
+			want [2]int
+		}{
+			{"balanced", balanced, tc.balanced}, {"legacy", legacy, tc.legacy}, {"bounded", bounded, tc.bounded},
+		} {
+			t.Run(fmt.Sprintf("%s/%dx%d", profile.name, tc.w, tc.h), func(t *testing.T) {
+				w, h, err := detectorSize(tc.w, tc.h, profile.c)
+				if err != nil || [2]int{w, h} != profile.want {
+					t.Fatalf("got %dx%d %v want %v", w, h, err, profile.want)
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkScreenshotPreprocessing(b *testing.B) {
+	for _, size := range [][2]int{{658, 137}, {1920, 1080}} {
+		for _, legacy := range []bool{false, true} {
+			b.Run(fmt.Sprintf("%dx%d/legacy=%t", size[0], size[1], legacy), func(b *testing.B) {
+				c := DefaultConfig()
+				if legacy {
+					c.DetectorSide, c.MaxDetectorPixels = 736, 4<<20
+				}
+				src, err := source(image.NewNRGBA(image.Rect(0, 0, size[0], size[1])), c)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, _, err := detectorInput(context.Background(), src, c); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestDetectorColorAndBounds(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(11, 17, 43, 49))
 	for y := 17; y < 49; y++ {
@@ -76,7 +132,7 @@ func TestDetectorPaddingRoundingAndLimits(t *testing.T) {
 	if tr.padTop != 22 || tr.paddedHeight != 60 || tr.width != 160 || tr.height != 64 {
 		t.Fatalf("padding %+v", tr)
 	}
-	// 80/32=2.5 rounds to the even integer 2.
+	// Balanced mode retains the measured half-to-even alignment.
 	s, _ = source(image.NewNRGBA(image.Rect(0, 0, 80, 80)), c)
 	_, tr, err = detectorInput(context.Background(), s, c)
 	if err != nil || tr.width != 64 {

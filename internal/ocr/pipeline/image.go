@@ -92,19 +92,29 @@ func detectorSize(width, height int, c Config) (int, int, error) {
 	// Every detector dimension is at least 32. Include the three input channels
 	// and reserve room for that minimum even for extremely narrow selections.
 	pixels := min(c.MaxDetectorPixels, c.MaxTensorElements/3)
-	side := min(c.MaxDetectorSide, pixels/32) / 32 * 32
+	side := min(c.DetectorLongSide, c.MaxDetectorSide, pixels/32) / 32 * 32
 	if side < 32 || pixels < 32*32 {
 		return 0, 0, fmt.Errorf("%w: minimum detector input", ErrLimit)
 	}
+	// Keep the established short-side rounding for the balanced profile. The
+	// bounded comparison instead limits enlargement and rounds cells upward.
 	ratio := math.Max(1, float64(c.DetectorSide)/float64(min(width, height)))
-	// Preserve the model's normal rounding when the desired size fits.
-	w := max(32, int(math.RoundToEven(float64(int(float64(width)*ratio))/32))*32)
-	h := max(32, int(math.RoundToEven(float64(int(float64(height)*ratio))/32))*32)
+	if c.DetectorRoundUp {
+		ratio = min(ratio, float64(side)/float64(max(width, height)))
+	}
+	align := func(n int) int {
+		if c.DetectorRoundUp {
+			return max(32, (n+31)/32*32)
+		}
+		return max(32, int(math.RoundToEven(float64(n)/32))*32)
+	}
+	w := align(int(float64(width) * ratio))
+	h := align(int(float64(height) * ratio))
 	if w <= side && h <= side && w <= pixels/h {
 		return w, h, nil
 	}
-	// Cap enlargement (or shrink large screenshots) before allocating. Round
-	// down here so alignment cannot push the tensor back over its budget.
+	// A tighter pixel/tensor budget can still require shrinking. Round down
+	// here so alignment cannot push the tensor back over its budget.
 	scale := min(float64(side)/float64(w), float64(side)/float64(h),
 		math.Sqrt(float64(pixels)/float64(w)/float64(h)))
 	w = max(32, int(float64(w)*scale/32)*32)

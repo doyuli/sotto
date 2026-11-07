@@ -15,6 +15,45 @@ import (
 	"sotto/internal/ocr/pipeline"
 )
 
+func TestAttemptDiagnosticsSurviveFallbackAndFailure(t *testing.T) {
+	for _, localFails := range []bool{false, true} {
+		for _, systemFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("local=%t/system=%t", localFails, systemFails), func(t *testing.T) {
+				failure := errors.New("inference failed")
+				local := func(context.Context, image.Image, string) (Text, error) {
+					text := Text{Engine: "ppocr-v6-small", Diagnostics: pipeline.Diagnostics{DetectorWidth: 2144, DetectorHeight: 448}, timings: EngineTimings{InitializationUS: 100, Pipeline: pipeline.Timings{DetectionInferenceUS: 500}}}
+					if localFails {
+						return text, failure
+					}
+					return text, nil // Empty local result must still retain costs.
+				}
+				system := func(context.Context, image.Image, string) (Text, error) {
+					text := Text{Engine: "winrt", timings: EngineTimings{SystemRequestUS: 200}}
+					if systemFails {
+						return text, failure
+					}
+					text.Lines = []pipeline.Line{testLine("recovered", 0, 0, 100, 24, -1)}
+					return text, nil
+				}
+				got, err := recognizeEngines(context.Background(), nil, "", local, system)
+				if systemFails != (err != nil) || len(got.Attempts) != 2 {
+					t.Fatalf("%+v %v", got, err)
+				}
+				a, b := got.Attempts[0], got.Attempts[1]
+				if a.Engine != "ppocr-v6-small" || a.Timings.InitializationUS != 100 || a.Timings.Pipeline.DetectionInferenceUS != 500 || a.Diagnostics.DetectorWidth != 2144 || b.Engine != "winrt" || b.Timings.SystemRequestUS != 200 {
+					t.Fatalf("lost attempt costs: %+v", got.Attempts)
+				}
+				if (a.Error != "") != localFails || (b.Error != "") != systemFails {
+					t.Fatalf("lost errors: %+v", got.Attempts)
+				}
+				if systemFails && (got.Text != "" || len(got.Lines) != 0) {
+					t.Fatal("error published partial text")
+				}
+			})
+		}
+	}
+}
+
 func TestLocalFailureIsLoggedBeforeFallback(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()

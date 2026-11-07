@@ -7,6 +7,7 @@ import (
 	"image"
 	"log"
 	"strings"
+	"time"
 	"unicode"
 
 	"sotto/internal/ocr/pipeline"
@@ -18,14 +19,30 @@ func localLanguage(lang string) bool {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	return lang == "" || lang == "zh" || strings.HasPrefix(lang, "zh-") || lang == "en" || strings.HasPrefix(lang, "en-")
 }
-func recognizeEngines(ctx context.Context, img image.Image, lang string, local, system recognizeFunc) (Text, error) {
+func recognizeEngines(ctx context.Context, img image.Image, lang string, local, system recognizeFunc) (result Text, err error) {
+	var attempts []EngineAttempt
+	defer func() { result.Attempts = attempts }()
+	run := func(name string, engine recognizeFunc) (Text, error) {
+		start := time.Now()
+		t, err := runEngine(ctx, img, lang, engine)
+		attempt := EngineAttempt{Engine: name, ElapsedUS: time.Since(start).Microseconds(), Timings: t.timings, Diagnostics: t.Diagnostics}
+		if err != nil {
+			attempt.Error = err.Error()
+		}
+		attempts = append(attempts, attempt)
+		return t, err
+	}
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
 	if !localLanguage(lang) {
-		return runEngine(ctx, img, lang, system)
+		t, err := run("winrt", system)
+		if err != nil {
+			return Text{}, err
+		}
+		return t, nil
 	}
-	first, firstErr := runEngine(ctx, img, lang, local)
+	first, firstErr := run("ppocr-v6-small", local)
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
@@ -38,7 +55,7 @@ func recognizeEngines(ctx context.Context, img image.Image, lang string, local, 
 	if firstErr != nil {
 		log.Printf("ocr: local engine unavailable, trying system OCR: %v", firstErr)
 	}
-	second, secondErr := runEngine(ctx, img, lang, system)
+	second, secondErr := run("winrt", system)
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
@@ -80,12 +97,18 @@ func runEngine(ctx context.Context, img image.Image, lang string, engine recogni
 	}
 	t, err := engine(ctx, img, lang)
 	if cancel := ctx.Err(); cancel != nil {
-		return Text{}, cancel
+		return t, cancel
 	}
 	if err != nil {
-		return Text{}, err
+		return t, err
 	}
-	return finish(t)
+	start := time.Now()
+	result, err := finish(t)
+	if err != nil {
+		result = t
+	}
+	result.timings.LayoutUS = time.Since(start).Microseconds()
+	return result, err
 }
 
 // Unknown system scores are never treated as perfect confidence. Replacement

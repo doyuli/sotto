@@ -209,6 +209,13 @@ type ortSession struct {
 }
 
 func newORTSession(modelPath, inputName, outputName string) (*ortSession, error) {
+	return newORTSessionWithThreads(modelPath, inputName, outputName, 2)
+}
+
+func newORTSessionWithThreads(modelPath, inputName, outputName string, threads int) (*ortSession, error) {
+	if threads < 1 || threads > 16 {
+		return nil, fmt.Errorf("ocr: invalid inference thread count: %d", threads)
+	}
 	rt, err := sharedORT()
 	if err != nil {
 		return nil, err
@@ -217,7 +224,7 @@ func newORTSession(modelPath, inputName, outputName string) (*ortSession, error)
 	if err := rt.check(rt.call(ortSlotCreateSessionOptions, uintptr(unsafe.Pointer(&opts))), "CreateSessionOptions"); err != nil {
 		return nil, err
 	}
-	if err := rt.check(rt.call(ortSlotSetIntraOpNumThreads, opts, 2), "SetIntraOpNumThreads"); err != nil {
+	if err := rt.check(rt.call(ortSlotSetIntraOpNumThreads, opts, uintptr(threads)), "SetIntraOpNumThreads"); err != nil {
 		rt.call(ortSlotReleaseSessionOptions, opts)
 		return nil, err
 	}

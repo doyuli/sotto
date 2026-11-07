@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log"
 	"strings"
 	"time"
 
@@ -23,6 +24,27 @@ type Text struct {
 	Risks       []pipeline.Risk      `json:"risks,omitempty"`
 	RetryCount  int                  `json:"retryCount"`
 	Selection   string               `json:"selection,omitempty"`
+	QueueWaitUS int64                `json:"queueWaitUs"`
+	Attempts    []EngineAttempt      `json:"attempts,omitempty"`
+	timings     EngineTimings
+}
+
+// Attempts retain both engines' costs even when fallback replaces the local
+// result. They contain no recognized text or image data and are safe to log.
+type EngineAttempt struct {
+	Engine      string               `json:"engine"`
+	ElapsedUS   int64                `json:"elapsedUs"`
+	Timings     EngineTimings        `json:"timings"`
+	Diagnostics pipeline.Diagnostics `json:"diagnostics"`
+	Error       string               `json:"error,omitempty"`
+}
+
+type EngineTimings struct {
+	InitializationUS   int64            `json:"initializationUs"`
+	LayoutUS           int64            `json:"layoutUs"`
+	SystemPreprocessUS int64            `json:"systemPreprocessUs"`
+	SystemRequestUS    int64            `json:"systemRequestUs"`
+	Pipeline           pipeline.Timings `json:"pipeline"`
 }
 
 var admission = make(chan struct{}, 1)
@@ -33,12 +55,19 @@ func Recognize(ctx context.Context, img image.Image) (Text, error) {
 
 // RecognizeWith honors an explicit BCP-47 language tag. The gate also makes
 // cancellation responsive while an earlier native inference is still running.
-func RecognizeWith(ctx context.Context, img image.Image, lang string) (Text, error) {
+func RecognizeWith(ctx context.Context, img image.Image, lang string) (result Text, err error) {
+	start := time.Now()
+	defer func() {
+		result.Elapsed = time.Since(start).Round(time.Millisecond).String()
+		log.Printf("ocr: engine=%s elapsed=%s queueUs=%d retries=%d selection=%s attempts=%+v err=%v", result.Engine, result.Elapsed, result.QueueWaitUS, result.RetryCount, result.Selection, result.Attempts, err)
+	}()
 	select {
 	case admission <- struct{}{}:
 	case <-ctx.Done():
-		return Text{}, ctx.Err()
+		return Text{QueueWaitUS: time.Since(start).Microseconds()}, ctx.Err()
 	}
+	queueWaitUS := time.Since(start).Microseconds()
+	defer func() { result.QueueWaitUS = queueWaitUS }()
 	defer func() { <-admission }()
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
@@ -46,12 +75,10 @@ func RecognizeWith(ctx context.Context, img image.Image, lang string) (Text, err
 	if err := validateImage(img); err != nil {
 		return Text{}, err
 	}
-	start := time.Now()
-	result, err := recognizeWith(ctx, img, lang)
+	result, err = recognizeWith(ctx, img, lang)
 	if cancel := ctx.Err(); cancel != nil {
-		return Text{}, cancel
+		return Text{Attempts: result.Attempts}, cancel
 	}
-	result.Elapsed = time.Since(start).Round(time.Millisecond).String()
 	return result, err
 }
 func validateImage(img image.Image) error {

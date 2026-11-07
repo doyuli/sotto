@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"sotto/internal/ocr/pipeline"
 )
@@ -17,23 +19,37 @@ import (
 var ppEngine *pipeline.Recognizer
 
 func recognizePPOCR(ctx context.Context, img image.Image, _ string) (Text, error) {
+	t := Text{Engine: "ppocr-v6-small"}
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
 	if ppEngine == nil {
+		start := time.Now()
 		r, err := newPPOCR(ctx)
+		t.timings.InitializationUS = time.Since(start).Microseconds()
 		if err != nil {
-			return Text{}, err
+			return t, err
 		}
 		ppEngine = r
 	}
 	result, err := ppEngine.Recognize(ctx, img)
+	t.Diagnostics, t.timings.Pipeline = result.Diagnostics, result.Timings
 	if err != nil {
-		return Text{}, err
+		return t, err
 	}
-	return Text{Lines: result.Lines, Diagnostics: result.Diagnostics, Engine: "ppocr-v6-small"}, nil
+	t.Lines = result.Lines
+	return t, nil
 }
 func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
+	c, err := detectorConfig(os.Getenv("SOTTO_OCR_PROFILE"))
+	if err != nil {
+		return nil, err
+	}
+	threads, err := detectorThreads(os.Getenv("SOTTO_OCR_DETECTOR_THREADS"))
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("ocr: local configuration shortSide=%d longSide=%d roundUp=%t maxPixels=%d detectorThreads=%d", c.DetectorSide, c.DetectorLongSide, c.DetectorRoundUp, c.MaxDetectorPixels, threads)
 	m, err := readManifest()
 	if err != nil {
 		return nil, err
@@ -48,7 +64,7 @@ func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ocr: read dictionary: %w", err)
 	}
-	det, err := newORTSession(filepath.Join(dir, m.Models[0].File), m.Models[0].InputName, m.Models[0].OutputName)
+	det, err := newORTSessionWithThreads(filepath.Join(dir, m.Models[0].File), m.Models[0].InputName, m.Models[0].OutputName, threads)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +89,7 @@ func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r, err := pipeline.New(det, rec, dictionary, pipeline.DefaultConfig())
+	r, err := pipeline.New(det, rec, dictionary, c)
 	if err != nil {
 		return nil, err
 	}

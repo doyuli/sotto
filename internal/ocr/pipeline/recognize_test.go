@@ -6,6 +6,7 @@ import (
 	"image"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type runnerFunc func(context.Context, Tensor) (Tensor, error)
@@ -16,6 +17,7 @@ func TestRecognizeWithInjectedRunners(t *testing.T) {
 	detCalls, recCalls := 0, 0
 	det := runnerFunc(func(_ context.Context, in Tensor) (Tensor, error) {
 		detCalls++
+		time.Sleep(time.Millisecond)
 		if !reflect.DeepEqual(in.Shape, []int64{1, 3, 64, 64}) {
 			t.Fatal(in.Shape)
 		}
@@ -28,6 +30,7 @@ func TestRecognizeWithInjectedRunners(t *testing.T) {
 	})
 	rec := runnerFunc(func(_ context.Context, in Tensor) (Tensor, error) {
 		recCalls++
+		time.Sleep(time.Millisecond)
 		if !reflect.DeepEqual(in.Shape, []int64{1, 3, 48, 320}) {
 			t.Fatal(in.Shape)
 		}
@@ -43,6 +46,9 @@ func TestRecognizeWithInjectedRunners(t *testing.T) {
 	}
 	if detCalls != 1 || recCalls != 1 || len(result.Lines) != 1 || result.Lines[0].Text != "A中" {
 		t.Fatalf("calls %d %d result %+v", detCalls, recCalls, result)
+	}
+	if result.Diagnostics.RecognitionCalls != 1 || result.Timings.DetectionInferenceUS < 1000 || result.Timings.RecognitionInferenceUS < 1000 {
+		t.Fatalf("missing inference timings: %+v %+v", result.Diagnostics, result.Timings)
 	}
 	line := result.Lines[0]
 	if !line.HasScore || len(line.Tokens) != 2 || line.Score >= .8 || line.Quad[0].X >= 64 {
