@@ -165,9 +165,6 @@ func (a *application) applySettings(s config.Settings) {
 	a.mu.Unlock()
 
 	if s.AutoUpdate != old.AutoUpdate {
-		if s.AutoUpdate {
-			updater.SetAutomaticDownloads(false)
-		}
 		updater.SetAutomaticChecks(s.AutoUpdate)
 	}
 	if s.OpenAtLogin != old.OpenAtLogin {

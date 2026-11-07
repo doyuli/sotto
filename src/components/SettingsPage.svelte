@@ -219,7 +219,7 @@
           <div class="field">
             <label for="auto-update-switch">
               自动更新
-              <span class="sub">后台检查新版本，发现更新时提示安装</span>
+              <span class="sub">后台检查新版本，可在更新窗口中确认安装</span>
             </label>
             <input
               id="auto-update-switch"
