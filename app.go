@@ -97,6 +97,9 @@ func (a *application) ready() {
 	cfg.Services.Enabled = translate.Available(cfg, a.keys)
 	a.cfg = cfg
 
+	// This setting opts into checking, with installation confirmed by the user.
+	updater.SetAutomaticDownloads(false)
+	updater.SetAutomaticChecks(cfg.AutoUpdate)
 	if err := mygo.App.SetOpenAtLogin(cfg.OpenAtLogin); err != nil {
 		log.Printf("set open at login: %v", err)
 	}
@@ -154,7 +157,7 @@ func (a *application) saveSettings(s config.Settings) error {
 }
 
 // applySettings swaps the settings in and follows them: autostart,
-// hotkeys, the bubble's focus hiding, the tray's checkbox and every
+// update checks, hotkeys, the bubble's focus hiding, the tray's checkbox and every
 // open page.
 func (a *application) applySettings(s config.Settings) {
 	a.mu.Lock()
@@ -162,6 +165,10 @@ func (a *application) applySettings(s config.Settings) {
 	a.cfg = s
 	a.mu.Unlock()
 
+	if s.AutoUpdate != old.AutoUpdate {
+		updater.SetAutomaticDownloads(false)
+		updater.SetAutomaticChecks(s.AutoUpdate)
+	}
 	if s.OpenAtLogin != old.OpenAtLogin {
 		if err := mygo.App.SetOpenAtLogin(s.OpenAtLogin); err != nil {
 			log.Printf("set open at login: %v", err)

@@ -63,6 +63,7 @@ type Settings struct {
 	Hotkeys        HotkeySettings     `json:"hotkeys"`
 	Bubble         BubbleSettings     `json:"bubble"`
 	OpenAtLogin    bool               `json:"openAtLogin"`
+	AutoUpdate     bool               `json:"autoUpdate"`
 }
 
 // Default returns the settings a fresh install starts with.

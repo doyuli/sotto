@@ -126,6 +126,7 @@ export interface Settings {
   hotkeys: HotkeySettings;
   bubble: BubbleSettings;
   openAtLogin: boolean;
+  autoUpdate: boolean;
 }
 
 export interface SnipRect {

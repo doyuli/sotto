@@ -215,6 +215,25 @@
               }}
             />
           </div>
+
+          <div class="field">
+            <label for="auto-update-switch">
+              自动更新
+              <span class="sub">后台检查新版本，发现更新时提示安装</span>
+            </label>
+            <input
+              id="auto-update-switch"
+              type="checkbox"
+              class="switch"
+              checked={settings.autoUpdate}
+              onchange={(e) => {
+                if (settings) {
+                  settings.autoUpdate = e.currentTarget.checked;
+                  void save();
+                }
+              }}
+            />
+          </div>
         </div>
       </section>
 
