@@ -29,11 +29,16 @@ type OpenAIOptions struct {
 	Model   string `json:"model"`
 }
 
-// IdentifierSettings control how English identifiers are handled.
+// IdentifierSettings control how source text is prepared for translation.
 type IdentifierSettings struct {
 	// AutoSplit recognizes camelCase/snake_case/kebab-case input and
 	// splits it into words before translating.
 	AutoSplit bool `json:"autoSplit"`
+	// StripCodeComments removes delimiters while preserving the comment text.
+	// Keep the JSON key compatible with previously saved settings.
+	StripCodeComments bool `json:"stripCodeComments"`
+	FlattenNewlines   bool `json:"flattenNewlines"`
+	StripMarkdown     bool `json:"stripMarkdown"`
 }
 
 // HotkeySettings are the global shortcuts, in mygo accelerator syntax.

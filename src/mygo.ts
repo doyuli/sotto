@@ -69,6 +69,9 @@ export interface HotkeySettings {
 
 export interface IdentifierSettings {
   autoSplit: boolean;
+  stripCodeComments: boolean;
+  flattenNewlines: boolean;
+  stripMarkdown: boolean;
 }
 
 export interface OpenAIOptions {
