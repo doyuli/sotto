@@ -24,7 +24,7 @@ Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/
 
 ## Recognition behavior
 
-- Sessions initialize on first use and are reused serially, with two inference threads per session by default.
+- Sessions initialize on first use and are reused serially. Detection defaults to `min(4, runtime.NumCPU())` inference threads; recognition uses 2.
 - Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
 - Empty local results or text-confidence risks can trigger one system OCR fallback. Discarded low-score detection regions, low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
 - Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation prevents stale results from being published but cannot interrupt native inference already running.
@@ -45,9 +45,7 @@ For comparisons, set environment variables before launching a fresh app process:
 | `legacy` | 736 | 4,096 | 4 Mi |
 | `bounded` (experimental) | 64 | 960 | 1 Mi |
 
-`SOTTO_OCR_DETECTOR_THREADS` overrides detector threads (1–16, default 2); recognition stays at 2. Configuration is cached after successful initialization. Smaller detection inputs and additional threads require accuracy and performance checks on the target device.
-
-For a same-image 2/4-thread comparison on Windows, set `SOTTO_OCR_BENCH_IMAGE` to an absolute PNG path and run `go test ./internal/ocr -run '^$' -bench '^BenchmarkDetectorThreads$' -benchtime=3x`. The benchmark warms both configurations, checks their recognized text matches, and reports full pipeline and detector timings. CPU usage and thermal impact require observation on the target device.
+`SOTTO_OCR_DETECTOR_THREADS` overrides detector threads (1–16). The default uses up to 4 threads, capped by the logical CPU count; explicit overrides are not capped. Recognition stays at 2. Configuration is cached after successful initialization. Smaller detection inputs and additional threads require accuracy and performance checks on the target device.
 
 ## Build and verification
 

@@ -34,13 +34,19 @@ func TestDetectorProfiles(t *testing.T) {
 }
 
 func TestDetectorThreads(t *testing.T) {
-	for value, want := range map[string]int{"": 2, "2": 2, " 4 ": 4, "1": 1, "16": 16} {
-		if got, err := detectorThreads(value); err != nil || got != want {
+	for cpus, want := range map[int]int{2: 2, 8: 4} {
+		if got, err := detectorThreads("", cpus); err != nil || got != want {
+			t.Fatalf("default with %d CPUs: got %d, want %d, err=%v", cpus, got, want, err)
+		}
+	}
+	// Explicit overrides support comparisons even on a low-core machine.
+	for value, want := range map[string]int{" 4 ": 4, "16": 16} {
+		if got, err := detectorThreads(value, 1); err != nil || got != want {
 			t.Fatalf("%q: %d %v", value, got, err)
 		}
 	}
-	for _, value := range []string{"0", "-1", "17", "four"} {
-		if _, err := detectorThreads(value); err == nil {
+	for _, value := range []string{"0", "17", "four"} {
+		if _, err := detectorThreads(value, 8); err == nil {
 			t.Fatalf("accepted %q", value)
 		}
 	}

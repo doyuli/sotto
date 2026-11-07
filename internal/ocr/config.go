@@ -24,10 +24,12 @@ func detectorConfig(profile string) (pipeline.Config, error) {
 	return c, nil
 }
 
-func detectorThreads(value string) (int, error) {
+func detectorThreads(value string, cpuCount int) (int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return 2, nil
+		// Use the measured four-thread setting without oversubscribing small
+		// machines. Explicit diagnostic overrides remain independent of it.
+		return min(4, max(1, cpuCount)), nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"sotto/internal/ocr/pipeline"
@@ -45,7 +46,7 @@ func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	threads, err := detectorThreads(os.Getenv("SOTTO_OCR_DETECTOR_THREADS"))
+	threads, err := detectorThreads(os.Getenv("SOTTO_OCR_DETECTOR_THREADS"), runtime.NumCPU())
 	if err != nil {
 		return nil, err
 	}
