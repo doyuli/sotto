@@ -97,8 +97,7 @@ func (a *application) ready() {
 	cfg.Services.Enabled = translate.Available(cfg, a.keys)
 	a.cfg = cfg
 
-	// This setting opts into checking, with installation confirmed by the user.
-	updater.SetAutomaticDownloads(false)
+	// Restore checks without overwriting choices made in the update window.
 	updater.SetAutomaticChecks(cfg.AutoUpdate)
 	if err := mygo.App.SetOpenAtLogin(cfg.OpenAtLogin); err != nil {
 		log.Printf("set open at login: %v", err)
@@ -166,7 +165,9 @@ func (a *application) applySettings(s config.Settings) {
 	a.mu.Unlock()
 
 	if s.AutoUpdate != old.AutoUpdate {
-		updater.SetAutomaticDownloads(false)
+		if s.AutoUpdate {
+			updater.SetAutomaticDownloads(false)
+		}
 		updater.SetAutomaticChecks(s.AutoUpdate)
 	}
 	if s.OpenAtLogin != old.OpenAtLogin {
