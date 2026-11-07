@@ -514,7 +514,7 @@ test.each(["settings", "keyring"] as const)("failed credential deletion (%s) ref
   expect(page.target.querySelector(clear)).toBeNull();
 });
 
-test("OpenAI connection success does not claim streaming was verified", async () => {
+test("OpenAI connection probe shows the standard success message", async () => {
   page.backend.secrets.set("openai-key", "key");
   await openSettings();
   await expand("openai");
@@ -524,5 +524,5 @@ test("OpenAI connection success does not claim streaming was verified", async ()
   probe.click();
   await settle();
   expect(page.backend.calls("ConfigSvc.TestService")).toEqual([["openai"]]);
-  expect(drawer.querySelector('[role="status"]')?.textContent).toContain("连接成功（未验证流式输出）");
+  expect(drawer.querySelector('[role="status"]')?.textContent?.trim()).toBe("连接成功");
 });

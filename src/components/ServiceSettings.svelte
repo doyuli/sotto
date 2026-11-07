@@ -231,8 +231,7 @@
     try {
       await waitForSave();
       const error = await ConfigSvc.testService(serviceName);
-      const success = serviceName === "openai" ? "连接成功（未验证流式输出）" : "连接成功";
-      testStatuses[serviceName] = { testing: false, result: error || success, isError: Boolean(error) };
+      testStatuses[serviceName] = { testing: false, result: error || "连接成功", isError: Boolean(error) };
     } catch (err) {
       testStatuses[serviceName] = { testing: false, result: `测试失败：${String(err)}`, isError: true };
     }
