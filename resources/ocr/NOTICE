@@ -1,0 +1,6 @@
+RapidOCR — Copyright (c) 2021 RapidOCR Authors / RapidAI.
+PaddleOCR — Copyright (c) 2020 PaddlePaddle Authors. All Rights Reserved.
+Licensed under the Apache License, Version 2.0.
+
+Sotto contains a modified Go implementation with bounded image processing,
+geometry, confidence diagnostics, layout and quality assessment.

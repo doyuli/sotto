@@ -206,7 +206,7 @@ func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect
 		}
 		message = ""
 		if err != nil {
-			message = "文字识别失败，请重新框选或直接输入。"
+			message = ocr.UserMessage(err)
 			log.Printf("ocr: %v", err)
 		} else if result.Text == "" {
 			message = "未识别到文字，请框选完整文字后重试。"

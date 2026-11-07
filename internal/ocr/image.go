@@ -1,225 +1,70 @@
 package ocr
 
 import (
+	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
-	"sort"
-	"unicode"
+
+	"sotto/internal/ocr/pipeline"
 )
 
-// Windows' recognizer reads a screenshot of UI text poorly at its native
-// size: a 12-16px line loses half its characters. Enlarging a small
-// selection two or three times is the single biggest accuracy win, and
-// the cost is a few milliseconds. A very large shot is scaled down
-// instead — OcrEngine.MaxImageDimension rejects anything beyond it.
+const maxOCRDimension = 3800
 
-const (
-	// maxOCRDimension stays under OcrEngine's own limit (4096 on the
-	// engines shipped with Windows 10/11) with some room to spare.
-	maxOCRDimension = 3800
-	// Line height, in pixels, a retry pass aims for. Windows' recognizer
-	// reads glyphs reliably at roughly this size but drops characters
-	// from a 12–16 px laptop screenshot.
-	targetLineHeight = 40.0
-	// Lines at least this tall are good enough that a retry would only
-	// cost time.
-	acceptableLineHeight = 26.0
-	// Scale used when the first pass found no line at all, so there is no
-	// height to measure.
-	blindRetryScale = 2.0
-	// A smaller enlargement cannot change the outcome enough to pay for a
-	// second pass.
-	minUsefulScale = 1.25
-	maxRetryScale  = 4.0
-	// Upper bound on the retry bitmap, keeping the extra buffer around
-	// 64 MB.
-	maxScaledPixels = 16_000_000
-)
-
-// fitDimension shrinks an image that exceeds the recognizer's limit. It
-// never enlarges: the retry pass below does that only when the first
-// pass proved the text is too small.
-func fitDimension(img image.Image) image.Image {
+func fitSystemImage(ctx context.Context, img image.Image, limit int) (image.Image, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if w <= 0 || h <= 0 || (w <= maxOCRDimension && h <= maxOCRDimension) {
-		return img
+	if w <= limit && h <= limit {
+		return img, nil
 	}
-	rx := float64(maxOCRDimension) / float64(w)
-	ry := float64(maxOCRDimension) / float64(h)
-	r := rx
-	if ry < r {
-		r = ry
-	}
-	tw, th := int(float64(w)*r), int(float64(h)*r)
-	if tw < 1 {
-		tw = 1
-	}
-	if th < 1 {
-		th = 1
-	}
-	return resizeBilinear(img, tw, th)
+	ratio := min(float64(limit)/float64(w), float64(limit)/float64(h))
+	return resizeBilinear(ctx, img, max(1, int(float64(w)*ratio)), max(1, int(float64(h)*ratio)))
 }
 
-// retryScale decides how much to enlarge the capture for a second
-// recognition pass: aim for line height 40 px, blind 2× when the first
-// pass found nothing, and never exceed the engine's dimension limit or
-// the memory budget.
-func retryScale(lines []Line, w, h, maxDim int) float64 {
-	if w <= 0 || h <= 0 || maxDim <= 0 {
-		return 1
-	}
-	if w > maxDim || h > maxDim {
-		return 1
-	}
-	median := medianLineHeight(lines)
-	var desired float64
-	switch {
-	case median <= 0:
-		desired = blindRetryScale
-	case median >= acceptableLineHeight:
-		return 1
-	default:
-		desired = targetLineHeight / median
-	}
-	if desired > maxRetryScale {
-		desired = maxRetryScale
-	}
-	limitDim := math.Min(float64(maxDim)/float64(w), float64(maxDim)/float64(h))
-	limitPixels := math.Sqrt(float64(maxScaledPixels) / (float64(w) * float64(h)))
-	if limitDim < desired {
-		desired = limitDim
-	}
-	if limitPixels < desired {
-		desired = limitPixels
-	}
-	if desired < minUsefulScale {
-		return 1
-	}
-	return desired
+type systemLine struct {
+	Text string     `json:"text"`
+	Box  [4]float64 `json:"box"`
 }
 
-// medianLineHeight is the median of the recognized lines' box heights,
-// ignoring degenerate entries.
-func medianLineHeight(lines []Line) float64 {
-	heights := make([]float64, 0, len(lines))
-	for _, l := range lines {
-		if l.Box[3] > 0 {
-			heights = append(heights, float64(l.Box[3]))
-		}
+func systemLines(lines []systemLine, original, processed image.Rectangle) ([]pipeline.Line, error) {
+	if len(lines) > 2000 {
+		return nil, fmt.Errorf("%w: system OCR lines", pipeline.ErrLimit)
 	}
-	if len(heights) == 0 {
-		return 0
+	if original.Empty() || processed.Empty() {
+		return nil, fmt.Errorf("ocr: empty system image")
 	}
-	sort.Float64s(heights)
-	mid := len(heights) / 2
-	if len(heights)%2 == 1 {
-		return heights[mid]
-	}
-	return (heights[mid-1] + heights[mid]) / 2
-}
-
-// scaledSize rounds a scaled image size to whole pixels, never smaller
-// than the source.
-func scaledSize(w, h int, scale float64) (int, int) {
-	tw := int(math.Round(float64(w) * scale))
-	th := int(math.Round(float64(h) * scale))
-	if tw < w {
-		tw = w
-	}
-	if th < h {
-		th = h
-	}
-	return tw, th
-}
-
-// mapLines maps boxes recognized on an enlarged image back onto the
-// source image's coordinates.
-func mapLines(lines []Line, scale float64) {
-	if scale <= 0 || scale == 1 {
-		return
-	}
-	for i := range lines {
-		for j := range lines[i].Box {
-			lines[i].Box[j] = int(math.Round(float64(lines[i].Box[j]) / scale))
-		}
-	}
-}
-
-// orderLines re-orders recognized lines into reading order: rows by
-// vertical position (with a tolerance of half the average line height,
-// so columns on one visual row stay together), left to right inside a
-// row.
-func orderLines(lines []Line) []Line {
-	if len(lines) <= 1 {
-		return lines
-	}
-	var sum float64
-	var count int
-	for _, l := range lines {
-		if l.Box[3] > 0 {
-			sum += float64(l.Box[3])
-			count++
-		}
-	}
-	avg := 20.0
-	if count > 0 {
-		avg = sum / float64(count)
-	}
-	tolerance := avg * 0.5
-
-	out := append([]Line(nil), lines...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Box[1] < out[j].Box[1] })
-
-	var rows [][]Line
-	if len(out) > 0 {
-		row := []Line{out[0]}
-		rowSum := out[0].Box[1]
-		for _, l := range out[1:] {
-			avgY := rowSum / len(row)
-			if math.Abs(float64(l.Box[1]-avgY)) <= tolerance {
-				row = append(row, l)
-				rowSum += l.Box[1]
-			} else {
-				rows = append(rows, row)
-				row = []Line{l}
-				rowSum = l.Box[1]
+	sx, sy := float64(original.Dx())/float64(processed.Dx()), float64(original.Dy())/float64(processed.Dy())
+	result := make([]pipeline.Line, 0, len(lines))
+	for _, line := range lines {
+		for _, v := range line.Box {
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return nil, fmt.Errorf("ocr: invalid system box")
 			}
 		}
-		rows = append(rows, row)
-	}
-
-	result := make([]Line, 0, len(out))
-	for _, row := range rows {
-		sort.SliceStable(row, func(i, j int) bool { return row[i].Box[0] < row[j].Box[0] })
-		result = append(result, row...)
-	}
-	return result
-}
-
-// countNonSpace counts the non-whitespace characters a recognition
-// produced; the pass that recovered more of them is the better reading.
-func countNonSpace(s string) int {
-	n := 0
-	for _, r := range s {
-		if !unicode.IsSpace(r) {
-			n++
+		x, y, w, h := line.Box[0], line.Box[1], line.Box[2], line.Box[3]
+		right, bottom := min(float64(processed.Dx()), x+w), min(float64(processed.Dy()), y+h)
+		if right <= x || bottom <= y {
+			return nil, fmt.Errorf("ocr: empty system box")
 		}
+		result = append(result, pipeline.Line{Text: line.Text, Quad: pipeline.Quad{{X: x * sx, Y: y * sy}, {X: right * sx, Y: y * sy}, {X: right * sx, Y: bottom * sy}, {X: x * sx, Y: bottom * sy}}})
 	}
-	return n
+	return result, nil
 }
 
 // resizeBilinear scales img to w×h with bilinear interpolation. The
 // recognizer does better with smooth edges than with the stair-steps of
 // nearest-neighbour, and a hand-rolled scaler keeps the dependency list
 // as it is.
-func resizeBilinear(img image.Image, w, h int) *image.NRGBA {
+func resizeBilinear(ctx context.Context, img image.Image, w, h int) (*image.NRGBA, error) {
 	src := img.Bounds()
 	sw, sh := src.Dx(), src.Dy()
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
 	if sw == 0 || sh == 0 {
-		return dst
+		return dst, nil
 	}
 	// Screen captures arrive as *image.NRGBA; reading its pixels directly
 	// keeps a 3× upscale in the low milliseconds instead of hundreds.
@@ -233,6 +78,9 @@ func resizeBilinear(img image.Image, w, h int) *image.NRGBA {
 	}
 	// Sample at pixel centers: dst pixel i maps to (i+0.5)*sw/w - 0.5.
 	for y := 0; y < h; y++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		sy := (float64(y)+0.5)*float64(sh)/float64(h) - 0.5
 		y0 := int(sy)
 		if sy < 0 {
@@ -272,7 +120,7 @@ func resizeBilinear(img image.Image, w, h int) *image.NRGBA {
 			})
 		}
 	}
-	return dst
+	return dst, nil
 }
 
 // bilerp weighs the four neighbours at (fx, fy).
