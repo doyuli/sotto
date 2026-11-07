@@ -66,7 +66,9 @@ var (
 	codePreamble   = regexp.MustCompile(codePrefix + `$`)
 )
 
-func stripCodeComments(text string, style commentStyle, preserveHeadings bool) string {
+var commentDecoration = regexp.MustCompile(`(?m)^[ \t]*\*(?:[ \t]|$)`)
+
+func stripCodeCommentMarkers(text string, style commentStyle, preserveHeadings, cleanCommentMarkdown bool) string {
 	var out strings.Builder
 	end := 0
 	for _, match := range commentTokens[style].FindAllStringIndex(text, -1) {
@@ -75,23 +77,48 @@ func stripCodeComments(text string, style commentStyle, preserveHeadings bool) s
 		end = match[1]
 		token := text[start:end]
 		marker := strings.TrimLeft(token, " \t")
+		body := ""
 		switch {
 		case strings.HasPrefix(token, "//"):
-		case strings.HasPrefix(token, "/*"):
-			// Keep line structure and avoid joining adjacent tokens.
-			if n := strings.Count(token, "\n"); n > 0 {
-				out.WriteString(strings.Repeat("\n", n))
-			} else {
-				out.WriteByte(' ')
+			body = strings.TrimLeft(token, "/")
+			if strings.HasPrefix(body, "! ") {
+				body = body[1:]
 			}
+		case strings.HasPrefix(token, "/*"):
+			body = strings.TrimSuffix(strings.TrimPrefix(token, "/*"), "*/")
+			if strings.HasPrefix(body, "*") && !strings.HasPrefix(body, "**") {
+				body = body[1:]
+			}
+			body = commentDecoration.ReplaceAllString(body, "")
 		case strings.HasPrefix(marker, "#"):
 			lineStart := strings.LastIndexByte(text[:start], '\n') + 1
 			if strings.HasPrefix(marker, "#!") || (style == mixedComments && codeDirective.MatchString(marker)) ||
 				(preserveHeadings && markdownHeading.MatchString(markdownQuote.ReplaceAllString(text[lineStart:end], ""))) {
 				out.WriteString(token)
+				continue
 			}
+			body = strings.TrimLeft(marker, "#")
 		default:
 			out.WriteString(token)
+			continue
+		}
+		body = strings.TrimSpace(body)
+		if cleanCommentMarkdown {
+			body = stripMarkdown(body)
+		}
+		// Delimiters can be the only separator between code and comment text.
+		if start > 0 {
+			previous, _ := utf8.DecodeLastRuneInString(text[:start])
+			if !unicode.IsSpace(previous) {
+				out.WriteByte(' ')
+			}
+		}
+		out.WriteString(body)
+		if strings.HasPrefix(token, "/*") && end < len(text) {
+			next, _ := utf8.DecodeRuneInString(text[end:])
+			if !unicode.IsSpace(next) && body != "" {
+				out.WriteByte(' ')
+			}
 		}
 	}
 	out.WriteString(text[end:])
@@ -134,7 +161,8 @@ func cleanSourceBlocks(text string, options config.IdentifierSettings) string {
 				}
 			}
 			plainCode = fence == "" && (blockStyle == pythonComments || startsWithAssignment)
-			block = stripCodeComments(block, blockStyle, options.StripMarkdown && fence == "" && !plainCode)
+			block = stripCodeCommentMarkers(block, blockStyle, options.StripMarkdown && fence == "" && !plainCode,
+				options.StripMarkdown && (fence != "" || plainCode))
 		}
 		if options.StripMarkdown && fence == "" && !plainCode {
 			block = stripMarkdown(block)

@@ -33,7 +33,9 @@ type OpenAIOptions struct {
 type IdentifierSettings struct {
 	// AutoSplit recognizes camelCase/snake_case/kebab-case input and
 	// splits it into words before translating.
-	AutoSplit         bool `json:"autoSplit"`
+	AutoSplit bool `json:"autoSplit"`
+	// StripCodeComments removes delimiters while preserving the comment text.
+	// Keep the JSON key compatible with previously saved settings.
 	StripCodeComments bool `json:"stripCodeComments"`
 	FlattenNewlines   bool `json:"flattenNewlines"`
 	StripMarkdown     bool `json:"stripMarkdown"`
