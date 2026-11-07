@@ -11,19 +11,43 @@ const (
 // bubblePlacement keeps the chosen side stable while asynchronous results
 // change the height. An upward-opening bubble grows away from the selection.
 type bubblePlacement struct {
+	displayID          int64
 	work               mygo.Rectangle
 	point              mygo.Point
 	input, above, left bool
 }
 
-func newBubblePlacement(work mygo.Rectangle, point mygo.Point, input bool, width int) bubblePlacement {
+func newBubblePlacement(display mygo.Display, point mygo.Point, input bool, width int) bubblePlacement {
+	work := display.WorkArea
 	below := work.Y + work.Height - bubbleMargin - point.Y - bubbleGap
 	above := point.Y - bubbleGap - work.Y - bubbleMargin
 	return bubblePlacement{
-		work: work, point: point, input: input,
+		displayID: display.ID, work: work, point: point, input: input,
 		above: below < min(480, bubbleHeightLimit(work)) && above > below,
 		left:  point.X+bubbleGap+width > work.X+work.Width-bubbleMargin,
 	}
+}
+
+// Keep the anchor's display through content growth, even if the temporarily
+// taller window crosses another display. Removed displays fall back to the
+// window's nearest live display; changed work areas invalidate the old sides.
+func (p *bubblePlacement) refresh(displays []mygo.Display, fallback mygo.Display, width int) {
+	display := fallback
+	for _, candidate := range displays {
+		if candidate.ID == p.displayID {
+			display = candidate
+			break
+		}
+	}
+	if display.ID == p.displayID && display.WorkArea == p.work {
+		return
+	}
+	work := display.WorkArea
+	point := mygo.Point{
+		X: min(max(p.point.X, work.X), work.X+max(work.Width-1, 0)),
+		Y: min(max(p.point.Y, work.Y), work.Y+max(work.Height-1, 0)),
+	}
+	*p = newBubblePlacement(display, point, p.input, width)
 }
 
 func bubbleHeightLimit(work mygo.Rectangle) int {
@@ -61,11 +85,13 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	b.adjustingLayout = true
 	defer func() { b.adjustingLayout = false }()
 	bounds := b.win.Bounds()
-	work := mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2}).WorkArea
+	display := mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2})
+	work := display.WorkArea
 	m.mu.Lock()
 	pinned := b.pinned
 	m.mu.Unlock()
 	if !pinned && b.placement != nil {
+		b.placement.refresh(mygo.Screen.Displays(), display, bounds.Width)
 		work = b.placement.work
 	}
 	zoom := b.win.Page().ZoomFactor()
@@ -92,4 +118,20 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	if x != bounds.X || y != bounds.Y {
 		b.win.SetPosition(x, y)
 	}
+}
+
+// A hidden draft must also be reconciled before its next presentation; a
+// visible bubble cannot rely on another translation causing a native resize.
+func (m *bubbleManager) refreshDisplays() {
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		bubbles := make([]*bubble, 0, len(m.byID))
+		for _, b := range m.byID {
+			bubbles = append(bubbles, b)
+		}
+		m.mu.Unlock()
+		for _, b := range bubbles {
+			m.reflow(b, true)
+		}
+	})
 }

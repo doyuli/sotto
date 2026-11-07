@@ -508,9 +508,9 @@ func (m *bubbleManager) position(b *bubble, trigger string, anchor *Anchor) {
 	if anchor != nil {
 		point = mygo.Point{X: anchor.X, Y: anchor.Y}
 	}
-	work := mygo.Screen.DisplayNearestPoint(point).WorkArea
+	display := mygo.Screen.DisplayNearestPoint(point)
 	width, height := b.win.Size()
-	placement := newBubblePlacement(work, point, trigger == "input", width)
+	placement := newBubblePlacement(display, point, trigger == "input", width)
 	b.placement = &placement
 	x, y := placement.position(width, height)
 	b.win.SetPosition(x, y)
