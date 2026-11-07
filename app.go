@@ -574,7 +574,7 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 			if ctx.Err() != nil {
 				return
 			}
-			msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err}
+			msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err, Streaming: res.Streaming}
 			if a.bubbles.recordResult(win, msg) {
 				TranslationUpdate.Emit(win, msg)
 			}

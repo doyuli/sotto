@@ -138,10 +138,11 @@ export interface SnipRect {
 }
 
 /**
- * TranslationUpdateMsg reports one service's result of one request. Err
- * holds the user-facing message when the service failed.
+ * TranslationUpdateMsg carries cumulative text for one service and request.
+ * Streaming is true until completion; Err settles a failure without losing text.
  */
 export interface TranslationUpdateMsg {
+  streaming: boolean;
   reqID: string;
   service: string;
   text: string;
@@ -200,7 +201,7 @@ export const TranslateSvc = {
   },
   /**
    * Run translates req and pushes the results to the calling window as
-   * translation-update events, one per service as it arrives.
+   * translation-update events, including cumulative text while a service streams.
    */
   run(req: RunReq): Promise<void> {
     return call("TranslateSvc.Run", req);

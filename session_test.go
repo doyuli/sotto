@@ -300,3 +300,28 @@ func TestDelayedBlurCannotHideANewerSelection(t *testing.T) {
 		t.Fatal("blur ignored disabled auto-hide")
 	}
 }
+
+func TestStreamingSnapshotsAndCancellation(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	m.byID[1] = &bubble{win: w, sessionID: "stream", revision: -1}
+	ctx, _ := m.startRun(w, RunReq{SessionID: "stream", ReqID: "first", Revision: 1})
+	m.recordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"openai"}}, "")
+	for _, text := range []string{"你", "你好"} {
+		if !m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: text, Streaming: true}) {
+			t.Fatal("stream update rejected")
+		}
+	}
+	state, _ := m.State(config.Default(), 1)
+	if len(state.Results) != 1 || state.Results[0].Text != "你好" || !state.Results[0].Streaming {
+		t.Fatalf("Ready must hold only the latest cumulative snapshot: %+v", state.Results)
+	}
+	m.Cancel(w, "stream", 2)
+	state, _ = m.State(config.Default(), 1)
+	if ctx.Err() == nil || state.Results[0].Streaming || state.Results[0].Text != "你好" || state.Results[0].Err == "" {
+		t.Fatalf("canceled snapshot must retain text and settle: %+v", state.Results)
+	}
+	if m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: "stale", Streaming: true}) {
+		t.Fatal("canceled stream reclaimed its card")
+	}
+}

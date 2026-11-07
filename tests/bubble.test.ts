@@ -155,7 +155,7 @@ test("Ready results survive an older reset queued before the snapshot returns", 
   page.backend.emit("bubble-reset", { ...page.backend.bubble, generation: 0, text: "old session" });
   ready.resolve({
     ...page.backend.bubble,
-    results: [{ reqID: "initial", service: "google", text: "你好", detectedLang: "en", err: "" }],
+    results: [{ reqID: "initial", service: "google", text: "你好", detectedLang: "en", err: "", streaming: false }],
   });
   await settle();
   expect(input().value).toBe(page.backend.bubble.text);
@@ -224,7 +224,7 @@ test("peer retry failures and unavailable metadata settle their own cards", asyn
 test("English Ready snapshot renders copy, speech and naming controls", async () => {
   page.backend.bubble.targetLang = "en";
   page.backend.bubble.results = [{
-    reqID: "initial", service: "google", text: "user name", detectedLang: "", err: "",
+    reqID: "initial", service: "google", text: "user name", detectedLang: "", err: "", streaming: false,
   }];
   await openBubble();
   const card = page.target.querySelector(".card-ok")!;
@@ -392,4 +392,126 @@ test("a full translation starts at the top, while retry retains the reading posi
   run("A new paragraph");
   await tick();
   expect(scroll.scrollTop).toBe(0);
+});
+
+function stream(text: string, reqID = "initial"): void {
+  page.backend.emit("translation-update", {
+    reqID, service: "google", text, err: "", detectedLang: "en", streaming: true,
+  });
+}
+
+test("streaming text appears immediately and actions enable only after completion", async () => {
+  page.backend.bubble.targetLang = "en";
+  await openBubble();
+  stream("hello");
+  await tick();
+  const card = page.target.querySelector(".card-streaming")!;
+  const text = card.querySelector(".card-text");
+  const copy = button("复制", card);
+  expect(text?.textContent).toBe("hello");
+  expect(card.querySelector(".skeleton")).toBeNull();
+  expect(card.querySelector(".card-status")?.textContent).toBe("生成中");
+  expect(card.querySelector(".card-body")?.getAttribute("aria-busy")).toBe("true");
+  expect(copy.disabled).toBe(true);
+  expect(button("朗读", card).disabled).toBe(true);
+  copy.click();
+  expect(page.backend.calls("BubbleSvc.Copy")).toEqual([]);
+  expect(page.backend.calls("TranslateSvc.Formats")).toEqual([]);
+
+  card.querySelector<HTMLButtonElement>(".card-toggle")!.focus();
+  const focused = document.activeElement;
+  const scroll = page.target.querySelector<HTMLElement>(".bubble-scroll")!;
+  scroll.scrollTop = 80;
+  stream("hello world");
+  await tick();
+  expect(card.querySelector(".card-text")).toBe(text);
+  expect(text?.textContent).toBe("hello world");
+  expect(scroll.scrollTop).toBe(80);
+  expect(document.activeElement).toBe(focused);
+  update("google", "hello world");
+  await settle();
+  expect(page.target.querySelector(".card-ok")).toBe(card);
+  expect(button("复制", card)).toBe(copy);
+  expect(copy.disabled).toBe(false);
+  expect(button("朗读", card).disabled).toBe(false);
+  expect(card.querySelector(".card-status")?.textContent).toBe("");
+  expect(page.backend.calls("TranslateSvc.Formats")).toEqual([["hello world"]]);
+  copy.click();
+  expect(page.backend.calls("BubbleSvc.Copy")).toEqual([["hello world"]]);
+});
+
+test("interrupted text is retained with retry and no copy action", async () => {
+  await openBubble();
+  stream("部分译文");
+  update("google", "部分译文", "initial", "连接中断，请重试");
+  await tick();
+  const card = page.target.querySelector(".card-error")!.closest(".card")!;
+  expect(card.querySelector(".card-text")?.textContent).toBe("部分译文");
+  expect(card.querySelector(".card-error")?.textContent).toContain("译文未完成");
+  expect(button("复制", card).disabled).toBe(true);
+  button("重试", card).click();
+  const retry = lastRun();
+  stream("迟到的旧结果");
+  await tick();
+  expect(cardTexts()).toEqual([]);
+  stream("新的译文", retry.reqID);
+  await tick();
+  expect(cardTexts()).toEqual(["新的译文"]);
+  update("google", "新的完整译文", retry.reqID);
+  await tick();
+  expect(button("复制", card).disabled).toBe(false);
+});
+
+test("Ready restores in-progress text and a native stop retains it", async () => {
+  page.backend.bubble.results = [{
+    reqID: "initial", service: "google", text: "恢复中的译文", err: "", detectedLang: "en", streaming: true,
+  }];
+  await openBubble();
+  expect(cardTexts()).toEqual(["恢复中的译文"]);
+  expect(page.target.querySelector(".card-streaming")).not.toBeNull();
+  page.backend.emit("run-stopped", { sessionID: "test-session", showID: 1, revision: 3 });
+  await tick();
+  expect(cardTexts()).toEqual(["恢复中的译文"]);
+  expect(page.target.querySelector(".card-streaming")).toBeNull();
+  expect(page.target.querySelector(".card-error")?.textContent).toContain("翻译已取消");
+  stream("取消后的旧结果");
+  await tick();
+  expect(cardTexts()).toEqual(["恢复中的译文"]);
+});
+
+test("appending streamed text preserves earlier spans and the reader's selection", async () => {
+  await openBubble();
+  stream("你好");
+  await tick();
+  const text = page.target.querySelector(".card-text")!;
+  const first = text.querySelector("span")!;
+  const selection = window.getSelection()!;
+  const range = document.createRange();
+  range.selectNodeContents(first);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  stream("你好，世界");
+  await tick();
+  expect(text.textContent).toBe("你好，世界");
+  expect(text.querySelector("span")).toBe(first);
+  expect(selection.toString()).toBe("你好");
+  update("google", "你好，世界。");
+  await tick();
+  expect(text.textContent).toBe("你好，世界。");
+  expect(text.querySelector("span")).toBe(first);
+  expect(selection.toString()).toBe("你好");
+  selection.removeAllRanges();
+});
+
+test("a provider correction replaces the old text without duplicating it", async () => {
+  await openBubble();
+  stream("原来的文字");
+  await tick();
+  stream("修正后的文字");
+  await tick();
+  expect(cardTexts()).toEqual(["修正后的文字"]);
+  update("google", "最终译文");
+  await tick();
+  expect(cardTexts()).toEqual(["最终译文"]);
 });

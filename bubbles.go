@@ -168,6 +168,13 @@ func (b *bubble) stopWork() {
 		cancel()
 	}
 	b.runCancels = nil
+	// A later Ready snapshot must not revive an already canceled stream.
+	for service, result := range b.results {
+		if result.Streaming {
+			result.Streaming, result.Err = false, "翻译已取消，请重试"
+			b.results[service] = result
+		}
+	}
 	if b.cancelCapture != nil {
 		b.cancelCapture()
 		b.cancelCapture = nil

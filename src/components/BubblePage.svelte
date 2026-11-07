@@ -135,9 +135,13 @@
   }
 
   function applyResult(msg: TranslationUpdateMsg): void {
-    const card: CardState = msg.err ? { status: "error", err: msg.err } : { status: "ok", text: msg.text };
+    const card: CardState = {
+      status: msg.err ? "error" : msg.streaming ? "streaming" : "ok",
+      text: msg.text,
+      err: msg.err,
+    };
     cards.set(msg.service, card);
-    if (!msg.err && targetLang === "en" && msg.text && msg.service !== "dictionary") {
+    if (!msg.err && !msg.streaming && targetLang === "en" && msg.text && msg.service !== "dictionary") {
       void attachFormats(msg.service, card, msg.text);
     }
   }
@@ -184,8 +188,8 @@
       bubbleState.message = "已取消识别，可重新框选或直接输入。";
     }
     for (const [name, card] of cards) {
-      if (card.status === "loading") {
-        cards.set(name, { status: "error", err: "翻译已取消，请重试" });
+      if (card.status === "loading" || card.status === "streaming") {
+        cards.set(name, { status: "error", text: card.text, err: "翻译已取消，请重试" });
       }
     }
   }
@@ -255,8 +259,8 @@
       targetLang,
     }).catch((err) => {
       for (const [name, card] of cards) {
-        if (card.status === "loading" && cardRequests.get(name) === request) {
-          cards.set(name, { status: "error", err: String(err) });
+        if ((card.status === "loading" || card.status === "streaming") && cardRequests.get(name) === request) {
+          cards.set(name, { status: "error", text: card.text, err: String(err) });
         }
       }
     });

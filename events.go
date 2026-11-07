@@ -31,9 +31,10 @@ type BubbleState struct {
 	Settings            config.Settings        `json:"settings"`
 }
 
-// TranslationUpdateMsg reports one service's result of one request. Err
-// holds the user-facing message when the service failed.
+// TranslationUpdateMsg carries cumulative text for one service and request.
+// Streaming is true until completion; Err settles a failure without losing text.
 type TranslationUpdateMsg struct {
+	Streaming    bool   `json:"streaming"`
 	ReqID        string `json:"reqID"`
 	Service      string `json:"service"`
 	Text         string `json:"text"`

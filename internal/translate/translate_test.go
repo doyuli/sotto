@@ -136,7 +136,7 @@ func TestTranslateLongMergesChunks(t *testing.T) {
 	text := strings.Repeat("这是一个很长的段落。", 300) // 3000 runes
 	rec := &recordingTranslator{name: "x"}
 	res, err := translateLong(context.Background(), rec,
-		Request{Text: text, TargetLang: "en"}, fakeKeys{}, config.Default())
+		Request{Text: text, TargetLang: "en"}, fakeKeys{}, config.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
