@@ -67,6 +67,7 @@ body[data-route="settings"] {
 
 body[data-route="bubble"] {
   min-height: 0;
+  overflow: hidden;
   background: transparent;
   /* The bubble is its own surface ladder: the panel is the lightest layer,
      the composer and language bar recess below it, and each card's title
@@ -108,14 +109,22 @@ body[data-route="bubble"] {
   display: flex;
   flex-direction: column;
   min-height: 100px;
+  max-height: var(--bubble-max-height, 760px);
   background: var(--panel);
   color: var(--fg);
   border-radius: 14px;
   box-shadow: var(--shadow);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .bubble-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -123,17 +132,19 @@ body[data-route="bubble"] {
   padding: 6px 8px 0 12px;
 }
 
-/* When pinned the whole bubble is the drag handle; interactive children
-   (inputs, buttons, selects, labels) stay clickable because the bridge
-   skips them, and the translated text stays selectable through the
-   no-drag below. */
+/* Keep the scrollbar gutter outside the native drag region. The top bar
+   and body still drag a pinned bubble; controls and text stay interactive. */
 .bubble.pinned {
+  --app-region: no-drag;
+}
+
+.bubble.pinned > :is(.bubble-top, .bubble-body) {
   --app-region: drag;
   cursor: grab;
 }
 
 .bubble.pinned .bubble-input,
-.bubble.pinned .card-scroll,
+.bubble.pinned .card-text,
 .bubble.pinned .card-error {
   --app-region: no-drag;
   cursor: auto;
@@ -157,6 +168,7 @@ body[data-route="bubble"] {
 }
 
 .bubble-body {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -175,7 +187,9 @@ body[data-route="bubble"] {
 .bubble-input {
   width: 100%;
   min-height: 42px;
-  max-height: 240px;
+  max-height: min(112px, calc(var(--bubble-max-height, 760px) * 0.18));
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   resize: none;
   border: none;
   outline: none;
@@ -330,12 +344,18 @@ body[data-route="bubble"] {
   background: var(--selection);
 }
 
-.bubble button:focus-visible {
+.bubble button:focus-visible,
+.bubble:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
+.bubble:focus-visible {
+  outline-offset: -2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .bubble,
   .bubble *,
   .bubble *::before,
   .bubble *::after {
@@ -349,24 +369,62 @@ body[data-route="bubble"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 560px;
-  padding-right: 2px;
-  overflow-y: auto;
+}
+
+/* Scroll activity changes only the thumb; its gutter always occupies space. */
+.bubble,
+.bubble-input {
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+  transition: scrollbar-color 150ms;
+}
+
+.bubble.scrolling,
+.bubble-input.scrolling {
   scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.bubble-cards::-webkit-scrollbar {
+.bubble::-webkit-scrollbar,
+.bubble-input::-webkit-scrollbar {
   width: 6px;
 }
 
-.bubble-cards::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
+.bubble::-webkit-scrollbar-thumb,
+.bubble-input::-webkit-scrollbar-thumb {
+  background: transparent;
   border-radius: 3px;
+  transition: background-color 150ms;
 }
 
-.bubble-cards::-webkit-scrollbar-track {
+.bubble.scrolling::-webkit-scrollbar-thumb,
+.bubble-input.scrolling::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+}
+
+.bubble::-webkit-scrollbar-track,
+.bubble-input::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Standard scrollbar properties override WebKit thumb styling in recent
+   Chromium. Use its fixed-width scrollbar so OS overlay settings cannot
+   remove the reserved gutter or hide the thumb during scroll activity. */
+@supports selector(::-webkit-scrollbar) {
+  .bubble,
+  .bubble-input,
+  .bubble.scrolling,
+  .bubble-input.scrolling {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble::-webkit-scrollbar-thumb,
+  .bubble-input::-webkit-scrollbar-thumb {
+    transition: none;
+  }
 }
 
 .cards-empty {
@@ -1290,6 +1348,10 @@ body[data-route="settings"]:not(:has(.service-drag-preview)) > #dnd-action-dragg
 .service-loading .service-configure:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.bubble:focus-visible {
+  outline-offset: -2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

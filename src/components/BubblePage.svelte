@@ -12,6 +12,7 @@
     type TranslationUpdateMsg,
   } from "../mygo";
   import { detectedName, langName, speechTag, LANGUAGES, SERVICE_NAMES } from "../languages";
+  import { scrollActivity } from "../utils/scroll-activity";
   import { requestID } from "../utils/request-id";
   import { createToasts } from "../utils/toasts.svelte";
   import BubbleIcon from "./BubbleIcon.svelte";
@@ -37,6 +38,8 @@
 
   let inputText: string = $state("");
   let textareaElem: HTMLTextAreaElement | undefined = $state();
+  let bubbleElem: HTMLDivElement | undefined = $state();
+  let maxHeight = $state(760);
 
   const cards = new SvelteMap<string, CardState>();
   const cardRequests = new Map<string, string>();
@@ -74,7 +77,7 @@
   function growTextarea(): void {
     if (!textareaElem) return;
     textareaElem.style.height = "auto";
-    textareaElem.style.height = `${Math.min(textareaElem.scrollHeight, 240)}px`;
+    textareaElem.style.height = `${textareaElem.scrollHeight}px`;
   }
 
   function apply(st: BubbleState): void {
@@ -86,6 +89,7 @@
       return;
     }
     bubbleState = st;
+    maxHeight = st.maxHeight || 760;
     const appliedState = bubbleState;
     readyFailed = false;
     reqID = st.reqID;
@@ -125,6 +129,7 @@
     void tick().then(() => {
       if (bubbleState !== appliedState) return;
       growTextarea();
+      if (bubbleElem) bubbleElem.scrollTop = 0;
       if (st.trigger === "input") textareaElem?.focus();
     });
   }
@@ -229,6 +234,7 @@
     detected = "";
 
     if (!service) {
+      if (bubbleElem) bubbleElem.scrollTop = 0;
       runServices = null;
       cards.clear();
       cardRequests.clear();
@@ -324,6 +330,9 @@
     }
 
     const subscriptions = [
+      events.bubbleLayoutChanged.on((height) => {
+        afterReady(() => { maxHeight = height; });
+      }),
       events.runStopped.on((msg) => {
         afterReady(() => {
           if (!bubbleState || msg.sessionID !== bubbleState.sessionID || msg.showID !== bubbleState.showID || msg.revision < revision) return;
@@ -423,7 +432,11 @@
 {#if readyFailed}
   <div class="bubble-error" role="status">气泡已关闭</div>
 {:else}
-  <div class="bubble" class:pinned={isPinned}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable bubble needs keyboard access.) -->
+  <div class="bubble" class:pinned={isPinned} bind:this={bubbleElem} use:scrollActivity
+    style:--bubble-max-height={`${maxHeight}px`}
+    role="region" aria-label="翻译气泡" tabindex="0"
+  >
     <!-- Top Bar -->
     <div class="bubble-top">
       <span class="brand">
@@ -522,6 +535,7 @@
           bind:this={textareaElem}
           value={inputText}
           class="bubble-input"
+          use:scrollActivity
           rows="1"
           spellcheck="false"
           placeholder={isRecognizing ? "识别完成后可修改原文" : "输入要翻译的文本，回车翻译…"}

@@ -10,6 +10,7 @@ import (
 // its page mounts, and what BubbleReset carries when an unpinned bubble
 // is reused for a new query.
 type BubbleState struct {
+	MaxHeight           float64                `json:"maxHeight"`
 	ClipboardRecoveryID string                 `json:"clipboardRecoveryID"`
 	ShowID              int64                  `json:"showID"`
 	ID                  int64                  `json:"id"`
@@ -65,8 +66,10 @@ type RunStoppedMsg struct {
 }
 
 var (
-	RunStopped      = mygo.NewEvent[RunStoppedMsg]("run-stopped")
-	BubblePresented = mygo.NewEvent[BubblePresentedMsg]("bubble-presented")
+	// BubbleLayoutChanged updates the reading budget after a display or zoom change.
+	BubbleLayoutChanged = mygo.NewEvent[float64]("bubble-layout-changed")
+	RunStopped          = mygo.NewEvent[RunStoppedMsg]("run-stopped")
+	BubblePresented     = mygo.NewEvent[BubblePresentedMsg]("bubble-presented")
 	// BubbleReset re-initializes a reused bubble's page.
 	BubbleReset = mygo.NewEvent[BubbleState]("bubble-reset")
 	// TranslationUpdate reports one service result as it arrives.

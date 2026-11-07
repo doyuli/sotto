@@ -65,6 +65,11 @@ type bubble struct {
 	offBlur     func() // unregisters focus hiding; Pin calls it
 	// offOutsideClick belongs to the main thread, like the window it watches.
 	offOutsideClick func()
+
+	// Placement and its reentrancy guard belong to the main thread.
+	placement       *bubblePlacement
+	adjustingLayout bool
+	maxHeight       float64 // CSS pixels; guarded by the manager mutex
 }
 
 // Anchor is a DIP screen point to open a bubble beside — a selection's
@@ -139,10 +144,15 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		}
 		b.present()
 		b.canShow = valid
-		state := m.state(b, cfg)
 		m.mu.Unlock()
 		if !reuseInput {
 			m.position(b, trigger, anchor)
+		}
+		m.reflow(b, true)
+		m.mu.Lock()
+		state := m.state(b, cfg)
+		m.mu.Unlock()
+		if !reuseInput {
 			BubbleReset.Emit(b.win, state)
 		}
 		m.showWin(b)
@@ -175,6 +185,7 @@ func (m *bubbleManager) Pin(id int64) {
 			return
 		}
 		b.pinned = true
+		b.placement = nil // User-dragged windows keep their position after unpinning.
 		if b.offBlur != nil {
 			b.offBlur()
 			b.offBlur = nil
@@ -305,6 +316,7 @@ func (m *bubbleManager) windows() []*mygo.Window {
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
 		ID:                  b.id,
+		MaxHeight:           b.maxHeight,
 		ShowID:              b.showID,
 		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
 		ReqID:               b.reqID,
@@ -392,7 +404,7 @@ func (b *bubble) stopOutsideClick() {
 func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	id := m.nextID
 	m.nextID++
-	b := &bubble{id: id}
+	b := &bubble{id: id, maxHeight: bubbleMaxHeight}
 	b.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto",
 		URL:             fmt.Sprintf("/bubble.html?b=%d", id),
@@ -413,6 +425,8 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		BackgroundColor: "light-dark(#ffffff, #222325)",
 		Page:            mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 	})
+	b.win.OnResize(func() { m.reflow(b, true) })
+	b.win.OnMove(func() { m.reflow(b, false) })
 	// Once the bubble has focus, the blur listener can handle dismissal.
 	b.win.OnFocus(b.stopOutsideClick)
 	b.win.OnReadyToShow(func() {
@@ -490,26 +504,15 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 // when the grab could see the selection, beside the pointer for an OCR
 // shot, and an input bubble a quarter of the way down its display.
 func (m *bubbleManager) position(b *bubble, trigger string, anchor *Anchor) {
-	var x, y int
-	var work mygo.Rectangle
+	point := mygo.Screen.CursorScreenPoint()
 	if anchor != nil {
-		work = mygo.Screen.DisplayNearestPoint(mygo.Point{X: anchor.X, Y: anchor.Y}).WorkArea
-		x, y = anchor.X+16, anchor.Y+16
-	} else {
-		point := mygo.Screen.CursorScreenPoint()
-		work = mygo.Screen.DisplayNearestPoint(point).WorkArea
-		if trigger == "input" {
-			width, _ := b.win.Size()
-			x = work.X + (work.Width-width)/2
-			y = work.Y + work.Height/4
-		} else {
-			x, y = point.X+16, point.Y+16
-		}
+		point = mygo.Point{X: anchor.X, Y: anchor.Y}
 	}
+	work := mygo.Screen.DisplayNearestPoint(point).WorkArea
 	width, height := b.win.Size()
-	// Keep the bubble inside its display's work area.
-	x = min(max(x, work.X), work.X+max(work.Width-width, 0))
-	y = min(max(y, work.Y), work.Y+max(work.Height-height, 0))
+	placement := newBubblePlacement(work, point, trigger == "input", width)
+	b.placement = &placement
+	x, y := placement.position(width, height)
 	b.win.SetPosition(x, y)
 }
 
