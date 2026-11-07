@@ -36,6 +36,7 @@ jobs:
       - name: Prepare update notes
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft); then
             if [[ "$draft" != true ]]; then
@@ -46,13 +47,24 @@ jobs:
           else
             notes_file=$(mktemp)
             trap 'rm -f "$notes_file"' EXIT
-            env -u GH_TOKEN bunx changelogithub@15.0.5 --github "$GITHUB_REPOSITORY" \
-              --to "$GITHUB_REF_NAME" --output "$notes_file"
-            notes=$(cat "$notes_file")
+            bunx changelogithub@15.0.5 --github "$GITHUB_REPOSITORY" \
+              --to "$GITHUB_REF_NAME" --no-group --no-emoji --output "$notes_file"
+            notes=$(sed -E 's/^- \*\*[^*]+\*\*: /- /' "$notes_file")
+            printf '%s\n' "${notes:-Sotto $GITHUB_REF_NAME}" > "$notes_file"
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
           fi
           # MyGo treats level-two headings as the start of a new version.
           printf '## %s\n\n' "${GITHUB_REF_NAME#v}" > CHANGELOG.md
-          printf '%s\n' "${notes:-Sotto $GITHUB_REF_NAME}" | sed 's/^## /### /' >> CHANGELOG.md
+          printf '%s\n' "${notes:-Sotto $GITHUB_REF_NAME}" | sed -E \
+            -e 's/\r$//' \
+            -e 's/^## /### /; s/^- \*\*[^*]+\*\*: /- /' \
+            -e '/^- /s/[[:blank:]]+&nbsp;-&nbsp;.*$//' \
+            -e '/^##### .*\[View changes on GitHub\]\(https?:\/\//d' \
+            -e 's/[[:blank:]]*(&nbsp;[[:blank:]]*)+/ /g; s#</?samp>#`#g' \
+            -e 's/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' \
+            -e "s/&#39;/'/g" -e 's/&amp;/\&/g' \
+            -e 's/^(#{1,6}) +/\1 /' >> CHANGELOG.md
       - name: Install NSIS
         run: sudo apt-get update && sudo apt-get install -y nsis
       - name: Build signed updates and upload draft

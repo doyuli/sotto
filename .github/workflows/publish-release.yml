@@ -22,7 +22,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.tag }}
     steps:
-      - name: Verify draft and Windows assets
+      - name: Verify draft and synchronize update notes
         shell: bash
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
@@ -30,15 +30,26 @@ jobs:
             exit 1
           fi
 
-          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets)
+          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets,body)
           if ! jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft and (.isPrerelease | not)' <<< "$release" > /dev/null; then
             echo "$RELEASE_TAG must be an unpublished stable draft." >&2
             exit 1
           fi
 
+          release_body=$(jq -r '.body // ""' <<< "$release")
+          notes=$(printf '%s\n' "${release_body:-Sotto $RELEASE_TAG}" | sed -E \
+            -e 's/\r$//' \
+            -e 's/^## /### /; s/^- \*\*[^*]+\*\*: /- /' \
+            -e '/^- /s/[[:blank:]]+&nbsp;-&nbsp;.*$//' \
+            -e '/^##### .*\[View changes on GitHub\]\(https?:\/\//d' \
+            -e 's/[[:blank:]]*(&nbsp;[[:blank:]]*)+/ /g; s#</?samp>#`#g' \
+            -e 's/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g' \
+            -e "s/&#39;/'/g" -e 's/&amp;/\&/g' \
+            -e 's/^(#{1,6}) +/\1 /')
           version=${RELEASE_TAG#v}
           manifests=$(mktemp -d)
           trap 'rm -rf "$manifests"' EXIT
+          changed=()
           for arch in amd64 arm64; do
             archive="sotto-$version-windows-$arch.tar.gz"
             manifest="update-windows-$arch.json"
@@ -57,6 +68,25 @@ jobs:
               echo "$manifest does not match $archive." >&2
               exit 1
             fi
+            if ! jq -e --arg notes "$notes" '(.notes // "") == $notes' "$manifests/$manifest" > /dev/null; then
+              jq --arg notes "$notes" '.notes = $notes' "$manifests/$manifest" > "$manifests/$manifest.tmp"
+              mv "$manifests/$manifest.tmp" "$manifests/$manifest"
+              changed+=("$manifests/$manifest")
+            fi
           done
+          if (( ${#changed[@]} )); then
+            gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${changed[@]}"
+            mkdir "$manifests/verified"
+            for manifest in "${changed[@]}"; do
+              gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern "${manifest##*/}" --dir "$manifests/verified"
+              cmp "$manifest" "$manifests/verified/${manifest##*/}"
+            done
+          fi
+          current=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body,isDraft)
+          if ! jq -e --argjson original "$release" '.isDraft and (.body // "") == ($original.body // "")' <<< "$current" > /dev/null; then
+            echo "Release notes or draft status changed during synchronization; run this workflow again." >&2
+            exit 1
+          fi
       - name: Publish draft as Latest
         run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft=false --latest
