@@ -25,10 +25,14 @@ func (IndexTranslate) Name() string { return "index-translate" }
 func (IndexTranslate) Available(KeyStore, config.Settings) bool { return true }
 
 func (t IndexTranslate) Translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings) (Result, error) {
-	return t.Stream(ctx, req, k, cfg, nil)
+	return t.translate(ctx, req, k, cfg, false, nil)
 }
 
-func (t IndexTranslate) Stream(ctx context.Context, req Request, _ KeyStore, _ config.Settings, emit func(Result)) (Result, error) {
+func (t IndexTranslate) Stream(ctx context.Context, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
+	return t.translate(ctx, req, k, cfg, true, emit)
+}
+
+func (t IndexTranslate) translate(ctx context.Context, req Request, _ KeyStore, _ config.Settings, stream bool, emit func(Result)) (Result, error) {
 	const service = "B站翻译"
 	target := englishName(req.TargetLang)
 	if target == "" {
@@ -50,7 +54,7 @@ func (t IndexTranslate) Stream(ctx context.Context, req Request, _ KeyStore, _ c
 	if endpoint == "" {
 		endpoint = indexEndpoint
 	}
-	choice, err := requestChatCompletion(ctx, t.Client, endpoint, "", payload, service, func(text string) {
+	choice, err := requestChatCompletion(ctx, t.Client, endpoint, "", payload, service, stream, func(text string) {
 		if emit != nil {
 			emit(Result{Service: t.Name(), Text: strings.TrimSpace(text), Streaming: true})
 		}

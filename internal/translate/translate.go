@@ -42,10 +42,11 @@ type KeyStore interface {
 
 // Errors the bubble shows a message for; see UserMessage.
 var (
-	ErrNotConfigured = errors.New("service not configured")
-	ErrQuota         = errors.New("quota exceeded")
-	ErrAuth          = errors.New("invalid credentials")
-	ErrAccess        = errors.New("service access denied")
+	ErrNotConfigured     = errors.New("service not configured")
+	ErrQuota             = errors.New("quota exceeded")
+	ErrAuth              = errors.New("invalid credentials")
+	ErrAccess            = errors.New("service access denied")
+	ErrGenerationTimeout = errors.New("translation generation timed out")
 	// ErrSkip: this service has nothing to add to the request — the
 	// fan-out leaves it off the bubble instead of showing an error.
 	ErrSkip = errors.New("service skipped")
@@ -111,7 +112,8 @@ func Configured(cfg config.Settings, k KeyStore) []string {
 	return out
 }
 
-// Test sends a fixed request to one service, including when it is disabled.
+// Test checks a fixed, non-streaming translation, including disabled services.
+// A successful probe does not establish streaming support.
 func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
 	for _, t := range DefaultTranslators() {
 		if t.Name() == name {
@@ -228,9 +230,13 @@ func translateLong(ctx context.Context, t Translator, req Request, k KeyStore, c
 		var res Result
 		var err error
 		if streaming, ok := t.(StreamingTranslator); ok {
+			prefix := strings.Join(texts, "\n")
+			if len(texts) > 0 {
+				prefix += "\n"
+			}
 			res, err = streaming.Stream(ctx, r, k, cfg, func(partial Result) {
 				partial.Service, partial.Streaming = t.Name(), true
-				partial.Text = strings.Join(append(texts, partial.Text), "\n")
+				partial.Text = prefix + partial.Text
 				if emit != nil {
 					emit(partial)
 				}
@@ -331,6 +337,8 @@ func UserMessage(err error) string {
 		return "请在服务商控制台开通翻译服务并检查调用权限"
 	case errors.Is(err, ErrNotConfigured):
 		return "未配置"
+	case errors.Is(err, ErrGenerationTimeout):
+		return "生成超时，译文未完成，请重试"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "连接超时，请稍后重试"
 	case errors.As(err, &networkErr):

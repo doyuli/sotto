@@ -23,6 +23,7 @@ func TestOpenAITranslate(t *testing.T) {
 			t.Errorf("auth = %q", got)
 		}
 		var in struct {
+			Stream   bool   `json:"stream"`
 			Model    string `json:"model"`
 			Messages []struct {
 				Role    string `json:"role"`
@@ -31,6 +32,9 @@ func TestOpenAITranslate(t *testing.T) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			t.Errorf("bad request: %v", err)
+		}
+		if in.Stream {
+			t.Error("Translate must use a non-streaming request")
 		}
 		if in.Model != "m" {
 			t.Errorf("model = %q, want m", in.Model)

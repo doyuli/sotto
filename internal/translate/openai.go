@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -19,7 +21,7 @@ import (
 // which covers the many relays and local servers that speak the same
 // schema: baseURL and model are the user's to choose.
 type OpenAI struct {
-	Client *http.Client // nil: a client with a 30s timeout
+	Client *http.Client // nil: the shared client with connection/header timeouts
 }
 
 func (OpenAI) Name() string { return "openai" }
@@ -29,10 +31,14 @@ func (OpenAI) Available(k KeyStore, _ config.Settings) bool {
 }
 
 func (o OpenAI) Translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings) (Result, error) {
-	return o.Stream(ctx, req, k, cfg, nil)
+	return o.translate(ctx, req, k, cfg, false, nil)
 }
 
 func (o OpenAI) Stream(ctx context.Context, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
+	return o.translate(ctx, req, k, cfg, true, emit)
+}
+
+func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings, stream bool, emit func(Result)) (Result, error) {
 	key := k.Get(keys.OpenAIKey)
 	if key == "" {
 		return Result{}, ErrNotConfigured
@@ -63,7 +69,7 @@ func (o OpenAI) Stream(ctx context.Context, req Request, k KeyStore, cfg config.
 		},
 		"temperature": 0.1,
 	}
-	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", func(text string) {
+	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", stream, func(text string) {
 		if emit != nil {
 			emit(Result{Service: o.Name(), Text: cleanOpenAIText(text), Streaming: true})
 		}
@@ -83,7 +89,15 @@ type chatChoice struct {
 	} `json:"message"`
 }
 
-var defaultChatClient = &http.Client{Timeout: 30 * time.Second}
+var defaultChatClient = newChatClient()
+
+func newChatClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{Transport: transport}
+}
 
 const (
 	maxChatJSONBytes  = 1 << 20
@@ -92,11 +106,29 @@ const (
 )
 
 // requestChatCompletion shares the wire protocol between independent services.
-func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string, emit func(string)) (chatChoice, error) {
+func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, key string, payload map[string]any, service string, stream bool, emit func(string)) (choice chatChoice, resultErr error) {
+	ctx, activity := newChatActivity(ctx)
+	defer activity.stop()
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		// Cancellation can race a clean body EOF; keep the request's actual
+		// cause instead of misreporting that race as a broken stream.
+		if ctx.Err() != nil && !errors.Is(context.Cause(ctx), errChatIdleTimeout) {
+			resultErr = fmt.Errorf("%s：%w", service, ctx.Err())
+		}
+		var timeout net.Error
+		if errors.Is(context.Cause(ctx), errChatIdleTimeout) ||
+			(choice.Message.Content != "" && (errors.Is(resultErr, context.DeadlineExceeded) ||
+				(errors.As(resultErr, &timeout) && timeout.Timeout()))) {
+			resultErr = fmt.Errorf("%w: %w", ErrGenerationTimeout, resultErr)
+		}
+	}()
 	if client == nil {
 		client = defaultChatClient
 	}
-	payload["stream"] = true
+	payload["stream"] = stream
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return chatChoice{}, fmt.Errorf("%s：构造请求：%w", service, err)
@@ -109,12 +141,19 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 		httpReq.Header.Set("Authorization", "Bearer "+key)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	if stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	} else {
+		httpReq.Header.Set("Accept", "application/json")
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return chatChoice{}, fmt.Errorf("%s：%w", service, err)
 	}
 	defer resp.Body.Close()
+	// Receiving headers is not the first body byte: reasoning models may
+	// acknowledge the request long before they start sending any events.
+	activity.reset(chatFirstByteTimeout)
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return chatChoice{}, fmt.Errorf("%s：请求过于频繁，请稍后重试", service)
 	}
@@ -140,10 +179,13 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 	// Sniff the body since relays may omit or mislabel the content type.
 	// Bound retained events and text separately: repeated SSE metadata and
 	// discarded reasoning must not consume the translation's size budget.
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReader(chatActivityReader{Reader: resp.Body, activity: activity})
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return chatChoice{}, fmt.Errorf("%s：未返回译文", service)
+			}
 			return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
 		}
 		if b != ' ' && b != '\n' && b != '\r' && b != '\t' {
@@ -151,7 +193,13 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 			break
 		}
 	}
-	first, _ := reader.Peek(1)
+	first, err := reader.Peek(1)
+	if len(first) == 0 {
+		if err == nil || errors.Is(err, io.EOF) {
+			return chatChoice{}, fmt.Errorf("%s：未返回译文", service)
+		}
+		return chatChoice{}, fmt.Errorf("%s：读取响应：%w", service, err)
+	}
 	if first[0] == '{' {
 		var out struct {
 			Choices []chatChoice `json:"choices"`

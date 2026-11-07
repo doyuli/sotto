@@ -513,3 +513,16 @@ test.each(["settings", "keyring"] as const)("failed credential deletion (%s) ref
   expect(select<HTMLInputElement>(baiduToggle).disabled).toBe(true);
   expect(page.target.querySelector(clear)).toBeNull();
 });
+
+test("OpenAI connection success does not claim streaming was verified", async () => {
+  page.backend.secrets.set("openai-key", "key");
+  await openSettings();
+  await expand("openai");
+  const drawer = select("#configure-openai");
+  const probe = [...drawer.querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.trim() === "测试连接")!;
+  probe.click();
+  await settle();
+  expect(page.backend.calls("ConfigSvc.TestService")).toEqual([["openai"]]);
+  expect(drawer.querySelector('[role="status"]')?.textContent).toContain("连接成功（未验证流式输出）");
+});

@@ -22,12 +22,16 @@ func TestIndexTranslate(t *testing.T) {
 			t.Error("Index-Translate must not send OpenAI credentials")
 		}
 		var input struct {
+			Stream   bool
 			Model    string
 			Messages []struct{ Role, Content string }
 			Options  map[string]bool `json:"chat_template_kwargs"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Errorf("decode request: %v", err)
+		}
+		if input.Stream {
+			t.Error("Translate must use a non-streaming request")
 		}
 		if input.Model != "Index-Translate-35B-A3B" {
 			t.Errorf("unexpected model: %s", input.Model)
