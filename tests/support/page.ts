@@ -20,6 +20,7 @@ class MockBackend {
 
   bubble: BubbleState = {
     id: 1,
+    maxHeight: 760,
     showID: 1,
     sessionID: "test-session",
     generation: 1,

@@ -114,6 +114,7 @@ func (a *application) ready() {
 		a.entry.cancel()
 	})
 	a.bubbles = newBubbleManager(a.isQuitting)
+	mygo.Screen.OnDisplaysChanged(a.bubbles.refreshDisplays)
 	a.snip.isQuitting = a.isQuitting
 	if runtime.GOOS == "windows" {
 		// Start WebView2 initialization while the app is launching, before

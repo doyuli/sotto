@@ -22,6 +22,7 @@ export interface BubbleSettings {
  * is reused for a new query.
  */
 export interface BubbleState {
+  maxHeight: number;
   clipboardRecoveryID: string;
   showID: number;
   id: number;
@@ -271,6 +272,8 @@ export const SnipSvc = {
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
+  /** BubbleLayoutChanged updates the reading budget after a display or zoom change. */
+  bubbleLayoutChanged: event<number>("bubble-layout-changed"),
   runStopped: event<RunStoppedMsg>("run-stopped"),
   bubblePresented: event<BubblePresentedMsg>("bubble-presented"),
   /** BubbleReset re-initializes a reused bubble's page. */

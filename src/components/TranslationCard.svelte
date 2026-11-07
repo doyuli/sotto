@@ -66,9 +66,7 @@
         {/if}
       </div>
     {:else if card.status === "ok"}
-      <div class="card-scroll">
-        <div class="card-text">{card.text ?? ""}</div>
-      </div>
+      <div class="card-text">{card.text ?? ""}</div>
       <div class="card-tools">
         {#if card.formats?.length}
           {#each card.formats as f (f.style)}
@@ -106,20 +104,8 @@
 </div>
 
 <style>
-  .card-scroll::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .card-scroll::-webkit-scrollbar-thumb {
-    background: var(--scroll-thumb);
-    border-radius: 3px;
-  }
-
-  .card-scroll::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
   .card {
+    flex-shrink: 0;
     border-radius: 12px;
     background: var(--card-body);
     overflow: hidden;
@@ -169,15 +155,6 @@
   .card-body {
     background: var(--card-body);
     padding: 12px 14px 10px;
-  }
-
-  /* Each card body scrolls on its own once the translation is taller than
-     this; the title strip and tools stay put. */
-  .card-scroll {
-    max-height: 220px;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--scroll-thumb) transparent;
   }
 
   .card-text {
