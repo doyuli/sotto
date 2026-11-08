@@ -143,9 +143,7 @@ test("SiliconFlow and Zhipu save independent credentials and can both be enabled
     change(toggle, true);
     await settle();
     expect(select(enabledServices).querySelector(toggle)).not.toBeNull();
-    const testButton = [...select(`#configure-${name}`).querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.trim() === "测试连接")!;
-    testButton.click();
+    connectionTestButton(name).click();
     await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("连接成功"));
   }
   expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu", "siliconflow", "zhipu"]);
@@ -338,6 +336,52 @@ test("a failed save does not block a queued save or a probe of the final setting
   await vi.waitFor(() => expect(select("#configure-openai").textContent).toContain("连接成功"));
   expect(backend.calls("ConfigSvc.Set")).toHaveLength(2);
   expect(backend.calls("ConfigSvc.TestService")).toEqual([["openai"]]);
+});
+
+test("a save queued during a failed readback is not skipped", async () => {
+  const backend = page.backend;
+  backend.secrets.set("openai-key", "key");
+  await openSettings();
+  await expand("openai");
+  const readback = deferred<Settings>();
+  const call = backend.call.getMockImplementation()!;
+  let blockRead = false;
+  let blocked = false;
+  let fail = true;
+  backend.override("ConfigSvc.Get", () => {
+    if (blockRead) {
+      blockRead = false;
+      blocked = true;
+      return readback.promise;
+    }
+    return call("ConfigSvc.Get");
+  });
+  backend.override("ConfigSvc.Set", async (value) => {
+    if (fail) {
+      fail = false;
+      throw new Error("disk full");
+    }
+    return call("ConfigSvc.Set", value);
+  });
+  backend.override("ConfigSvc.TestService", () => {
+    expect(backend.settings.services.openai.model).toBe("failed-model");
+    expect(backend.settings.openAtLogin).toBe(true);
+    return "";
+  });
+
+  blockRead = true;
+  change("#openai-model", "failed-model");
+  await vi.waitFor(() => expect(blocked).toBe(true));
+  // Queue a second save while the failed write waits for its rollback read.
+  change(openAtLogin, true);
+  await tick();
+  readback.resolve(structuredClone(backend.settings));
+  await tick();
+  connectionTestButton("openai").click();
+  await vi.waitFor(() => expect(select("#configure-openai").textContent).toContain("连接成功"));
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(1);
+  expect(backend.settings.services.openai.model).toBe("failed-model");
+  expect(backend.settings.openAtLogin).toBe(true);
 });
 
 test("dragging a service preserves its drawer, drafts and enablement", async () => {

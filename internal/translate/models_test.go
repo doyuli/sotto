@@ -34,7 +34,7 @@ func TestConfiguredChatModels(t *testing.T) {
 		{"zhipu", "custom-model", "custom-model", false, false},
 	} {
 		for _, stream := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/%s/stream=%t", tc.service, tc.model, stream), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%q/stream=%t", tc.service, tc.model, stream), func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					var input struct {
 						Model          string
