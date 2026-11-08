@@ -196,9 +196,9 @@ func TestGoogleAvailableWithoutKey(t *testing.T) {
 	}
 }
 
-// SiliconFlow and Zhipu are the free-tier chat services; each may only be
-// enabled by its own key.
-func TestFreeServicesCredentials(t *testing.T) {
+// SiliconFlow and Zhipu both translate through requestChatCompletion; each
+// may only be enabled by its own key.
+func TestSiliconFlowZhipuCredentials(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"siliconflow", "zhipu"}
 	creds := fakeKeys{keys.OpenAIKey: "unrelated-openai-key"}
@@ -230,7 +230,7 @@ func TestFreeServicesCredentials(t *testing.T) {
 	}
 }
 
-func TestFreeServicesErrors(t *testing.T) {
+func TestSiliconFlowZhipuErrors(t *testing.T) {
 	for _, service := range []struct {
 		name, label, key string
 		translator       func(*httptest.Server) Translator
