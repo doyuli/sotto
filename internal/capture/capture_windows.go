@@ -5,6 +5,7 @@ package capture
 import (
 	"fmt"
 	"image"
+	"runtime"
 	"sync"
 
 	"syscall"
@@ -34,6 +35,7 @@ var (
 	procDeleteObject       = modGdi32.NewProc("DeleteObject")
 	procSelectObject       = modGdi32.NewProc("SelectObject")
 	procBitBlt             = modGdi32.NewProc("BitBlt")
+	procGdiFlush           = modGdi32.NewProc("GdiFlush")
 
 	procGetDpiForMonitor = modShcore.NewProc("GetDpiForMonitor")
 )
@@ -160,6 +162,9 @@ func grab(r Rect) (image.Image, error) {
 
 // bitBlt takes pw×ph physical pixels at px,py of the virtual screen.
 func bitBlt(px, py, pw, ph int) (image.Image, error) {
+	// GDI batches are thread-local; copy, flush and release on the same thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	screenDC, _, _ := procGetDC.Call(0)
 	if screenDC == 0 {
 		return nil, fmt.Errorf("capture: GetDC(0) failed")
@@ -184,15 +189,24 @@ func bitBlt(px, py, pw, ph int) (image.Image, error) {
 	if bmp == 0 || bits == 0 {
 		return nil, fmt.Errorf("capture: CreateDIBSection failed")
 	}
-	defer procDeleteObject.Call(bmp)
-
-	if prev, _, _ := procSelectObject.Call(memDC, bmp); prev == 0 {
+	prev, _, _ := procSelectObject.Call(memDC, bmp)
+	defer func() {
+		// Deselect the bitmap before deleting it.
+		if prev != 0 {
+			procSelectObject.Call(memDC, prev)
+		}
+		procDeleteObject.Call(bmp)
+	}()
+	if prev == 0 {
 		return nil, fmt.Errorf("capture: SelectObject failed")
 	}
 	// CAPTUREBLT brings layered windows along, at a flicker cost the
 	// one-shot grab can afford.
 	if r, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(pw), uintptr(ph), screenDC, uintptr(int32(px)), uintptr(int32(py)), srcCopy|captureBlt); r == 0 {
 		return nil, fmt.Errorf("capture: BitBlt failed")
+	}
+	if ok, _, _ := procGdiFlush.Call(); ok == 0 {
+		return nil, fmt.Errorf("capture: GdiFlush failed")
 	}
 
 	img := image.NewNRGBA(image.Rect(0, 0, pw, ph))

@@ -12,10 +12,6 @@ import (
 	"sotto/internal/ocr"
 )
 
-func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), d)
-}
-
 // Each display gets its own client coordinate space and DPI. A drag is bounded
 // to that display; cross-display text can be captured in separate shots.
 type snipManager struct {
