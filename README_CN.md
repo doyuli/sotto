@@ -53,7 +53,7 @@ Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论�
 | **DeepL** | API Key | 优质翻译，支持 Free 与 Pro Key |
 | **OpenAI 兼容** | API Key | 支持自定义 Base URL 与模型（DeepSeek、Moonshot、通义等） |
 | **硅基流动** | API Key | 免费翻译模型 `tencent/Hunyuan-MT-7B`，需完成实名认证 |
-| **智谱** | API Key | 免费模型 `glm-4.7-flash` |
+| **智谱** | API Key | 免费模型 `glm-4.5-flash` |
 | **火山引擎** | API Key | 字节跳动机器翻译服务 |
 | **百度翻译** | API Key | 通用文本翻译 |
 | **腾讯云 (TMT)** | API Key | 机器翻译开放接口 |

@@ -12,7 +12,8 @@ import (
 
 const (
 	zhipuEndpoint = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-	zhipuModel    = "glm-4.7-flash"
+	// BigModel may route this legacy model ID to its successor.
+	zhipuModel = "glm-4.5-flash"
 )
 
 // Zhipu uses the free GLM model with thinking disabled for short translations.

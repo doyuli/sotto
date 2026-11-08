@@ -53,7 +53,7 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 | **DeepL** | API Key | Supports both Free and Pro keys |
 | **OpenAI-Compatible** | API Key | Custom Base URL and model names (DeepSeek, Moonshot, Qwen, etc.) |
 | **SiliconFlow** | API Key | Free `tencent/Hunyuan-MT-7B` translation model; identity verification required |
-| **Zhipu** | API Key | Free `glm-4.7-flash` model |
+| **Zhipu** | API Key | Free `glm-4.5-flash` model |
 | **Volcengine (ByteDance)** | API Key | High-performance machine translation |
 | **Baidu Translate** | API Key | General text translation API |
 | **Tencent Cloud (TMT)** | API Key | Machine translation service |

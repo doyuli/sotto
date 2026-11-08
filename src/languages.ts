@@ -66,7 +66,7 @@ export const SERVICE_NAMES: Record<string, string> = {
 /** Optional notes shown in the translation service settings. */
 export const SERVICE_NOTES: Partial<Record<string, string>> = {
   siliconflow: "免费模型 tencent/Hunyuan-MT-7B；需实名认证并创建 API Key，调用受平台限流。",
-  zhipu: "使用免费模型 glm-4.7-flash；请在智谱开放平台创建 API Key，调用受平台限流。",
+  zhipu: "使用免费模型 glm-4.5-flash；请在智谱开放平台创建 API Key，调用受平台限流。",
   baidu: "凭证来自百度翻译开放平台的「开发者信息」；使用前需开通「通用文本翻译」。",
   volcengine: "凭证来自火山引擎访问控制；使用前需开通「机器翻译」，并确保该 Access Key 有调用权限。",
 };
