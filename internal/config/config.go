@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"sotto/internal/languages"
 	"sotto/internal/naming"
@@ -17,9 +18,22 @@ import (
 // ServiceSettings configures which translation services run, and the order
 // the bubble shows their cards in.
 type ServiceSettings struct {
-	Enabled []string      `json:"enabled"`
-	Order   []string      `json:"order"`
-	OpenAI  OpenAIOptions `json:"openai"`
+	Enabled     []string      `json:"enabled"`
+	Order       []string      `json:"order"`
+	OpenAI      OpenAIOptions `json:"openai"`
+	SiliconFlow ModelOptions  `json:"siliconflow"`
+	Zhipu       ModelOptions  `json:"zhipu"`
+}
+
+const (
+	DefaultSiliconFlowModel = "tencent/Hunyuan-MT-7B"
+	DefaultZhipuModel       = "glm-4.7-flash"
+)
+
+// ModelOptions configure a service whose API endpoint is fixed.
+// Credentials remain in the keyring.
+type ModelOptions struct {
+	Model string `json:"model"`
 }
 
 // OpenAIOptions configure the OpenAI-compatible service. Its API key is
@@ -70,9 +84,11 @@ type Settings struct {
 func Default() Settings {
 	return Settings{
 		Services: ServiceSettings{
-			Enabled: []string{"index-translate"},
-			Order:   []string{"index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "azure"},
-			OpenAI:  OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
+			Enabled:     []string{"index-translate"},
+			Order:       []string{"index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "azure"},
+			OpenAI:      OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
+			SiliconFlow: ModelOptions{Model: DefaultSiliconFlowModel},
+			Zhipu:       ModelOptions{Model: DefaultZhipuModel},
 		},
 		TargetLanguage: "zh-HANS",
 		Identifier:     IdentifierSettings{AutoSplit: true},
@@ -155,6 +171,14 @@ func Normalize(s Settings) Settings {
 	}
 	if s.Services.OpenAI.Model == "" {
 		s.Services.OpenAI.Model = d.Services.OpenAI.Model
+	}
+	s.Services.SiliconFlow.Model = strings.TrimSpace(s.Services.SiliconFlow.Model)
+	if s.Services.SiliconFlow.Model == "" {
+		s.Services.SiliconFlow.Model = d.Services.SiliconFlow.Model
+	}
+	s.Services.Zhipu.Model = strings.TrimSpace(s.Services.Zhipu.Model)
+	if s.Services.Zhipu.Model == "" {
+		s.Services.Zhipu.Model = d.Services.Zhipu.Model
 	}
 	if s.TargetLanguage != "auto" && !languages.Valid(s.TargetLanguage) {
 		s.TargetLanguage = d.TargetLanguage

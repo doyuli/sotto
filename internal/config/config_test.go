@@ -183,4 +183,38 @@ func TestNormalizePartialFile(t *testing.T) {
 	if got.AutoUpdate {
 		t.Error("legacy settings should keep automatic updates off")
 	}
+	if got.Services.SiliconFlow.Model != DefaultSiliconFlowModel || got.Services.Zhipu.Model != DefaultZhipuModel {
+		t.Errorf("legacy settings lost model defaults: %+v", got.Services)
+	}
+}
+
+func TestServiceModelsNormalizeAndRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name, siliconFlow, zhipu, wantSiliconFlow, wantZhipu string
+	}{
+		{"missing", "", "", DefaultSiliconFlowModel, DefaultZhipuModel},
+		{"whitespace", " \t", "\n ", DefaultSiliconFlowModel, DefaultZhipuModel},
+		{"custom", " Qwen/Qwen3-8B ", " glm-4.6 ", "Qwen/Qwen3-8B", "glm-4.6"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Services.SiliconFlow.Model = tc.siliconFlow
+			cfg.Services.Zhipu.Model = tc.zhipu
+			cfg = Normalize(cfg)
+			if cfg.Services.SiliconFlow.Model != tc.wantSiliconFlow || cfg.Services.Zhipu.Model != tc.wantZhipu {
+				t.Fatalf("normalized models = %+v", cfg.Services)
+			}
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, cfg) {
+				t.Errorf("round trip = %+v, want %+v", got, cfg)
+			}
+		})
+	}
 }

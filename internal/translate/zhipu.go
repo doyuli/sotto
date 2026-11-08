@@ -2,7 +2,6 @@ package translate
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -10,13 +9,9 @@ import (
 	"sotto/internal/keys"
 )
 
-const (
-	zhipuEndpoint = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-	// BigModel may route this legacy model ID to its successor.
-	zhipuModel = "glm-4.5-flash"
-)
+const zhipuEndpoint = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
-// Zhipu uses the free GLM model with thinking disabled for short translations.
+// Zhipu uses BigModel's chat API with an independently configured model.
 type Zhipu struct {
 	Client   *http.Client
 	Endpoint string // overrides the endpoint (tests)
@@ -36,7 +31,7 @@ func (z Zhipu) Stream(ctx context.Context, req Request, k KeyStore, cfg config.S
 	return z.translate(ctx, req, k, cfg, true, emit)
 }
 
-func (z Zhipu) translate(ctx context.Context, req Request, k KeyStore, _ config.Settings, stream bool, emit func(Result)) (Result, error) {
+func (z Zhipu) translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings, stream bool, emit func(Result)) (Result, error) {
 	const service = "智谱"
 	key := k.Get(keys.ZhipuKey)
 	if key == "" {
@@ -46,19 +41,21 @@ func (z Zhipu) translate(ctx context.Context, req Request, k KeyStore, _ config.
 	if target == "" {
 		return Result{}, unsupported(service, req.TargetLang)
 	}
-	direction := "into " + target
-	if source := englishName(req.SourceLang); source != "" {
-		direction = "from " + source + " " + direction
+	model := strings.TrimSpace(cfg.Services.Zhipu.Model)
+	if model == "" {
+		model = config.DefaultZhipuModel
 	}
 	payload := map[string]any{
-		"model": zhipuModel,
-		"messages": []map[string]string{
-			{"role": "system", "content": fmt.Sprintf("You are a translation engine. Translate the user's text %s. Reply with the translation only, with no explanation.", direction)},
-			{"role": "user", "content": req.Text},
-		},
-		// Reasoning delays the first translation token and is not shown in the bubble.
-		"thinking":    map[string]string{"type": "disabled"},
+		"model":       model,
+		"messages":    translationMessages(req, target),
 		"temperature": 0.1,
+	}
+	// Disable reasoning only for known hybrid text models. Other models keep
+	// their API defaults instead of receiving an unsupported parameter.
+	switch model {
+	case "glm-4.5", "glm-4.5-air", "glm-4.5-airx", "glm-4.5-flash", "glm-4.5-x",
+		"glm-4.6", "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx":
+		payload["thinking"] = map[string]string{"type": "disabled"}
 	}
 	endpoint := z.Endpoint
 	if endpoint == "" {
