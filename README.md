@@ -60,6 +60,8 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 | **Youdao** | API Key | NetEase Youdao translation API |
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
+> Translation and dictionary lookups use third-party services and send the relevant text to those providers. Some keyless integrations use unofficial or experimental endpoints. Availability, free quotas, and pricing follow each provider’s current policies. Translations are for reference only.
+
 > Open **Settings** from the tray menu to toggle services, reorder cards, and manage keys.
 
 ---
