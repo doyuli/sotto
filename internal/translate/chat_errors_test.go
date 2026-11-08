@@ -18,6 +18,7 @@ func TestChatRequestErrors(t *testing.T) {
 		{"Zhipu balance overrides rate limit", "智谱", `{"error":{"code":"1113","message":"private detail"}}`, "智谱：账户余额不足，请前往控制台充值", 429},
 		{"Zhipu numeric model code", "智谱", `{"error":{"code":1211}}`, "智谱：模型不存在，请检查模型名称", 400},
 		{"Zhipu access", "智谱", `{"error":{"code":"1220"}}`, "智谱：无调用权限，请检查服务配置", 403},
+		{"Zhipu expired token", "智谱", `{"error":{"code":"1003"}}`, "凭证无效，请检查设置", 401},
 		{"Zhipu quota", "智谱", `{"error":{"code":"1310"}}`, "智谱：调用额度已用完，请检查服务商控制台", 429},
 		{"Zhipu overload", "智谱", `{"error":{"code":"1305"}}`, "智谱：服务暂时不可用，请稍后重试", 429},
 		{"Zhipu input too long", "智谱", `{"error":{"code":"1261"}}`, "智谱：原文过长，请缩短后重试", 400},
@@ -27,11 +28,13 @@ func TestChatRequestErrors(t *testing.T) {
 		{"SiliconFlow balance", "硅基流动", `{"code":30001}`, "硅基流动：账户余额不足，请前往控制台充值", 402},
 		{"SiliconFlow access", "硅基流动", `{"message":"private detail"}`, "硅基流动：无调用权限，请检查服务配置", 403},
 		{"OpenAI model access", "OpenAI", `{"error":{"code":"model_not_found"}}`, "OpenAI：模型不可用，请检查模型名称与调用权限", 404},
+		{"OpenAI context length", "OpenAI", `{"error":{"code":"context_length_exceeded"}}`, "OpenAI：原文过长，请缩短后重试", 400},
 		{"OpenAI balance before quota type", "OpenAI", `{"error":{"code":"credit_balance_exhausted","type":"insufficient_quota"}}`, "OpenAI：账户余额不足，请前往控制台充值", 429},
 		{"OpenAI quota code", "OpenAI", `{"error":{"code":"insufficient_quota"}}`, "OpenAI：调用额度已用完，请检查服务商控制台", 429},
 		{"OpenAI quota type", "OpenAI", `{"error":{"code":null,"type":"insufficient_quota"}}`, "OpenAI：调用额度已用完，请检查服务商控制台", 429},
 		{"OpenAI spend limit", "OpenAI", `{"error":{"code":"project_spend_limit_exceeded"}}`, "OpenAI：调用额度已用完，请检查服务商控制台", 429},
 		{"OpenAI slow down", "OpenAI", `{"error":{"code":"slow_down"}}`, "OpenAI：请求过于频繁，请稍后重试", 429},
+		{"OpenAI payment required", "OpenAI", `{"error":{"message":"private detail"}}`, "OpenAI：账户余额不足，请前往控制台充值", 402},
 		{"bad credentials", "OpenAI", `{"error":{"message":"private key"}}`, "凭证无效，请检查设置", 401},
 		{"unknown model is not inferred from status", "OpenAI", `{"error":{"code":"unknown","message":"private detail"}}`, "OpenAI：请求失败（HTTP 404）", 404},
 		{"numeric codes are provider specific", "智谱", `{"code":20012}`, "智谱：请求失败（HTTP 400）", 400},
@@ -42,6 +45,7 @@ func TestChatRequestErrors(t *testing.T) {
 		{"JSON failure with successful status", "智谱", `{"error":{"code":"1113"}}`, "智谱：账户余额不足，请前往控制台充值", 200},
 		{"flat JSON failure with successful status", "硅基流动", `{"code":20012,"message":"private detail"}`, "硅基流动：模型不存在，请检查模型名称", 200},
 		{"unknown successful status error", "OpenAI", `{"error":{"message":"private detail"}}`, "OpenAI：生成中断，请重试", 200},
+		{"zero code is not an error", "OpenAI", `{"code":0,"choices":[]}`, "OpenAI：空响应", 200},
 		{"anonymous billing details ignored", "B站翻译", `{"error":{"code":"credit_balance_exhausted"}}`, "B站翻译：请求失败（HTTP 402）", 402},
 		{"anonymous JSON error ignored", "B站翻译", `{"error":{"code":"invalid_api_key"}}`, "B站翻译：生成中断，请重试", 200},
 	} {
@@ -64,16 +68,19 @@ func TestChatRequestErrors(t *testing.T) {
 }
 
 func TestChatStreamErrorMessagesKeepPartialText(t *testing.T) {
-	for _, tc := range []struct{ service, error, want string }{
-		{"智谱", `{"error":{"code":"1113","message":"private"}}`, "智谱：账户余额不足，请前往控制台充值"},
-		{"硅基流动", `{"error":{"code":20012,"message":"private"}}`, "硅基流动：模型不存在，请检查模型名称"},
-		{"OpenAI", `{"error":{"type":"insufficient_quota","message":"private"}}`, "OpenAI：调用额度已用完，请检查服务商控制台"},
-		{"B站翻译", `{"error":{"code":"invalid_api_key","message":"private"}}`, "B站翻译：生成中断，请重试"},
+	for _, tc := range []struct {
+		service, error, want string
+		anonymous            bool
+	}{
+		{"智谱", `{"error":{"code":"1113","message":"private"}}`, "智谱：账户余额不足，请前往控制台充值", false},
+		{"硅基流动", `{"error":{"code":20012,"message":"private"}}`, "硅基流动：模型不存在，请检查模型名称", false},
+		{"OpenAI", `{"error":{"type":"insufficient_quota","message":"private"}}`, "OpenAI：调用额度已用完，请检查服务商控制台", false},
+		{"B站翻译", `{"error":{"code":"invalid_api_key","message":"private"}}`, "B站翻译：生成中断，请重试", true},
 	} {
 		t.Run(tc.service, func(t *testing.T) {
 			body := "data: {\"choices\":[{\"delta\":{\"content\":\"已有译文\"}}]}\n\ndata: " + tc.error + "\n\n"
 			var progress []string
-			choice, err := readChatStream(strings.NewReader(body), tc.service, func(text string) { progress = append(progress, text) })
+			choice, err := readChatStream(strings.NewReader(body), tc.service, tc.anonymous, func(text string) { progress = append(progress, text) })
 			if choice.Message.Content != "已有译文" || len(progress) != 1 || progress[0] != "已有译文" || UserMessage(err) != tc.want {
 				t.Fatalf("choice = %+v, progress = %v, err = %v", choice, progress, err)
 			}
@@ -95,7 +102,7 @@ func TestChatErrorBodyLimit(t *testing.T) {
 	if got := UserMessage(err); got != "硅基流动：请求失败（HTTP 400）" {
 		t.Errorf("limited message = %q", got)
 	}
-	if got := UserMessage(chatResponseError("硅基流动", 200, []byte(body))); got != "硅基流动：生成中断，请重试" {
+	if got := UserMessage(chatResponseError("硅基流动", 200, false, []byte(body))); got != "硅基流动：生成中断，请重试" {
 		t.Errorf("oversized JSON/SSE message = %q", got)
 	}
 }

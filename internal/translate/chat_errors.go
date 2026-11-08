@@ -11,9 +11,9 @@ const maxChatErrorBytes = 16 << 10
 // chatResponseError maps documented codes before HTTP status: a 429 may mean
 // exhausted credits rather than a temporary rate limit. Never echo messages,
 // which compatible gateways may fill with credentials, input text, or HTML.
-func chatResponseError(service string, status int, body []byte) error {
+func chatResponseError(service string, status int, anonymous bool, body []byte) error {
 	message := ""
-	if service == "B站翻译" {
+	if anonymous {
 		// Anonymous users cannot fix the gateway's model, billing, or credentials.
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
 			message = "暂时无法匿名访问，请稍后重试或切换翻译服务"
@@ -68,6 +68,8 @@ func chatResponseError(service string, status int, body []byte) error {
 					return fmt.Errorf("%s：%w", service, ErrAuth)
 				case "model_not_found":
 					message = "模型不可用，请检查模型名称与调用权限"
+				case "context_length_exceeded":
+					message = "原文过长，请缩短后重试"
 				case "credit_balance_exhausted":
 					message = "账户余额不足，请前往控制台充值"
 				case "insufficient_quota", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
@@ -87,7 +89,7 @@ func chatResponseError(service string, status int, body []byte) error {
 		switch {
 		case status == http.StatusUnauthorized:
 			return fmt.Errorf("%s：%w", service, ErrAuth)
-		case status == http.StatusPaymentRequired && service != "B站翻译":
+		case status == http.StatusPaymentRequired && !anonymous:
 			message = "账户余额不足，请前往控制台充值"
 		case status == http.StatusForbidden:
 			message = "无调用权限，请检查服务配置"

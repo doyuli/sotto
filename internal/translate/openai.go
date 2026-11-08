@@ -162,7 +162,7 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 				return chatChoice{}, fmt.Errorf("%s：读取错误响应：%w", service, err)
 			}
 		}
-		return chatChoice{}, chatResponseError(service, resp.StatusCode, body)
+		return chatChoice{}, chatResponseError(service, resp.StatusCode, key == "", body)
 	}
 	// Some compatible endpoints ignore stream and return a regular JSON body.
 	// Sniff the body since relays may omit or mislabel the content type.
@@ -206,22 +206,23 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 			return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
 		}
 		if len(out.Error) > 0 && string(out.Error) != "null" {
-			return chatChoice{}, chatResponseError(service, http.StatusOK, body)
+			return chatChoice{}, chatResponseError(service, http.StatusOK, key == "", body)
 		}
 		if len(out.Choices) == 0 {
-			if len(out.Code) > 0 && string(out.Code) != "null" {
-				return chatChoice{}, chatResponseError(service, http.StatusOK, body)
+			// Some gateways use code 0 for success; only a non-zero code is an error.
+			if code := strings.Trim(string(out.Code), `"`); code != "" && code != "null" && code != "0" {
+				return chatChoice{}, chatResponseError(service, http.StatusOK, key == "", body)
 			}
 			return chatChoice{}, fmt.Errorf("%s：空响应", service)
 		}
 		return out.Choices[0], chatCompletionError(out.Choices[0], service)
 	}
-	return readChatStream(reader, service, emit)
+	return readChatStream(reader, service, key == "", emit)
 }
 
 // Each callback is a cumulative snapshot, so Ready can restore a stream without
 // replaying tokens. Only content from the first choice is translation text.
-func readChatStream(reader io.Reader, service string, emit func(string)) (chatChoice, error) {
+func readChatStream(reader io.Reader, service string, anonymous bool, emit func(string)) (chatChoice, error) {
 	var choice chatChoice
 	var text strings.Builder
 	var data strings.Builder
@@ -250,7 +251,7 @@ func readChatStream(reader io.Reader, service string, emit func(string)) (chatCh
 			return false, fmt.Errorf("%s：解析流式响应：%w", service, err)
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-			return false, chatResponseError(service, http.StatusOK, []byte(payload))
+			return false, chatResponseError(service, http.StatusOK, anonymous, []byte(payload))
 		}
 		for _, part := range chunk.Choices {
 			if part.Index != 0 {
