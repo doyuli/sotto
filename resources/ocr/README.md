@@ -1,6 +1,6 @@
 # Offline OCR
 
-Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. Chinese and English use the local models first; other explicit language tags use Windows.Media.Ocr.
+Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. All requests try the multilingual local models first. An explicit language tag is passed to Windows.Media.Ocr only if fallback is needed.
 
 ## Resources
 
