@@ -6,10 +6,12 @@ import "github.com/egoist/mygo"
 
 // The keyring entries, by service.
 const (
-	DeeplKey   = "deepl-key"
-	OpenAIKey  = "openai-key"
-	BaiduAppID = "baidu-appid"
-	BaiduKey   = "baidu-key"
+	DeeplKey       = "deepl-key"
+	OpenAIKey      = "openai-key"
+	SiliconFlowKey = "siliconflow-key"
+	ZhipuKey       = "zhipu-key"
+	BaiduAppID     = "baidu-appid"
+	BaiduKey       = "baidu-key"
 
 	TencentSecretID  = "tencent-secretid"
 	TencentSecretKey = "tencent-secretkey"
@@ -23,7 +25,7 @@ const (
 
 // Names lists every keyring entry, so the settings page can enumerate them.
 var Names = []string{
-	DeeplKey, OpenAIKey, BaiduAppID, BaiduKey,
+	DeeplKey, OpenAIKey, SiliconFlowKey, ZhipuKey, BaiduAppID, BaiduKey,
 	TencentSecretID, TencentSecretKey, YoudaoAppKey, YoudaoSecret, AzureKey, AzureRegion,
 	VolcAccessKey, VolcSecretKey,
 }

@@ -16,7 +16,7 @@ import (
 )
 
 func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
-	for _, name := range []string{"openai", "index-translate"} {
+	for _, name := range []string{"openai", "index-translate", "siliconflow", "zhipu"} {
 		t.Run(name, func(t *testing.T) {
 			first := make(chan Result, 3)
 			release := make(chan struct{})
@@ -47,11 +47,17 @@ func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
 			if name == "index-translate" {
 				translator = IndexTranslate{Client: server.Client(), Endpoint: server.URL}
 			}
+			if name == "siliconflow" {
+				translator = SiliconFlow{Client: server.Client(), Endpoint: server.URL}
+			}
+			if name == "zhipu" {
+				translator = Zhipu{Client: server.Client(), Endpoint: server.URL}
+			}
 			var updates []Result
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				RunWith(ctx, []Translator{translator}, cfg, fakeKeys{keys.OpenAIKey: "test"}, Request{Text: "hello", TargetLang: "zh-HANS"}, func(res Result) {
+				RunWith(ctx, []Translator{translator}, cfg, fakeKeys{keys.OpenAIKey: "test", keys.SiliconFlowKey: "silicon", keys.ZhipuKey: "zhipu"}, Request{Text: "hello", TargetLang: "zh-HANS"}, func(res Result) {
 					updates = append(updates, res)
 					if res.Streaming {
 						first <- res
@@ -60,7 +66,7 @@ func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
 			}()
 			select {
 			case res := <-first:
-				if res.Text != "你好" || !res.Streaming || res.Err != "" {
+				if res.Service != name || res.Text != "你好" || !res.Streaming || res.Err != "" {
 					t.Errorf("first = %+v", res)
 				}
 			case <-ctx.Done():
@@ -80,7 +86,7 @@ func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
 				t.Fatalf("updates = %+v", updates)
 			}
 			last := updates[len(updates)-1]
-			if last.Text != "你好，世界" || last.Streaming || last.Err != "" {
+			if last.Service != name || last.Text != "你好，世界" || last.Streaming || last.Err != "" {
 				t.Errorf("terminal = %+v", last)
 			}
 		})

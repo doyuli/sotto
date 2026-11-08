@@ -47,11 +47,13 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 | Service | Type | Notes |
 | --- | --- | --- |
-| **Google Translate** | Keyless | Ready out of the box |
+| **Google Translate** | Keyless | Optional keyless endpoint; disabled by default |
 | **Bilibili (Index)** | Keyless | Experimental keyless endpoint |
 | **Dictionary** | Keyless | Displays phonetics and definitions for English words |
 | **DeepL** | API Key | Supports both Free and Pro keys |
 | **OpenAI-Compatible** | API Key | Custom Base URL and model names (DeepSeek, Moonshot, Qwen, etc.) |
+| **SiliconFlow** | API Key | Free `tencent/Hunyuan-MT-7B` translation model; identity verification required |
+| **Zhipu** | API Key | Free `glm-4.7-flash` model |
 | **Volcengine (ByteDance)** | API Key | High-performance machine translation |
 | **Baidu Translate** | API Key | General text translation API |
 | **Tencent Cloud (TMT)** | API Key | Machine translation service |

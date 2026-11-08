@@ -30,7 +30,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 
 ## Capabilities and Constraints
 
-- Services: DeepL, any OpenAI-compatible endpoint, Baidu, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx), plus a dictionary card for lone English words.
+- Services: Bilibili IndexTranslate, SiliconFlow (Hunyuan-MT-7B), Zhipu (GLM-4.7-Flash), DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx, disabled by default), plus a dictionary card for lone English words. Only IndexTranslate is enabled by default; SiliconFlow and Zhipu each use their own API key.
 - Selection via UIA with a clipboard fallback; OCR via PP-OCR with Windows.Media.Ocr fallback.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.

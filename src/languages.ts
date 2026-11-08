@@ -51,6 +51,8 @@ export function speechTag(code: string): string {
 export const SERVICE_NAMES: Record<string, string> = {
   deepl: "DeepL",
   openai: "OpenAI",
+  siliconflow: "硅基流动",
+  zhipu: "智谱",
   baidu: "百度翻译",
   volcengine: "火山引擎",
   tencent: "腾讯云",
@@ -63,6 +65,8 @@ export const SERVICE_NAMES: Record<string, string> = {
 
 /** Optional notes shown in the translation service settings. */
 export const SERVICE_NOTES: Partial<Record<string, string>> = {
+  siliconflow: "免费模型 tencent/Hunyuan-MT-7B；需实名认证并创建 API Key，调用受平台限流。",
+  zhipu: "使用免费模型 glm-4.7-flash；请在智谱开放平台创建 API Key，调用受平台限流。",
   baidu: "凭证来自百度翻译开放平台的「开发者信息」；使用前需开通「通用文本翻译」。",
   volcengine: "凭证来自火山引擎访问控制；使用前需开通「机器翻译」，并确保该 Access Key 有调用权限。",
 };
@@ -71,6 +75,8 @@ export const SERVICE_NOTES: Partial<Record<string, string>> = {
 export const SERVICE_CREDENTIALS: Record<string, { name: string; label: string; placeholder: string }[]> = {
   deepl: [{ name: "deepl-key", label: "API Key", placeholder: "免费版以 :fx 结尾" }],
   openai: [{ name: "openai-key", label: "API Key", placeholder: "sk-…" }],
+  siliconflow: [{ name: "siliconflow-key", label: "API Key", placeholder: "硅基流动控制台 API Key" }],
+  zhipu: [{ name: "zhipu-key", label: "API Key", placeholder: "智谱开放平台 API Key" }],
   baidu: [
     { name: "baidu-appid", label: "APP ID", placeholder: "控制台 APP ID" },
     { name: "baidu-key", label: "密钥", placeholder: "控制台密钥" },

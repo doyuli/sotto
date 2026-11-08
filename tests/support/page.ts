@@ -62,6 +62,8 @@ class MockBackend {
           configured: [
             "index-translate", "google",
             ...(this.secrets.has("openai-key") ? ["openai"] : []),
+            ...(this.secrets.has("siliconflow-key") ? ["siliconflow"] : []),
+            ...(this.secrets.has("zhipu-key") ? ["zhipu"] : []),
             ...(this.secrets.has("baidu-appid") && this.secrets.has("baidu-key") ? ["baidu"] : []),
           ],
           stored: [...this.secrets.keys()],

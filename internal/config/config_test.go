@@ -28,8 +28,8 @@ func TestDefault(t *testing.T) {
 	if len(s.CopyFormats) == 0 {
 		t.Error("copy formats must default to a list")
 	}
-	if !reflect.DeepEqual(s.Services.Enabled, []string{"index-translate", "google"}) {
-		t.Errorf("enabled = %v, want Index-Translate and Google", s.Services.Enabled)
+	if !reflect.DeepEqual(s.Services.Enabled, []string{"index-translate"}) {
+		t.Errorf("enabled = %v, want only Index-Translate", s.Services.Enabled)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 	if !reflect.DeepEqual(got.Services.Enabled, []string{"deepl", "potato"}) {
 		t.Errorf("enabled = %v", got.Services.Enabled)
 	}
-	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "index-translate", "google", "baidu", "volcengine", "openai", "tencent", "youdao", "azure"}) {
+	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "openai", "tencent", "youdao", "azure"}) {
 		t.Errorf("order = %v, want enabled and built-in services appended", got.Services.Order)
 	}
 	if got.Hotkeys.Ocr != "Ctrl+Alt+S" {
