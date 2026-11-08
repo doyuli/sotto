@@ -2,34 +2,43 @@ name: Publish release
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Stable release tag, for example v0.1.2
-        required: true
-        type: string
 
 permissions:
   contents: write
 
-concurrency:
-  group: release-refs/tags/${{ inputs.tag }}
-
 jobs:
-  publish:
+  version:
     if: github.repository == 'doyuli/sotto' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read release version
+        id: version
+        shell: bash
+        run: |
+          version=$(jq -er '.version | strings' package.json)
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected a stable version in package.json in the form X.Y.Z." >&2
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: version
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-refs/tags/${{ needs.version.outputs.tag }}
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
     steps:
       - name: Verify draft and synchronize update notes
         shell: bash
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Expected a stable tag in the form vX.Y.Z." >&2
-            exit 1
-          fi
-
           release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets,body)
           if ! jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft and (.isPrerelease | not)' <<< "$release" > /dev/null; then
             echo "$RELEASE_TAG must be an unpublished stable draft." >&2
