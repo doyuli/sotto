@@ -1,10 +1,16 @@
 # Offline OCR
 
-Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. Its published 50-language scope covers Simplified/Traditional Chinese, English, Japanese, and 46 Latin-script languages, not all languages. Requests without a language hint and explicit supported languages try the local models first. Unsupported explicit languages (such as Korean, Russian, Arabic, and Thai) go directly to Windows.Media.Ocr and require an installed OCR language pack. The requested language tag is retained when system fallback is needed.
+Sotto uses PaddleOCR's PP-OCRv6 small models, executed locally on CPU by ONNX Runtime 1.31.1. The [PaddleOCR model documentation](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/algorithm/PP-OCRv6/PP-OCRv6.en.md) defines their 50-language scope: Simplified/Traditional Chinese, English, Japanese, and 46 Latin-script languages. This does not cover all languages.
 
-Routing follows the [pinned RapidOCR v3.10.0 model routes](https://github.com/RapidAI/RapidOCR/blob/v3.10.0/python/rapidocr/default_models.yaml). Explicit non-Latin script variants of the Latin languages are excluded; Serbian requires `sr-Latn`. The recognition dictionary and model output classes are fixed together; adding dictionary entries alone cannot add language support.
+Sotto implements language routing within that model scope. Requests without a language hint and explicit supported languages try PPOCR first. Unsupported explicit languages (such as Korean, Russian, Arabic, and Thai) go directly to Windows.Media.Ocr and require an installed OCR language pack. The requested language tag is retained when system fallback is needed.
+
+Non-Latin script variants of the Latin languages are excluded, including regional defaults such as `az-IR`, `az-RU`, `uz-AF`, `uz-CN`, and `ku-IQ` from [Unicode CLDR](https://github.com/unicode-org/cldr-json/blob/main/cldr-json/cldr-core/supplemental/likelySubtags.json). Explicit scripts take precedence: `az-Latn-IR` can use PPOCR. Serbian requires `sr-Latn`. The recognition dictionary and model output classes are fixed together; adding dictionary entries alone cannot add language support.
+
+Tags with an extlang subtag (such as `ms-zsm-Arab-MY`) go directly to Windows OCR: Sotto does not infer the model's support for a more specific language from the primary language tag. Numeric regions such as `es-419` continue to use the normal language routing.
 
 ## Resources
+
+The ONNX models and matching dictionary are distributed by [RapidOCR v3.10.0](https://github.com/RapidAI/RapidOCR/blob/v3.10.0/python/rapidocr/default_models.yaml). RapidOCR is the resource source, not the inference engine or Sotto's routing implementation.
 
 | File | Purpose |
 |---|---|
