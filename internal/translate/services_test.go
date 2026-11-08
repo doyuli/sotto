@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -191,5 +193,71 @@ func TestGoogleTranslate(t *testing.T) {
 func TestGoogleAvailableWithoutKey(t *testing.T) {
 	if !(Google{}).Available(fakeKeys{}, config.Settings{}) {
 		t.Error("google should always be available")
+	}
+}
+
+// SiliconFlow and Zhipu are the free-tier chat services; each may only be
+// enabled by its own key.
+func TestFreeServicesCredentials(t *testing.T) {
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"siliconflow", "zhipu"}
+	creds := fakeKeys{keys.OpenAIKey: "unrelated-openai-key"}
+	if got := Available(cfg, creds); len(got) != 0 {
+		t.Fatalf("OpenAI credentials enabled other services: %v", got)
+	}
+	for _, tc := range []struct {
+		service Translator
+		key     string
+	}{
+		{SiliconFlow{}, keys.SiliconFlowKey},
+		{Zhipu{}, keys.ZhipuKey},
+	} {
+		_, err := tc.service.Translate(context.Background(), Request{Text: "hello", TargetLang: "en"}, creds, cfg)
+		if !errors.Is(err, ErrNotConfigured) {
+			t.Errorf("%s missing key: %v", tc.service.Name(), err)
+		}
+		creds[tc.key] = "own-key"
+		if !tc.service.Available(creds, cfg) || !slices.Contains(Configured(cfg, creds), tc.service.Name()) {
+			t.Errorf("%s not configured with its own key", tc.service.Name())
+		}
+	}
+	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"siliconflow", "zhipu"}) {
+		t.Errorf("available = %v", got)
+	}
+	delete(creds, keys.SiliconFlowKey)
+	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"zhipu"}) {
+		t.Errorf("removing SiliconFlow key affected Zhipu: %v", got)
+	}
+}
+
+func TestFreeServicesErrors(t *testing.T) {
+	for _, service := range []struct {
+		name, label, key string
+		translator       func(*httptest.Server) Translator
+	}{
+		{"siliconflow", "硅基流动", keys.SiliconFlowKey, func(s *httptest.Server) Translator { return SiliconFlow{Client: s.Client(), Endpoint: s.URL} }},
+		{"zhipu", "智谱", keys.ZhipuKey, func(s *httptest.Server) Translator { return Zhipu{Client: s.Client(), Endpoint: s.URL} }},
+	} {
+		for _, tc := range []struct {
+			name, body, want string
+			status           int
+		}{
+			{"auth", `{"error":{"message":"private detail"}}`, "凭证无效，请检查设置", 401},
+			{"rate limit", `{"error":{"message":"private detail"}}`, service.label + "：请求过于频繁，请稍后重试", 429},
+			{"empty", `{"choices":[{"finish_reason":"stop","message":{"content":""}}]}`, service.label + "：未返回译文", 200},
+			{"truncated", `{"choices":[{"finish_reason":"length","message":{"content":"已有译文"}}]}`, service.label + "：译文被截断，请缩短原文后重试", 200},
+		} {
+			t.Run(service.name+"/"+tc.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(tc.status)
+					fmt.Fprint(w, tc.body)
+				}))
+				defer server.Close()
+				_, err := service.translator(server).Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"}, fakeKeys{service.key: "own-key"}, config.Default())
+				if got := UserMessage(err); got != tc.want {
+					t.Errorf("error = %q, want %q", got, tc.want)
+				}
+			})
+		}
 	}
 }
