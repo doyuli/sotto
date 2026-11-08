@@ -16,10 +16,6 @@ import (
 
 type recognizeFunc func(context.Context, image.Image, string) (Text, error)
 
-func localLanguage(lang string) bool {
-	lang = strings.ToLower(strings.TrimSpace(lang))
-	return lang == "" || lang == "zh" || strings.HasPrefix(lang, "zh-") || lang == "en" || strings.HasPrefix(lang, "en-")
-}
 func recognizeEngines(ctx context.Context, img image.Image, lang string, local, system recognizeFunc) (result Text, err error) {
 	var attempts []EngineAttempt
 	defer func() { result.Attempts = attempts }()
@@ -41,6 +37,8 @@ func recognizeEngines(ctx context.Context, img image.Image, lang string, local, 
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
+	// Unsupported explicit languages cannot be recognized by the fixed local
+	// model and dictionary. Skip it rather than trusting a wrong-script result.
 	if !localLanguage(lang) {
 		t, err := run("winrt", system)
 		if err != nil {

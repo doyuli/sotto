@@ -54,8 +54,10 @@ func Recognize(ctx context.Context, img image.Image) (Text, error) {
 	return RecognizeWith(ctx, img, "")
 }
 
-// RecognizeWith honors an explicit BCP-47 language tag. The gate also makes
-// cancellation responsive while an earlier native inference is still running.
+// RecognizeWith tries the local model for an empty or supported BCP-47 language
+// hint; unsupported explicit languages go directly to system OCR. The hint is
+// retained for system fallback. The gate also makes cancellation responsive
+// while an earlier native inference is still running.
 func RecognizeWith(ctx context.Context, img image.Image, lang string) (result Text, err error) {
 	start := time.Now()
 	defer func() {

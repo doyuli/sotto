@@ -121,8 +121,36 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 		{"good local", "", good, nil, nil, "local", 1, 0, nil},
 		{"explicit english", "en-US", good, nil, nil, "local", 1, 0, nil},
 		{"explicit chinese", "ZH-hans", good, nil, nil, "local", 1, 0, nil},
-		{"explicit japanese", "ja", good, nil, nil, "winrt", 0, 1, nil},
-		{"bad prefix", "english", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit japanese", "ja", good, nil, nil, "local", 1, 0, nil},
+		{"explicit french", "fr-FR", good, nil, nil, "local", 1, 0, nil},
+		{"explicit vietnamese", "vi-VN", good, nil, nil, "local", 1, 0, nil},
+		{"explicit serbian latin", "sr-Latn-RS", good, nil, nil, "local", 1, 0, nil},
+		{"explicit korean", "ko-KR", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit russian", "ru", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit arabic", "ar", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit thai", "th", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit cyrillic variant", "az-Cyrl", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional arabic azeri", "az-IR", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional cyrillic azeri", "az-RU", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional arabic uzbek", "uz-AF", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional cyrillic uzbek", "uz-CN", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional arabic kurdish", "ku-IQ", good, nil, nil, "winrt", 0, 1, nil},
+		{"regional arabic malay", "ms-CC", good, nil, nil, "winrt", 0, 1, nil},
+		{"extlang arabic malay", "ms-zsm-Arab-MY", good, nil, nil, "winrt", 0, 1, nil},
+		{"extlang regional malay", "ms-zsm-CC", good, nil, nil, "winrt", 0, 1, nil},
+		{"extlang missing system", "ms-zsm-Arab-MY", good, nil, failure, "", 0, 1, failure},
+		{"extlang system canceled", "ms-zsm-CC", good, nil, context.Canceled, "", 0, 1, context.Canceled},
+		{"numeric region", "es-419", good, nil, nil, "local", 1, 0, nil},
+		{"explicit latin overrides region", "az-Latn-IR", good, nil, nil, "local", 1, 0, nil},
+		{"regional missing system", "az-IR", good, nil, failure, "", 0, 1, failure},
+		{"regional system canceled", "uz-AF", good, nil, context.Canceled, "", 0, 1, context.Canceled},
+		{"unsupported missing system", "ko", good, nil, failure, "", 0, 1, failure},
+		{"unsupported system canceled", "ko", good, nil, context.Canceled, "", 0, 1, context.Canceled},
+		{"japanese low confidence", "ja", weak, nil, nil, "winrt", 1, 1, nil},
+		{"japanese missing models", "ja", Text{}, failure, nil, "winrt", 1, 1, nil},
+		{"japanese empty local", "ja", Text{}, nil, nil, "winrt", 1, 1, nil},
+		{"japanese missing system", "ja", weak, nil, failure, "local", 1, 1, nil},
+		{"japanese local canceled", "ja", Text{}, context.Canceled, nil, "", 1, 0, context.Canceled},
 		{"low confidence", "", weak, nil, nil, "winrt", 1, 1, nil},
 		{"missing models", "", Text{}, failure, nil, "winrt", 1, 1, nil},
 		{"empty local", "", Text{}, nil, nil, "winrt", 1, 1, nil},
@@ -136,8 +164,20 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lc, sc := 0, 0
-			local := func(context.Context, image.Image, string) (Text, error) { lc++; return tt.first, tt.localErr }
-			sys := func(context.Context, image.Image, string) (Text, error) { sc++; return system, tt.systemErr }
+			local := func(_ context.Context, _ image.Image, lang string) (Text, error) {
+				if lang != tt.lang || sc != 0 {
+					t.Fatalf("local must run first with language %q, got %q after %d system calls", tt.lang, lang, sc)
+				}
+				lc++
+				return tt.first, tt.localErr
+			}
+			sys := func(_ context.Context, _ image.Image, lang string) (Text, error) {
+				if lang != tt.lang || lc != tt.localCalls {
+					t.Fatalf("system must retain language %q after %d local calls, got %q after %d calls", tt.lang, tt.localCalls, lang, lc)
+				}
+				sc++
+				return system, tt.systemErr
+			}
 			got, err := recognizeEngines(context.Background(), nil, tt.lang, local, sys)
 			if !errors.Is(err, tt.wantErr) || got.Engine != tt.wantEngine || lc != tt.localCalls || sc != tt.systemCalls {
 				t.Fatalf("result %+v error %v calls %d/%d", got, err, lc, sc)
