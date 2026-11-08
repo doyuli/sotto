@@ -52,6 +52,7 @@ func (z Zhipu) translate(ctx context.Context, req Request, k KeyStore, cfg confi
 	}
 	// Disable reasoning only for known hybrid text models. Other models keep
 	// their API defaults instead of receiving an unsupported parameter.
+	// Keep this list in sync with BigModel's hybrid-reasoning text models.
 	switch model {
 	case "glm-4.5", "glm-4.5-air", "glm-4.5-airx", "glm-4.5-flash", "glm-4.5-x",
 		"glm-4.6", "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx":

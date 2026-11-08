@@ -273,8 +273,9 @@ test.each([
     if (fail && readbackFails) throw new Error("read failed");
     return call("ConfigSvc.Get");
   });
+  const testedModels: string[] = [];
   backend.override("ConfigSvc.TestService", () => {
-    expect(backend.settings.services[name].model).toBe("retry-model");
+    testedModels.push(backend.settings.services[name].model);
     return "";
   });
 
@@ -290,15 +291,18 @@ test.each([
   expect(select<HTMLInputElement>(`#${name}-model`).value).toBe(readbackFails ? "unsaved-model" : originalModel);
   expect(select<HTMLInputElement>(`#${name}-model`).disabled).toBe(false);
 
+  // A rolled-back write leaves the saved settings consistent, so a probe can
+  // run again without editing anything; an unreconciled write still blocks it.
   connectionTestButton(name).click();
   await settle();
-  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(0);
+  expect(testedModels).toEqual(readbackFails ? [] : [originalModel]);
+
   fail = false;
   change(`#${name}-model`, "retry-model");
   await settle();
   connectionTestButton(name).click();
   await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("连接成功"));
-  expect(backend.calls("ConfigSvc.TestService")).toEqual([[name]]);
+  expect(testedModels.at(-1)).toBe("retry-model");
   expect(backend.settings.services[name].model).toBe("retry-model");
 });
 

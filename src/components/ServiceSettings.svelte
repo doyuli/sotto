@@ -236,7 +236,7 @@
     testStatuses[serviceName] = { testing: true, result: "正在测试…" };
     try {
       if (!(await waitForSave())) {
-        testStatuses[serviceName] = { testing: false, result: "设置保存失败，请重新保存后再测试", isError: true };
+        testStatuses[serviceName] = { testing: false, result: "设置保存失败，请重试；仍失败请修改设置后重新保存", isError: true };
         return;
       }
       const error = await ConfigSvc.testService(serviceName);

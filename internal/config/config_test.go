@@ -218,3 +218,18 @@ func TestServiceModelsNormalizeAndRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIOptionsNormalizeWhitespace(t *testing.T) {
+	cfg := Default()
+	cfg.Services.OpenAI = OpenAIOptions{BaseURL: " https://example.com/v1 ", Model: " custom-model "}
+	got := Normalize(cfg)
+	if got.Services.OpenAI != (OpenAIOptions{BaseURL: "https://example.com/v1", Model: "custom-model"}) {
+		t.Errorf("OpenAI options = %+v, want trimmed values", got.Services.OpenAI)
+	}
+
+	cfg.Services.OpenAI = OpenAIOptions{BaseURL: " \t", Model: "\n "}
+	got = Normalize(cfg)
+	if got.Services.OpenAI != Default().Services.OpenAI {
+		t.Errorf("blank OpenAI options = %+v, want defaults", got.Services.OpenAI)
+	}
+}

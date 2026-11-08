@@ -63,6 +63,7 @@ func (s SiliconFlow) translate(ctx context.Context, req Request, k KeyStore, cfg
 	}
 	// These original Qwen3 models support switching off reasoning. Do not
 	// infer that capability for thinking-only variants or unknown models.
+	// Keep this list in sync when SiliconFlow adds hybrid-reasoning models.
 	switch strings.TrimPrefix(model, "Pro/") {
 	case "Qwen/Qwen3-0.6B", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B",
 		"Qwen/Qwen3-14B", "Qwen/Qwen3-32B", "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B":

@@ -166,9 +166,11 @@ func Normalize(s Settings) Settings {
 			s.Services.Order = append(s.Services.Order, name)
 		}
 	}
+	s.Services.OpenAI.BaseURL = strings.TrimSpace(s.Services.OpenAI.BaseURL)
 	if s.Services.OpenAI.BaseURL == "" {
 		s.Services.OpenAI.BaseURL = d.Services.OpenAI.BaseURL
 	}
+	s.Services.OpenAI.Model = strings.TrimSpace(s.Services.OpenAI.Model)
 	if s.Services.OpenAI.Model == "" {
 		s.Services.OpenAI.Model = d.Services.OpenAI.Model
 	}
