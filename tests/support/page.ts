@@ -8,6 +8,8 @@ class MockBackend {
       enabled: ["index-translate", "google", "baidu"],
       order: ["index-translate", "google", "openai", "baidu", "deepl"],
       openai: { baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+      siliconflow: { model: "tencent/Hunyuan-MT-7B" },
+      zhipu: { model: "glm-4.7-flash" },
     },
     targetLanguage: "zh-HANS",
     openAtLogin: false,

@@ -1224,6 +1224,10 @@ body[data-route="settings"]:not(:has(.service-drag-preview)) > #dnd-action-dragg
   margin-bottom: 10px;
 }
 
+.service-model-options {
+  margin-bottom: 10px;
+}
+
 .credential-controls {
   display: flex;
   align-items: center;

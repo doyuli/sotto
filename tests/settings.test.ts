@@ -46,6 +46,13 @@ async function expand(name: string): Promise<void> {
   await tick();
 }
 
+function connectionTestButton(name: string): HTMLButtonElement {
+  const button = [...select(`#configure-${name}`).querySelectorAll<HTMLButtonElement>("button")]
+    .find((button) => button.textContent?.trim() === "测试连接");
+  if (!button) throw new Error(`Missing connection test: ${name}`);
+  return button;
+}
+
 function change(selector: string, value: string | boolean): void {
   const control = select<HTMLInputElement>(selector);
   if (typeof value === "boolean") control.checked = value;
@@ -118,13 +125,13 @@ test("SiliconFlow and Zhipu save independent credentials and can both be enabled
   await openSettings();
   for (const [name, title, model] of [
     ["siliconflow", "硅基流动", "tencent/Hunyuan-MT-7B"],
-    ["zhipu", "智谱", "glm-4.5-flash"],
+    ["zhipu", "智谱", "glm-4.7-flash"],
   ] as const) {
     const toggle = `[aria-label="启用${title}"]`;
     expect(select<HTMLInputElement>(toggle).disabled).toBe(true);
     await expand(name);
     const drawer = select(`#configure-${name}`);
-    expect(drawer.querySelector(".service-note")?.textContent).toContain(model);
+    expect(select<HTMLInputElement>(`#${name}-model`).value).toBe(model);
     draft(`#input-${name}-key`, ` ${name}-test-key `);
     await tick();
     expect(select<HTMLInputElement>(`#input-${name}-key`).type).toBe("password");
@@ -136,9 +143,7 @@ test("SiliconFlow and Zhipu save independent credentials and can both be enabled
     change(toggle, true);
     await settle();
     expect(select(enabledServices).querySelector(toggle)).not.toBeNull();
-    const testButton = [...select(`#configure-${name}`).querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.trim() === "测试连接")!;
-    testButton.click();
+    connectionTestButton(name).click();
     await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("连接成功"));
   }
   expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu", "siliconflow", "zhipu"]);
@@ -166,6 +171,217 @@ test("translation credentials remain masked and can still be cleared", async () 
   await settle();
   expect(select<HTMLInputElement>("#input-openai-key").type).toBe("password");
   expect(select<HTMLInputElement>("#input-openai-key").value).toBe("unfinished-secret");
+});
+
+test.each([
+  ["siliconflow", "tencent/Hunyuan-MT-7B", "Qwen/Qwen3-8B"],
+  ["zhipu", "glm-4.7-flash", "glm-4.6"],
+] as const)("%s saves its model independently and clearing restores the default", async (name, defaultModel, customModel) => {
+  const backend = page.backend;
+  backend.settings.services.order.push("siliconflow", "zhipu");
+  backend.override("ConfigSvc.Set", (value) => {
+    backend.settings = structuredClone(value as Settings);
+    backend.settings.services.siliconflow.model ||= "tencent/Hunyuan-MT-7B";
+    backend.settings.services.zhipu.model ||= "glm-4.7-flash";
+    backend.broadcastSettings();
+  });
+  await openSettings();
+  await expand(name);
+  const selector = `#${name}-model`;
+  expect(select<HTMLInputElement>(selector).value).toBe(defaultModel);
+  draft(`#input-${name}-key`, "unfinished-key");
+  draft(selector, ` ${customModel} `);
+  change(selector, ` ${customModel} `);
+  await settle();
+  expect(backend.settings.services[name].model).toBe(customModel);
+  expect(backend.settings.services.openai.model).toBe("gpt-4o-mini");
+  const other = name === "zhipu" ? "siliconflow" : "zhipu";
+  expect(backend.settings.services[other].model).toBe(other === "zhipu" ? "glm-4.7-flash" : "tencent/Hunyuan-MT-7B");
+
+  draft(selector, " \t ");
+  change(selector, " \t ");
+  await settle();
+  expect(backend.settings.services[name].model).toBe(defaultModel);
+  expect(select<HTMLInputElement>(selector).value).toBe(defaultModel);
+  expect(select<HTMLInputElement>(`#input-${name}-key`).value).toBe("unfinished-key");
+  expect(select(`[aria-controls="configure-${name}"]`).getAttribute("aria-expanded")).toBe("true");
+});
+
+test.each(["openai", "siliconflow", "zhipu"] as const)("%s waits for its model save before probing and clears stale results", async (name) => {
+  const backend = page.backend;
+  if (!backend.settings.services.order.includes(name)) backend.settings.services.order.push(name);
+  backend.secrets.set(`${name}-key`, "key");
+  const saved = deferred<void>();
+  const tested = deferred<string>();
+  const call = backend.call.getMockImplementation()!;
+  backend.override("ConfigSvc.Set", async (value) => {
+    await saved.promise;
+    await call("ConfigSvc.Set", value);
+  });
+  backend.override("ConfigSvc.TestService", (service) => {
+    expect(service).toBe(name);
+    expect(backend.settings.services[name].model).toBe("custom-model");
+    return tested.promise;
+  });
+  await openSettings();
+  await expand(name);
+  change(`#${name}-model`, "custom-model");
+  await tick();
+  const drawer = select(`#configure-${name}`);
+  const probe = connectionTestButton(name);
+  probe.click();
+  await settle();
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(0);
+  expect(select<HTMLInputElement>(`#${name}-model`).disabled).toBe(true);
+  if (name === "openai") expect(select<HTMLInputElement>("#openai-base-url").disabled).toBe(true);
+  saved.resolve();
+  await vi.waitFor(() => expect(backend.calls("ConfigSvc.TestService")).toEqual([[name]]));
+  tested.resolve("");
+  await settle();
+  expect(drawer.textContent).toContain("连接成功");
+  expect(select<HTMLInputElement>(`#${name}-model`).disabled).toBe(false);
+  if (name === "openai") expect(select<HTMLInputElement>("#openai-base-url").disabled).toBe(false);
+  draft(`#${name}-model`, "another-model");
+  await tick();
+  expect(drawer.textContent).not.toContain("连接成功");
+});
+
+test.each([
+  ["openai", false], ["openai", true],
+  ["siliconflow", false], ["siliconflow", true],
+  ["zhipu", false], ["zhipu", true],
+] as const)("%s aborts a probe after a failed save (readback fails: %s) and permits retry", async (name, readbackFails) => {
+  const backend = page.backend;
+  if (!backend.settings.services.order.includes(name)) backend.settings.services.order.push(name);
+  backend.secrets.set(`${name}-key`, "key");
+  await openSettings();
+  await expand(name);
+  const originalModel = backend.settings.services[name].model;
+  const saved = deferred<void>();
+  const call = backend.call.getMockImplementation()!;
+  let fail = true;
+  backend.override("ConfigSvc.Set", async (value) => {
+    if (fail) {
+      await saved.promise;
+      throw new Error("disk full");
+    }
+    return call("ConfigSvc.Set", value);
+  });
+  backend.override("ConfigSvc.Get", () => {
+    if (fail && readbackFails) throw new Error("read failed");
+    return call("ConfigSvc.Get");
+  });
+  const testedModels: string[] = [];
+  backend.override("ConfigSvc.TestService", () => {
+    testedModels.push(backend.settings.services[name].model);
+    return "";
+  });
+
+  change(`#${name}-model`, "unsaved-model");
+  await tick();
+  connectionTestButton(name).click();
+  await settle();
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(0);
+  saved.resolve();
+  await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("设置保存失败"));
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(0);
+  expect(select(`#configure-${name}`).textContent).not.toContain("连接成功");
+  expect(select<HTMLInputElement>(`#${name}-model`).value).toBe(readbackFails ? "unsaved-model" : originalModel);
+  expect(select<HTMLInputElement>(`#${name}-model`).disabled).toBe(false);
+
+  // A rolled-back write leaves the saved settings consistent, so a probe can
+  // run again without editing anything; an unreconciled write still blocks it.
+  connectionTestButton(name).click();
+  await settle();
+  expect(testedModels).toEqual(readbackFails ? [] : [originalModel]);
+
+  fail = false;
+  change(`#${name}-model`, "retry-model");
+  await settle();
+  connectionTestButton(name).click();
+  await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("连接成功"));
+  expect(testedModels.at(-1)).toBe("retry-model");
+  expect(backend.settings.services[name].model).toBe("retry-model");
+});
+
+test("a failed save does not block a queued save or a probe of the final settings", async () => {
+  const backend = page.backend;
+  backend.secrets.set("openai-key", "key");
+  await openSettings();
+  await expand("openai");
+  const saved = deferred<void>();
+  const call = backend.call.getMockImplementation()!;
+  let first = true;
+  backend.override("ConfigSvc.Set", async (value) => {
+    if (first) {
+      first = false;
+      await saved.promise;
+      throw new Error("disk full");
+    }
+    return call("ConfigSvc.Set", value);
+  });
+  backend.override("ConfigSvc.TestService", () => {
+    expect(backend.settings.services.openai.model).toBe("queued-model");
+    expect(backend.settings.identifier.autoSplit).toBe(false);
+    return "";
+  });
+  change("#openai-model", "queued-model");
+  change(autoSplit, false);
+  await tick();
+  connectionTestButton("openai").click();
+  await settle();
+  expect(backend.calls("ConfigSvc.Set")).toHaveLength(1);
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(0);
+  saved.resolve();
+  await vi.waitFor(() => expect(select("#configure-openai").textContent).toContain("连接成功"));
+  expect(backend.calls("ConfigSvc.Set")).toHaveLength(2);
+  expect(backend.calls("ConfigSvc.TestService")).toEqual([["openai"]]);
+});
+
+test("a save queued during a failed readback is not skipped", async () => {
+  const backend = page.backend;
+  backend.secrets.set("openai-key", "key");
+  await openSettings();
+  await expand("openai");
+  const readback = deferred<Settings>();
+  const call = backend.call.getMockImplementation()!;
+  let blockRead = false;
+  let blocked = false;
+  let fail = true;
+  backend.override("ConfigSvc.Get", () => {
+    if (blockRead) {
+      blockRead = false;
+      blocked = true;
+      return readback.promise;
+    }
+    return call("ConfigSvc.Get");
+  });
+  backend.override("ConfigSvc.Set", async (value) => {
+    if (fail) {
+      fail = false;
+      throw new Error("disk full");
+    }
+    return call("ConfigSvc.Set", value);
+  });
+  backend.override("ConfigSvc.TestService", () => {
+    expect(backend.settings.services.openai.model).toBe("failed-model");
+    expect(backend.settings.openAtLogin).toBe(true);
+    return "";
+  });
+
+  blockRead = true;
+  change("#openai-model", "failed-model");
+  await vi.waitFor(() => expect(blocked).toBe(true));
+  // Queue a second save while the failed write waits for its rollback read.
+  change(openAtLogin, true);
+  await tick();
+  readback.resolve(structuredClone(backend.settings));
+  await tick();
+  connectionTestButton("openai").click();
+  await vi.waitFor(() => expect(select("#configure-openai").textContent).toContain("连接成功"));
+  expect(backend.calls("ConfigSvc.TestService")).toHaveLength(1);
+  expect(backend.settings.services.openai.model).toBe("failed-model");
+  expect(backend.settings.openAtLogin).toBe(true);
 });
 
 test("dragging a service preserves its drawer, drafts and enablement", async () => {
@@ -372,10 +588,11 @@ test("hotkey checks cannot save an abandoned recording after unmount", async () 
   expect([...page.backend.events.values()].every((listeners) => listeners.size === 0)).toBe(true);
 });
 
-test("failed saves restore switches, language, naming and OpenAI options", async () => {
+test("failed saves restore switches, language, naming and service model options", async () => {
   const save = deferred<void>();
   let fail = true;
   const backend = page.backend;
+  backend.settings.services.order.push("siliconflow", "zhipu");
   backend.override("ConfigSvc.Set", async (value) => {
     if (fail) {
       await save.promise;
@@ -385,6 +602,8 @@ test("failed saves restore switches, language, naming and OpenAI options", async
   });
   await openSettings();
   await expand("openai");
+  await expand("siliconflow");
+  await expand("zhipu");
   const snake = 'input[aria-labelledby="copy-format-snake"]';
   const camel = 'input[aria-labelledby="copy-format-lowerCamel"]';
   change(openAtLogin, true);
@@ -393,6 +612,8 @@ test("failed saves restore switches, language, naming and OpenAI options", async
   change(autoSplit, false);
   change(snake, false);
   change("#openai-model", "unsaved-model");
+  change("#siliconflow-model", "unsaved-siliconflow-model");
+  change("#zhipu-model", "unsaved-zhipu-model");
   await tick();
   expect(select<HTMLInputElement>(camel).disabled).toBe(true);
 
@@ -405,6 +626,8 @@ test("failed saves restore switches, language, naming and OpenAI options", async
   expect(select<HTMLSelectElement>(targetLanguage).value).toBe("zh-HANS");
   expect(select<HTMLInputElement>(autoSplit).checked).toBe(true);
   expect(select<HTMLInputElement>("#openai-model").value).toBe("gpt-4o-mini");
+  expect(select<HTMLInputElement>("#siliconflow-model").value).toBe("tencent/Hunyuan-MT-7B");
+  expect(select<HTMLInputElement>("#zhipu-model").value).toBe("glm-4.7-flash");
   expect(select(".toast-host").textContent).toContain("保存失败");
 
   fail = false;
@@ -433,17 +656,18 @@ test("normalization restores OpenAI defaults without losing credential drafts or
   expect(select('[aria-controls="configure-openai"]').getAttribute("aria-expanded")).toBe("true");
 });
 
-test("a late readback and external settings update preserve an unsaved OpenAI draft", async () => {
+test.each(["openai", "siliconflow", "zhipu"] as const)("a late readback and external settings update preserve an unsaved %s model draft", async (name) => {
+  if (!page.backend.settings.services.order.includes(name)) page.backend.settings.services.order.push(name);
   await openSettings();
-  await expand("openai");
+  await expand(name);
   const gate = deferred<Settings>();
   page.backend.override("ConfigSvc.Get", () => gate.promise);
   change(openAtLogin, true);
   await vi.waitFor(() => expect(page.backend.calls("ConfigSvc.Get")).toHaveLength(2));
-  const model = draft("#openai-model", "still-typing");
+  const model = draft(`#${name}-model`, "still-typing");
   model.focus();
   const snapshot = structuredClone(page.backend.settings);
-  snapshot.services.openai.model = "synced-model";
+  snapshot.services[name].model = "synced-model";
   gate.resolve(snapshot);
   await settle();
   expect(model.value).toBe("still-typing");
@@ -453,9 +677,9 @@ test("a late readback and external settings update preserve an unsaved OpenAI dr
   expect(model.value).toBe("still-typing");
   expect(writes()).toHaveLength(1);
 
-  change("#openai-model", "still-typing");
+  change(`#${name}-model`, "still-typing");
   await settle();
-  expect(page.backend.settings.services.openai.model).toBe("still-typing");
+  expect(page.backend.settings.services[name].model).toBe("still-typing");
 });
 
 test("sequential saves keep each snapshot and the final combined state", async () => {
@@ -574,10 +798,12 @@ test("OpenAI connection probe shows the standard success message", async () => {
   await openSettings();
   await expand("openai");
   const drawer = select("#configure-openai");
-  const probe = [...drawer.querySelectorAll<HTMLButtonElement>("button")]
-    .find((button) => button.textContent?.trim() === "测试连接")!;
+  const probe = connectionTestButton("openai");
   probe.click();
   await settle();
   expect(page.backend.calls("ConfigSvc.TestService")).toEqual([["openai"]]);
   expect(drawer.querySelector('[role="status"]')?.textContent?.trim()).toBe("连接成功");
+  draft("#openai-base-url", "https://example.com/v1");
+  await tick();
+  expect(drawer.querySelector('[role="status"]')?.textContent?.trim()).not.toBe("连接成功");
 });

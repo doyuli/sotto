@@ -75,6 +75,10 @@ export interface IdentifierSettings {
   stripMarkdown: boolean;
 }
 
+export interface ModelOptions {
+  model: string;
+}
+
 export interface OpenAIOptions {
   baseURL: string;
   model: string;
@@ -117,6 +121,8 @@ export interface ServiceSettings {
   enabled: string[];
   order: string[];
   openai: OpenAIOptions;
+  siliconflow: ModelOptions;
+  zhipu: ModelOptions;
 }
 
 export interface Settings {

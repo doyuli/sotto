@@ -27,7 +27,7 @@ func TestZhipuRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
 		}
-		if input.Model != "glm-4.5-flash" || input.Stream || input.Thinking.Type != "disabled" ||
+		if input.Model != "glm-4.7-flash" || input.Stream || input.Thinking.Type != "disabled" ||
 			len(input.Messages) != 2 || input.Messages[0].Role != "system" ||
 			!strings.Contains(input.Messages[0].Content, "from French into Simplified Chinese") ||
 			input.Messages[1].Role != "user" || input.Messages[1].Content != "Bonjour !" {

@@ -4,20 +4,27 @@
   import { cubicOut } from "svelte/easing";
   import { MediaQuery } from "svelte/reactivity";
   import { dragHandle, dragHandleZone, SHADOW_ITEM_MARKER_PROPERTY_NAME, TRIGGERS, type DndEvent } from "svelte-dnd-action";
-  import { ConfigSvc, type CredentialStatus, type OpenAIOptions, type Settings } from "../mygo";
+  import { ConfigSvc, type CredentialStatus, type Settings } from "../mygo";
   import { SERVICE_CREDENTIALS, SERVICE_NAMES, SERVICE_NOTES } from "../languages";
 
   let { active, services, onServicesChange, waitForSave, toast }: {
     active: boolean;
     services: Settings["services"];
     onServicesChange: (services: Settings["services"]) => void;
-    waitForSave: () => Promise<void>;
+    waitForSave: () => Promise<boolean>;
     toast: (message: string) => void;
   } = $props();
 
   let credentials = $state<CredentialStatus | null>(null);
   let credentialsError = $state<string>("");
-  let openAIDrafts = $state<Partial<OpenAIOptions>>({});
+  let baseURLDraft = $state<string>();
+  const DEFAULT_MODELS = {
+    openai: "gpt-4o-mini",
+    siliconflow: "tencent/Hunyuan-MT-7B",
+    zhipu: "glm-4.7-flash",
+  };
+  type ModelService = keyof typeof DEFAULT_MODELS;
+  let modelDrafts = $state<Partial<Record<ModelService, string>>>({});
 
   let expandedServices = $state<Record<string, boolean>>({});
   let serviceDrafts = $state<Record<string, Record<string, string>>>({});
@@ -228,7 +235,10 @@
     if (credentialBusy[serviceName] || testStatuses[serviceName]?.testing || hasServiceDraft(serviceName)) return;
     testStatuses[serviceName] = { testing: true, result: "正在测试…" };
     try {
-      await waitForSave();
+      if (!(await waitForSave())) {
+        testStatuses[serviceName] = { testing: false, result: "设置保存失败，请重试；仍失败请修改设置后重新保存", isError: true };
+        return;
+      }
       const error = await ConfigSvc.testService(serviceName);
       testStatuses[serviceName] = { testing: false, result: error || "连接成功", isError: Boolean(error) };
     } catch (err) {
@@ -236,11 +246,43 @@
     }
   }
 
-  function saveOpenAIOption(key: keyof OpenAIOptions, value: string): void {
-    onServicesChange({ ...services, openai: { ...services.openai, [key]: value.trim() } });
-    delete openAIDrafts[key];
+  function saveBaseURL(value: string): void {
+    onServicesChange({ ...services, openai: { ...services.openai, baseURL: value.trim() } });
+    baseURLDraft = undefined;
+    testStatuses.openai = { testing: false, result: "" };
+  }
+
+  function draftModel(name: ModelService, value: string): void {
+    modelDrafts[name] = value;
+    testStatuses[name] = { testing: false, result: "" };
+  }
+
+  function saveModel(name: ModelService, value: string): void {
+    onServicesChange({ ...services, [name]: { ...services[name], model: value.trim() } });
+    delete modelDrafts[name];
+    testStatuses[name] = { testing: false, result: "" };
   }
 </script>
+
+{#snippet modelField(name: ModelService)}
+  <div class="field" class:service-model-options={name !== "openai"}>
+    <label for={`${name}-model`}>
+      模型
+      <span class="sub" id={`${name}-model-hint`}>留空恢复默认模型</span>
+    </label>
+    <input
+      id={`${name}-model`}
+      type="text"
+      value={modelDrafts[name] ?? services[name].model}
+      placeholder={DEFAULT_MODELS[name]}
+      aria-describedby={`${name}-model-hint`}
+      disabled={credentialBusy[name] || testStatuses[name]?.testing}
+      spellcheck={false}
+      oninput={(e) => draftModel(name, e.currentTarget.value)}
+      onchange={(e) => saveModel(name, e.currentTarget.value)}
+    />
+  </div>
+{/snippet}
 
 <section
   class="settings-section"
@@ -349,6 +391,10 @@
                     </button>
                   </div>
 
+                  {#if name === "siliconflow" || name === "zhipu"}
+                    {@render modelField(name)}
+                  {/if}
+
                   {#if name === "openai"}
                     <div class="openai-options">
                       <div class="field">
@@ -359,24 +405,19 @@
                         <input
                           id="openai-base-url"
                           type="text"
-                          value={openAIDrafts.baseURL ?? services.openai.baseURL}
+                          value={baseURLDraft ?? services.openai.baseURL}
                           placeholder="https://api.openai.com/v1"
-                          oninput={(e) => { openAIDrafts.baseURL = e.currentTarget.value; }}
-                          onchange={(e) => saveOpenAIOption("baseURL", e.currentTarget.value)}
+                          disabled={credentialLocked}
+                          spellcheck={false}
+                          oninput={(e) => {
+                            baseURLDraft = e.currentTarget.value;
+                            testStatuses.openai = { testing: false, result: "" };
+                          }}
+                          onchange={(e) => saveBaseURL(e.currentTarget.value)}
                         />
                       </div>
 
-                      <div class="field">
-                        <label for="openai-model">模型</label>
-                        <input
-                          id="openai-model"
-                          type="text"
-                          value={openAIDrafts.model ?? services.openai.model}
-                          placeholder="gpt-4o-mini"
-                          oninput={(e) => { openAIDrafts.model = e.currentTarget.value; }}
-                          onchange={(e) => saveOpenAIOption("model", e.currentTarget.value)}
-                        />
-                      </div>
+                      {@render modelField("openai")}
                     </div>
                   {/if}
 
