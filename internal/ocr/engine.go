@@ -37,8 +37,15 @@ func recognizeEngines(ctx context.Context, img image.Image, lang string, local, 
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
-	// The bundled model is multilingual. A language hint must not bypass it;
-	// retain the hint for system OCR if local recognition needs a fallback.
+	// Unsupported explicit languages cannot be recognized by the fixed local
+	// model and dictionary. Skip it rather than trusting a wrong-script result.
+	if !localLanguage(lang) {
+		t, err := run("winrt", system)
+		if err != nil {
+			return Text{}, err
+		}
+		return t, nil
+	}
 	first, firstErr := run("ppocr-v6-small", local)
 	if err := ctx.Err(); err != nil {
 		return Text{}, err

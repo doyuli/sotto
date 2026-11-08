@@ -123,7 +123,15 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 		{"explicit chinese", "ZH-hans", good, nil, nil, "local", 1, 0, nil},
 		{"explicit japanese", "ja", good, nil, nil, "local", 1, 0, nil},
 		{"explicit french", "fr-FR", good, nil, nil, "local", 1, 0, nil},
-		{"explicit korean", "ko", good, nil, nil, "local", 1, 0, nil},
+		{"explicit vietnamese", "vi-VN", good, nil, nil, "local", 1, 0, nil},
+		{"explicit serbian latin", "sr-Latn-RS", good, nil, nil, "local", 1, 0, nil},
+		{"explicit korean", "ko-KR", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit russian", "ru", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit arabic", "ar", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit thai", "th", good, nil, nil, "winrt", 0, 1, nil},
+		{"explicit cyrillic variant", "az-Cyrl", good, nil, nil, "winrt", 0, 1, nil},
+		{"unsupported missing system", "ko", good, nil, failure, "", 0, 1, failure},
+		{"unsupported system canceled", "ko", good, nil, context.Canceled, "", 0, 1, context.Canceled},
 		{"japanese low confidence", "ja", weak, nil, nil, "winrt", 1, 1, nil},
 		{"japanese missing models", "ja", Text{}, failure, nil, "winrt", 1, 1, nil},
 		{"japanese empty local", "ja", Text{}, nil, nil, "winrt", 1, 1, nil},
@@ -150,8 +158,8 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 				return tt.first, tt.localErr
 			}
 			sys := func(_ context.Context, _ image.Image, lang string) (Text, error) {
-				if lang != tt.lang || lc != 1 {
-					t.Fatalf("fallback must retain language %q after local attempt, got %q after %d local calls", tt.lang, lang, lc)
+				if lang != tt.lang || lc != tt.localCalls {
+					t.Fatalf("system must retain language %q after %d local calls, got %q after %d calls", tt.lang, tt.localCalls, lang, lc)
 				}
 				sc++
 				return system, tt.systemErr

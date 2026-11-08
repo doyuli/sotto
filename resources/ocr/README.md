@@ -1,6 +1,8 @@
 # Offline OCR
 
-Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. All requests try the multilingual local models first. An explicit language tag is passed to Windows.Media.Ocr only if fallback is needed.
+Sotto uses PP-OCRv6 small with ONNX Runtime 1.31.1 for local CPU recognition. Its published 50-language scope covers Simplified/Traditional Chinese, English, Japanese, and 46 Latin-script languages, not all languages. Requests without a language hint and explicit supported languages try the local models first. Unsupported explicit languages (such as Korean, Russian, Arabic, and Thai) go directly to Windows.Media.Ocr and require an installed OCR language pack. The requested language tag is retained when system fallback is needed.
+
+Routing follows the [pinned RapidOCR v3.10.0 model routes](https://github.com/RapidAI/RapidOCR/blob/v3.10.0/python/rapidocr/default_models.yaml). Explicit non-Latin script variants of the Latin languages are excluded; Serbian requires `sr-Latn`. The recognition dictionary and model output classes are fixed together; adding dictionary entries alone cannot add language support.
 
 ## Resources
 
@@ -24,6 +26,7 @@ Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/
 
 ## Recognition behavior
 
+- The screenshot UI supplies no language hint. It tries PPOCR first without detecting the screenshot's script in advance. Unsupported text may be misrecognized with high confidence, so system fallback is not guaranteed to recover it.
 - Sessions initialize on first use and are reused serially. Detection defaults to `min(4, runtime.NumCPU())` inference threads; recognition uses 2.
 - Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
 - Empty local results or text-confidence risks can trigger one system OCR fallback. Discarded low-score detection regions, low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
