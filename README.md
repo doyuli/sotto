@@ -111,3 +111,5 @@ bun run build:win            # Build for both x64 and arm64
 ## Acknowledgments
 
 Thanks to the authors and contributors of [Easydict](https://github.com/tisfeng/Easydict) for inspiring Sotto.
+
+Thanks to [Mygo](https://mygo.egoist.dev/) for the framework that powers Sotto.

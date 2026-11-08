@@ -111,3 +111,5 @@ bun run build:win            # 同时构建 x64 与 arm64 安装包
 ## 致谢
 
 感谢 [Easydict](https://github.com/tisfeng/Easydict) 为 Sotto 带来的灵感与启发。
+
+感谢 [Mygo](https://mygo.egoist.dev/) 为 Sotto 提供应用开发框架。
