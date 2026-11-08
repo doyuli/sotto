@@ -128,7 +128,7 @@ func TestChatStreamFraming(t *testing.T) {
 		{"reasoning ignored", "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"private\"},\"finish_reason\":\"stop\"}]}\n\n", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := readChatStream(strings.NewReader(tc.body), "test", nil)
+			res, err := readChatStream(strings.NewReader(tc.body), "test", false, nil)
 			if res.Message.Content != tc.want || (err != nil) != tc.fail {
 				t.Errorf("choice = %+v, err = %v", res, err)
 			}
@@ -265,7 +265,7 @@ func TestChatStreamSizeLimitsKeepPartialTranslation(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := readChatStream(strings.NewReader(prefix+tc.tail), "test", nil)
+			res, err := readChatStream(strings.NewReader(prefix+tc.tail), "test", false, nil)
 			if res.Message.Content != tc.wantText || err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("retained bytes = %d, want %d; err = %v, want %q", len(res.Message.Content), len(tc.wantText), err, tc.wantError)
 			}
