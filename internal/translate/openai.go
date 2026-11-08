@@ -154,26 +154,15 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 	// Receiving headers is not the first body byte: reasoning models may
 	// acknowledge the request long before they start sending any events.
 	activity.reset(chatFirstByteTimeout)
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return chatChoice{}, fmt.Errorf("%s：请求过于频繁，请稍后重试", service)
-	}
-	// Public gateways may return HTML or echo request data. Keep anonymous
-	// service errors short and avoid suggesting credentials they cannot set.
-	if status := resp.StatusCode; status != http.StatusOK && key == "" {
-		switch {
-		case status == http.StatusUnauthorized || status == http.StatusForbidden:
-			return chatChoice{}, fmt.Errorf("%s：暂时无法匿名访问，请稍后重试或切换翻译服务", service)
-		case status >= http.StatusInternalServerError:
-			return chatChoice{}, fmt.Errorf("%s：服务暂时不可用，请稍后重试", service)
-		default:
-			return chatChoice{}, fmt.Errorf("%s：请求失败（HTTP %d）", service, status)
-		}
-	}
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return chatChoice{}, ErrAuth
+		var body []byte
+		if key != "" {
+			body, err = io.ReadAll(io.LimitReader(chatActivityReader{Reader: resp.Body, activity: activity}, maxChatErrorBytes))
+			if err != nil {
+				return chatChoice{}, fmt.Errorf("%s：读取错误响应：%w", service, err)
+			}
 		}
-		return chatChoice{}, fmt.Errorf("%s：请求失败（HTTP %d）", service, resp.StatusCode)
+		return chatChoice{}, chatResponseError(service, resp.StatusCode, body)
 	}
 	// Some compatible endpoints ignore stream and return a regular JSON body.
 	// Sniff the body since relays may omit or mislabel the content type.
@@ -202,7 +191,9 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 	}
 	if first[0] == '{' {
 		var out struct {
-			Choices []chatChoice `json:"choices"`
+			Choices []chatChoice    `json:"choices"`
+			Error   json.RawMessage `json:"error"`
+			Code    json.RawMessage `json:"code"`
 		}
 		body, err := io.ReadAll(io.LimitReader(reader, maxChatJSONBytes+1))
 		if err != nil {
@@ -214,7 +205,13 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 		if err := json.Unmarshal(body, &out); err != nil {
 			return chatChoice{}, fmt.Errorf("%s：解析响应：%w", service, err)
 		}
+		if len(out.Error) > 0 && string(out.Error) != "null" {
+			return chatChoice{}, chatResponseError(service, http.StatusOK, body)
+		}
 		if len(out.Choices) == 0 {
+			if len(out.Code) > 0 && string(out.Code) != "null" {
+				return chatChoice{}, chatResponseError(service, http.StatusOK, body)
+			}
 			return chatChoice{}, fmt.Errorf("%s：空响应", service)
 		}
 		return out.Choices[0], chatCompletionError(out.Choices[0], service)
@@ -253,7 +250,7 @@ func readChatStream(reader io.Reader, service string, emit func(string)) (chatCh
 			return false, fmt.Errorf("%s：解析流式响应：%w", service, err)
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-			return false, fmt.Errorf("%s：生成中断，请重试", service)
+			return false, chatResponseError(service, http.StatusOK, []byte(payload))
 		}
 		for _, part := range chunk.Choices {
 			if part.Index != 0 {
