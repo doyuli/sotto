@@ -21,7 +21,6 @@
 
   let expandedServices = $state<Record<string, boolean>>({});
   let serviceDrafts = $state<Record<string, Record<string, string>>>({});
-  let showSecrets = $state<Record<string, boolean>>({});
   let credentialBusy = $state<Record<string, boolean>>({});
   let testStatuses = $state<Record<string, { testing: boolean; result: string; isError?: boolean }>>({});
   let deeplUsageText = $state<string>("额度查询中…");
@@ -400,23 +399,13 @@
                         <div class="credential-controls">
                           <input
                             id={`input-${fieldItem.name}`}
-                            type={showSecrets[`${name}-${fieldItem.name}`] ? "text" : "password"}
+                            type="password"
                             autocomplete="off"
                             placeholder={isStored ? "已保存，留空不变" : fieldItem.placeholder}
                             value={draftVal}
                             disabled={credentialLocked}
                             oninput={(e) => setDraft(name, fieldItem.name, e.currentTarget.value)}
                           />
-                          <button
-                            type="button"
-                            class="text-btn"
-                            onclick={() => {
-                              const key = `${name}-${fieldItem.name}`;
-                              showSecrets[key] = !showSecrets[key];
-                            }}
-                          >
-                            {showSecrets[`${name}-${fieldItem.name}`] ? "隐藏" : "显示"}
-                          </button>
                           {#if isStored}
                             <button
                               type="button"

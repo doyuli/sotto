@@ -47,16 +47,20 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 | Service | Type | Notes |
 | --- | --- | --- |
-| **Google Translate** | Keyless | Ready out of the box |
+| **Google Translate** | Keyless | Optional keyless endpoint; disabled by default |
 | **Bilibili (Index)** | Keyless | Experimental keyless endpoint |
 | **Dictionary** | Keyless | Displays phonetics and definitions for English words |
 | **DeepL** | API Key | Supports both Free and Pro keys |
 | **OpenAI-Compatible** | API Key | Custom Base URL and model names (DeepSeek, Moonshot, Qwen, etc.) |
+| **SiliconFlow** | API Key | Free `tencent/Hunyuan-MT-7B` translation model; identity verification required |
+| **Zhipu** | API Key | Free `glm-4.5-flash` model |
 | **Volcengine (ByteDance)** | API Key | High-performance machine translation |
 | **Baidu Translate** | API Key | General text translation API |
 | **Tencent Cloud (TMT)** | API Key | Machine translation service |
 | **Youdao** | API Key | NetEase Youdao translation API |
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
+
+> Translation and dictionary lookups use third-party services and send the relevant text to those providers. Some keyless integrations use unofficial or experimental endpoints. Availability, free quotas, and pricing follow each provider’s current policies. Translations are for reference only.
 
 > Open **Settings** from the tray menu to toggle services, reorder cards, and manage keys.
 

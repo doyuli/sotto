@@ -70,8 +70,8 @@ type Settings struct {
 func Default() Settings {
 	return Settings{
 		Services: ServiceSettings{
-			Enabled: []string{"index-translate", "google"},
-			Order:   []string{"index-translate", "google", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "azure"},
+			Enabled: []string{"index-translate"},
+			Order:   []string{"index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "azure"},
 			OpenAI:  OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
 		},
 		TargetLanguage: "zh-HANS",

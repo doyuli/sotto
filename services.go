@@ -91,13 +91,15 @@ func (s ConfigSvc) TestService(ctx context.Context, name string) string {
 // credentials are issued. The whitelist keeps the pages from opening
 // anything but these addresses.
 var serviceKeyPages = map[string]string{
-	"deepl":      "https://www.deepl.com/zh/pro-api",
-	"openai":     "https://platform.openai.com/api-keys",
-	"baidu":      "https://fanyi-api.baidu.com/manage/repository",
-	"tencent":    "https://console.cloud.tencent.com/cam/capi",
-	"youdao":     "https://ai.youdao.com/console",
-	"azure":      "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
-	"volcengine": "https://console.volcengine.com/iam/keymanage/",
+	"deepl":       "https://www.deepl.com/zh/pro-api",
+	"openai":      "https://platform.openai.com/api-keys",
+	"siliconflow": "https://cloud.siliconflow.cn/account/ak",
+	"zhipu":       "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+	"baidu":       "https://fanyi-api.baidu.com/manage/repository",
+	"tencent":     "https://console.cloud.tencent.com/cam/capi",
+	"youdao":      "https://ai.youdao.com/console",
+	"azure":       "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+	"volcengine":  "https://console.volcengine.com/iam/keymanage/",
 }
 
 // OpenKeyPage opens the service's credential page in the default browser.

@@ -113,6 +113,61 @@ test("Bilibili can be turned off independently of OpenAI", async () => {
   expect(select<HTMLInputElement>(openAIToggle).disabled).toBe(true);
 });
 
+test("SiliconFlow and Zhipu save independent credentials and can both be enabled and tested", async () => {
+  page.backend.settings.services.order.push("siliconflow", "zhipu");
+  await openSettings();
+  for (const [name, title, model] of [
+    ["siliconflow", "硅基流动", "tencent/Hunyuan-MT-7B"],
+    ["zhipu", "智谱", "glm-4.5-flash"],
+  ] as const) {
+    const toggle = `[aria-label="启用${title}"]`;
+    expect(select<HTMLInputElement>(toggle).disabled).toBe(true);
+    await expand(name);
+    const drawer = select(`#configure-${name}`);
+    expect(drawer.querySelector(".service-note")?.textContent).toContain(model);
+    draft(`#input-${name}-key`, ` ${name}-test-key `);
+    await tick();
+    expect(select<HTMLInputElement>(`#input-${name}-key`).type).toBe("password");
+    expect([...drawer.querySelectorAll("button")].some((button) => ["显示", "隐藏"].includes(button.textContent?.trim() ?? ""))).toBe(false);
+    drawer.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await vi.waitFor(() => expect(select<HTMLInputElement>(toggle).disabled).toBe(false));
+    expect(select<HTMLInputElement>(`#input-${name}-key`).value).toBe("");
+    expect(page.backend.secrets.get(`${name}-key`)).toBe(`${name}-test-key`);
+    change(toggle, true);
+    await settle();
+    expect(select(enabledServices).querySelector(toggle)).not.toBeNull();
+    const testButton = [...select(`#configure-${name}`).querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "测试连接")!;
+    testButton.click();
+    await vi.waitFor(() => expect(select(`#configure-${name}`).textContent).toContain("连接成功"));
+  }
+  expect(page.backend.settings.services.enabled).toEqual(["index-translate", "google", "baidu", "siliconflow", "zhipu"]);
+  expect(page.backend.calls("ConfigSvc.SetSecret")).toEqual([
+    ["siliconflow-key", "siliconflow-test-key"],
+    ["zhipu-key", "zhipu-test-key"],
+  ]);
+  expect(page.backend.calls("ConfigSvc.TestService")).toEqual([["siliconflow"], ["zhipu"]]);
+  expect(JSON.stringify(writes())).not.toContain("test-key");
+});
+
+test("translation credentials remain masked and can still be cleared", async () => {
+  await openSettings();
+  await expand("baidu");
+  await expand("openai");
+  draft("#input-openai-key", "unfinished-secret");
+  await tick();
+  const fields = [...page.target.querySelectorAll<HTMLInputElement>(".credential-controls input")];
+  expect(fields).toHaveLength(3);
+  expect(fields.every((input) => input.type === "password")).toBe(true);
+  const actions = [...page.target.querySelectorAll<HTMLButtonElement>(".credential-controls button")];
+  expect(actions.map((button) => button.textContent?.trim())).toEqual(["清除", "清除"]);
+  actions.find((button) => button.getAttribute("aria-label") === "清除密钥")!.click();
+  await vi.waitFor(() => expect(page.backend.calls("ConfigSvc.SetSecret")).toEqual([["baidu-key", ""]]));
+  await settle();
+  expect(select<HTMLInputElement>("#input-openai-key").type).toBe("password");
+  expect(select<HTMLInputElement>("#input-openai-key").value).toBe("unfinished-secret");
+});
+
 test("dragging a service preserves its drawer, drafts and enablement", async () => {
   page.backend.secrets.set("openai-key", "key");
   page.backend.settings.services.enabled.push("openai");

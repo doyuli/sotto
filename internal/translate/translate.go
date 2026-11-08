@@ -71,6 +71,8 @@ func DefaultTranslators() []Translator {
 	return []Translator{
 		IndexTranslate{},
 		Google{},
+		SiliconFlow{},
+		Zhipu{},
 		Baidu{Limiter: baiduLimiter},
 		Volcengine{},
 		DeepL{},
