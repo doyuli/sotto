@@ -1,11 +1,14 @@
+<!-- Use a Conventional Commits title. -->
+
 ## Summary
 
-- <!-- Describe the final changes and their effect on behavior. -->
+- <!-- Describe the concrete problem and resulting behavior. -->
 
 ## Verification
 
-- <!-- List checks actually performed and their results. Note any pending validation. -->
+- Passed: <!-- List the command or manual check actually run and its result. Distinguish compilation from runtime validation. -->
+- Pending: <!-- List validation still required and why it was not run. Remove this bullet if none remains. -->
 
 ## Scope
 
-<!-- Briefly describe the areas covered by this PR. -->
+- <!-- Describe the areas covered and any relevant scope boundaries. -->
