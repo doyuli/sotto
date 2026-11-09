@@ -38,6 +38,7 @@
 
   let inputText: string = $state("");
   let textareaElem: HTMLTextAreaElement | undefined = $state();
+  let bubbleElem: HTMLDivElement | undefined = $state();
   let scrollElem: HTMLDivElement | undefined = $state();
   let maxHeight = $state(760);
 
@@ -85,7 +86,7 @@
     if (
       bubbleState &&
       (st.generation < bubbleState.generation ||
-        (st.sessionID === bubbleState.sessionID && (st.revision < bubbleState.revision || st.showID < bubbleState.showID)))
+        (st.sessionID === bubbleState.sessionID && (st.revision < bubbleState.revision || st.showID < bubbleState.showID || st.layoutID < bubbleState.layoutID)))
     ) {
       return;
     }
@@ -132,6 +133,13 @@
       growTextarea();
       if (scrollElem) scrollElem.scrollTop = 0;
       if (st.trigger === "input") textareaElem?.focus();
+      // Layout reads flush textarea sizing even while the native window is hidden.
+      const height = bubbleElem?.getBoundingClientRect().height;
+      if (height && height > 0) {
+        void BubbleSvc.rendered(bubbleID, st.sessionID, st.showID, st.layoutID, height).catch(() => {
+          // A closed window may reject its final layout acknowledgement.
+        });
+      }
     });
   }
 
@@ -437,7 +445,7 @@
 {#if readyFailed}
   <div class="bubble-error" role="status">气泡已关闭</div>
 {:else}
-  <div class="bubble" class:pinned={isPinned}
+  <div bind:this={bubbleElem} class="bubble" class:pinned={isPinned}
     style:--bubble-max-height={`${maxHeight}px`}
   >
     <!-- Top Bar -->

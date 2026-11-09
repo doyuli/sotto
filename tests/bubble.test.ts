@@ -536,3 +536,51 @@ test("a provider correction replaces the old text without duplicating it", async
   await tick();
   expect(cardTexts()).toEqual(["最终译文"]);
 });
+
+test("new input clears old draft and results before acknowledging measured layout", async () => {
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 218.5 } as DOMRect);
+  try {
+    await openBubble();
+    edit("unsent old draft");
+    page.backend.emit("translation-update", { reqID: "initial", service: "google", text: "old translation", streaming: false, err: "", detectedLang: "en" });
+    await settle();
+    const st = { ...structuredClone(page.backend.bubble), trigger: "input", text: "", sessionID: "fresh", reqID: "fresh", generation: 2, showID: 2, layoutID: 2, revision: -1, results: [], serviceRequests: {} };
+    page.backend.emit("bubble-reset", st);
+    // No acknowledgement until Svelte has committed the replacement DOM.
+    expect(page.backend.calls("BubbleSvc.Rendered").some((args) => args[1] === "fresh")).toBe(false);
+    await settle();
+    expect(input().value).toBe("");
+    expect(page.target.textContent).not.toContain("old translation");
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "fresh", 2, 2, 218.5]);
+  } finally {
+    measure.mockRestore();
+  }
+});
+
+test("only the latest OCR layout is acknowledged when completion supersedes recognition", async () => {
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 240 } as DOMRect);
+  try {
+    await openBubble();
+    const st = { ...structuredClone(page.backend.bubble), trigger: "ocr", text: "", sessionID: "ocr", reqID: "ocr", generation: 2, showID: 2, layoutID: 2, revision: -1, phase: "recognizing" };
+    page.backend.emit("bubble-reset", st);
+    page.backend.emit("bubble-reset", { ...st, layoutID: 3, text: "recognized text", phase: "" });
+    await settle();
+    expect(input().value).toBe("recognized text");
+    const acks = page.backend.calls("BubbleSvc.Rendered").filter((args) => args[1] === "ocr");
+    expect(acks).toEqual([[1, "ocr", 2, 3, 240]]);
+  } finally {
+    measure.mockRestore();
+  }
+});
+
+
+test("late recognition snapshot cannot replace completed OCR content or its layout", async () => {
+  await openBubble();
+  const st = { ...structuredClone(page.backend.bubble), trigger: "ocr", sessionID: "ocr", reqID: "ocr", generation: 2, showID: 2, layoutID: 3, revision: -1, text: "recognized text", phase: "" };
+  page.backend.emit("bubble-reset", st);
+  await settle();
+  page.backend.emit("bubble-reset", { ...st, layoutID: 2, text: "", phase: "recognizing" });
+  await settle();
+  expect(input().value).toBe("recognized text");
+  expect(page.target.textContent).not.toContain("正在识别文字");
+});

@@ -22,6 +22,7 @@ export interface BubbleSettings {
  * is reused for a new query.
  */
 export interface BubbleState {
+  layoutID: number;
   maxHeight: number;
   clipboardRecoveryID: string;
   showID: number;
@@ -234,6 +235,10 @@ export const BubbleSvc = {
    */
   ready(id: number): Promise<BubbleState> {
     return call("BubbleSvc.Ready", id);
+  },
+  /** Rendered acknowledges the current DOM layout before a hidden bubble is shown. */
+  rendered(id: number, sessionID: string, showID: number, layoutID: number, height: number): Promise<void> {
+    return call("BubbleSvc.Rendered", id, sessionID, showID, layoutID, height);
   },
   /** RestoreClipboard retries a retained snapshot without replacing a newer copy. */
   restoreClipboard(id: string): Promise<void> {

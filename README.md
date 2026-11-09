@@ -70,7 +70,7 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 | Action | Default Shortcut | Description |
 | --- | --- | --- |
-| **Open Translation Panel** | `Ctrl+Alt+A` | Invokes the centered translation panel (preserves drafts) |
+| **Open Translation Panel** | `Ctrl+Alt+A` | Invokes the centered translation panel (starts a fresh session) |
 | **Screen Region Translation (OCR)** | `Ctrl+Alt+S` | Snips any screen area to extract text locally and translate |
 | **Selection Translation** | `Ctrl+Alt+D` | Reads highlighted text in the active app and opens a popup bubble |
 

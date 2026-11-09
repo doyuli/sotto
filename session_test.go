@@ -237,7 +237,7 @@ func TestRetryCannotCrossReplacementOrCancellation(t *testing.T) {
 
 func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
 	for _, submit := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reopened draft", true: "reopened translation"}[submit], func(t *testing.T) {
+		t.Run(map[bool]string{false: "unsubmitted presentation", true: "submitted presentation"}[submit], func(t *testing.T) {
 			m := newBubbleManager(nil)
 			w := &mygo.Window{}
 			b := &bubble{win: w, sessionID: "draft", revision: -1}
@@ -251,7 +251,7 @@ func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
 			}
 			before := b.revision
 			if b.claimClose("draft", oldShow, 1) || b.revision != before || ctx.Err() != nil {
-				t.Fatal("late close affected reopened draft or request")
+				t.Fatal("late close affected current presentation or request")
 			}
 			if b.claimClose("old session", b.showID, 99) || b.claimClose("draft", b.showID, before) {
 				t.Fatal("accepted stale session/revision")
@@ -323,5 +323,73 @@ func TestStreamingSnapshotsAndCancellation(t *testing.T) {
 	}
 	if m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: "stale", Streaming: true}) {
 		t.Fatal("canceled stream reclaimed its card")
+	}
+}
+
+func TestNewInputReplacesSessionAndRejectsOldWork(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w}
+	m.byID[1] = b
+	cfg := config.Default()
+	b.replaceContent(cfg, "input", "previous text", "", "", nil)
+	b.present()
+	oldSession := b.sessionID
+	ctx, _ := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "old", Revision: 1, Text: "previous text"})
+	m.recordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "previous result"})
+	b.replaceContent(cfg, "input", "", "", "", nil)
+	b.present()
+	state := m.state(b, cfg)
+	if ctx.Err() != context.Canceled || state.SessionID == oldSession || state.Text != "" || len(state.Results) != 0 || state.Meta != nil || len(state.ServiceRequests) != 0 {
+		t.Fatalf("new input retained old content/work: %+v", state)
+	}
+	if !b.awaitingLayout || state.LayoutID != 2 || state.Generation != 2 {
+		t.Fatal("new input did not require a fresh layout")
+	}
+	if _, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "late", Revision: 99}); ok || m.recordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "late"}) {
+		t.Fatal("old input work entered the fresh session")
+	}
+}
+
+func TestLayoutAcknowledgementOwnership(t *testing.T) {
+	for _, stale := range []string{"session", "show", "layout", "closed"} {
+		t.Run(stale, func(t *testing.T) {
+			b := &bubble{sessionID: "current", showID: 2, layoutID: 3, awaitingLayout: true}
+			session, show, layout := "current", int64(2), int64(3)
+			switch stale {
+			case "session":
+				session = "old"
+			case "show":
+				show--
+			case "layout":
+				layout-- // OCR completed before recognition layout arrived.
+			case "closed":
+				b.closeClaimed = true
+			}
+			if b.acceptLayout(session, show, layout) || !b.awaitingLayout {
+				t.Fatal("stale acknowledgement released the presentation")
+			}
+			b.closeClaimed = false
+			if !b.acceptLayout("current", 2, 3) || b.awaitingLayout || b.acceptLayout("current", 2, 3) {
+				t.Fatal("current layout must release presentation exactly once")
+			}
+		})
+	}
+}
+
+func TestOCRCompletionBeforeFirstShowRequiresReplacementLayout(t *testing.T) {
+	b := &bubble{sessionID: "ocr", showID: 1, layoutID: 1, awaitingLayout: true}
+	if !b.acceptLayout("ocr", 1, 1) {
+		t.Fatal("recognition layout rejected")
+	}
+	// Native readiness has not arrived yet; accepting a layout is not a show.
+	b.advanceCaptureLayout()
+	if !b.awaitingLayout || b.acceptLayout("ocr", 1, 1) || !b.acceptLayout("ocr", 1, 2) {
+		t.Fatal("OCR completion reused the hidden recognition layout")
+	}
+	b.presentationShown = true
+	b.advanceCaptureLayout()
+	if b.awaitingLayout {
+		t.Fatal("visible OCR completion must continue using FitContent")
 	}
 }

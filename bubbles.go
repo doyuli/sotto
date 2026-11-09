@@ -13,7 +13,7 @@ import (
 	"sotto/internal/selection"
 )
 
-// bubbleManager keeps an input draft and a separate reusable capture bubble.
+// bubbleManager keeps separate reusable input and capture windows.
 // Pinning detaches either window from reuse; pinned windows remain independent.
 //
 // ShowTask enters from a worker and holds showMu while marshaling presentation
@@ -58,11 +58,12 @@ type bubble struct {
 	canShow                func() bool
 	// trigger and text of the last query, for a page that mounts late.
 	trigger, text string
-	// ready reports the page has loaded once; pendingShow shows a fresh
-	// window when it has, to avoid a flash of blank window.
-	ready       bool
-	pendingShow func()
-	offBlur     func() // unregisters focus hiding; Pin calls it
+	// Showing requires both native page readiness and the current content layout.
+	ready             bool
+	awaitingLayout    bool
+	presentationShown bool
+	layoutID          int64
+	offBlur           func() // unregisters focus hiding; Pin calls it
 	// offOutsideClick belongs to the main thread, like the window it watches.
 	offOutsideClick func()
 
@@ -88,7 +89,7 @@ func newBubbleManager(isQuitting func() bool) *bubbleManager {
 	return &bubbleManager{byID: map[int64]*bubble{}, isQuitting: isQuitting}
 }
 
-// ShowTask separates the persistent input draft from transient captures.
+// ShowTask starts a fresh session in the input or capture window.
 // valid is checked again on the UI thread, including a delayed first show.
 // Call from a worker only, and check Shown.Win before starting follow-up work.
 func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anchor *Anchor, phase, message string, valid func() bool, cancel context.CancelFunc) Shown {
@@ -133,29 +134,23 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 			b = m.create(cfg)
 		}
 		m.mu.Lock()
-		reuseInput := trigger == "input" && b.sessionID != ""
 		if trigger == "input" {
 			m.input = b
 		} else {
 			m.current = b
 		}
-		if !reuseInput {
-			b.replaceContent(cfg, trigger, text, phase, message, cancel)
-		}
+		b.replaceContent(cfg, trigger, text, phase, message, cancel)
 		b.present()
 		b.canShow = valid
 		m.mu.Unlock()
-		if !reuseInput {
-			m.position(b, trigger, anchor)
-		}
+		// Reset and measure while hidden: the reused window still has its old size.
+		b.win.Hide()
+		m.position(b, trigger, anchor)
 		m.reflow(b, true)
 		m.mu.Lock()
 		state := m.state(b, cfg)
 		m.mu.Unlock()
-		if !reuseInput {
-			BubbleReset.Emit(b.win, state)
-		}
-		m.showWin(b)
+		BubbleReset.Emit(b.win, state)
 		BubblePresented.Emit(b.win, BubblePresentedMsg{ClipboardRecoveryID: state.ClipboardRecoveryID, SessionID: state.SessionID, ShowID: state.ShowID, Revision: state.Revision, Focus: trigger == "input"})
 		shown = Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
 	})
@@ -323,6 +318,7 @@ func (m *bubbleManager) windows() []*mygo.Window {
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
 		ID:                  b.id,
+		LayoutID:            b.layoutID,
 		MaxHeight:           b.maxHeight,
 		ShowID:              b.showID,
 		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
@@ -337,28 +333,27 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	}
 }
 
-// showWin displays the bubble now, or as soon as its page is ready.
+// showWin runs on the UI thread. Native readiness alone says nothing about
+// whether a reused page has rendered its replacement session.
 func (m *bubbleManager) showWin(b *bubble) {
-	show := func() {
-		m.mu.Lock()
-		valid := b.canShow
-		m.mu.Unlock()
-		if valid != nil && !valid() {
-			log.Printf("bubble: skip stale show id=%d show=%d", b.id, b.showID)
-			return
-		}
-		b.win.Show()
-		log.Printf("bubble: show id=%d show=%d visible=%t focused=%t", b.id, b.showID, b.win.IsVisible(), b.win.IsFocused())
-		m.refreshOutsideClick(b)
-	}
 	m.mu.Lock()
-	if b.ready {
-		m.mu.Unlock()
-		mygo.RunOnMain(show)
+	ready := b.ready && !b.awaitingLayout && !b.closeClaimed && b.showID > 0
+	valid := b.canShow
+	m.mu.Unlock()
+	if !ready || (valid != nil && !valid()) {
 		return
 	}
-	b.pendingShow = show
+	m.mu.Lock()
+	// OCR completion may have invalidated a layout while native sizing ran.
+	if b.awaitingLayout {
+		m.mu.Unlock()
+		return
+	}
+	b.presentationShown = true
 	m.mu.Unlock()
+	b.win.Show()
+	log.Printf("bubble: show id=%d show=%d visible=%t focused=%t", b.id, b.showID, b.win.IsVisible(), b.win.IsFocused())
+	m.refreshOutsideClick(b)
 }
 
 // Windows can deny foreground activation when a bubble shows. If it never
@@ -440,12 +435,8 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		log.Printf("bubble: page ready id=%d", b.id)
 		m.mu.Lock()
 		b.ready = true
-		show := b.pendingShow
-		b.pendingShow = nil
 		m.mu.Unlock()
-		if show != nil {
-			show()
-		}
+		m.showWin(b)
 	})
 	b.win.OnClose(func(e *mygo.CloseEvent) {
 		// The app quitting closes its windows for real: mygo's quit

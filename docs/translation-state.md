@@ -7,9 +7,9 @@
 | 范围 | 字段 | 含义与变化时机 |
 |---|---|---|
 | 全局入口 | `entryTask.id / ctx` | 新的输入、划词、OCR 入口使旧取词/识别任务失效；不直接取消独立窗口的翻译请求。 |
-| 窗口对象 | `bubble.id`、`win` | 原生窗口身份，存活期间不变。输入草稿和划词/OCR 各有一个可复用窗口；钉住后脱离复用。 |
-| 内容会话 | `sessionID` | 一轮原文内容的会话身份。复用划词/OCR 窗口时替换；重新唤起输入面板时保留。 |
-| 快照顺序 | `generation` | 同一窗口内容会话的递增编号，用于前端拒绝旧 BubbleReset；新 sessionID 是不透明字符串，不能比较先后。 |
+| 窗口对象 | `bubble.id`、`win` | 原生窗口身份，存活期间不变。输入和划词/OCR 各有一个可复用窗口；钉住后脱离复用。 |
+| 内容会话 | `sessionID` | 一轮原文内容的会话身份。每次输入、划词或 OCR 入口都替换，重新唤起输入面板也清空旧会话。 |
+| 快照顺序 | `generation` | 同一窗口内容会话的递增编号，用于前端拒绝旧 BubbleReset；同会话 OCR 阶段再以 layoutID 排序；新 sessionID 是不透明字符串，不能比较先后。 |
 | 展示轮次 | `showID` | 每次明确唤起递增，即使 sessionID 和原文不变。防止上次展示的 Close 关闭重开的面板。 |
 | 展示轮次 | `closeClaimed` | 同一 showID 的关闭至多接受一次；重新展示时复位。原生关闭也置位。 |
 | 请求顺序 | `revision` | 后端已接受的最大请求/取消/关闭版本；前端发送新命令前递增。用于全文请求、取消、关闭排序及快照同步。 |
@@ -20,17 +20,19 @@
 | 服务身份 | `serviceRequests[service]` | 该卡片当前接受哪个 reqID 的结果；在重试开始时原子登记，不等凭据读取完成。 |
 | 正在运行 | `runCancels[reqID]` | 每个请求的取消函数。一个全文请求可能仍有其他服务未完成，单卡重试不取消它。完成时移除，全文替换/取消/关闭时统一取消。 |
 | 识别阶段 | `cancelCapture`、`phase` | OCR 尚未变成翻译请求时的取消函数和展示阶段。识别结果只能写回原会话且 revision 仍为 -1 的窗口。 |
-| 延迟显示 | `canShow`、`pendingShow` | 页面尚未 Ready 时的显示资格；关闭或入口失效后不得迟到弹窗。 |
+| 延迟显示 | `canShow`、`ready`、`awaitingLayout`、`layoutID`、`presentationShown` | 原生页面就绪且当前布局确认后才显示；关闭或入口失效后不得迟到弹窗。 |
 
-前端的 `cardRequests` 对应服务请求身份，`cards` 保存结果，`cardNodes` 保留未变化的 DOM 节点。输入框保存尚未提交的草稿，不在普通失焦/重新唤起时用后端旧原文覆盖它。
+前端的 `cardRequests` 对应服务请求身份，`cards` 保存结果，`cardNodes` 保留未变化的 DOM 节点。普通失焦只隐藏；下次入口重新唤起时清空输入草稿、译文和请求身份。钉住的窗口保留独立会话。
 
 ## 展示与关闭
 
 ```mermaid
 stateDiagram-v2
     [*] --> Hidden
-    Hidden --> Presented: ShowTask / showID++
-    Presented --> Presented: 再次唤起 / showID++，保留输入会话
+    Hidden --> WaitingLayout: ShowTask / 新 sessionID、showID++
+    Presented --> WaitingLayout: 再次唤起 / 清空会话并隐藏
+    WaitingLayout --> Presented: 当前布局确认 + 原生就绪 + 入口有效
+    WaitingLayout --> Hidden: 关闭或入口失效
     Presented --> Hidden: 失焦隐藏 / 不取消翻译
     Presented --> Hidden: 有效 Close / 取消工作并推进 revision
     Presented --> Presented: 旧 showID 或旧 revision 的 Close / 忽略
@@ -111,3 +113,11 @@ stateDiagram-v2
 - `tests/bubble.test.ts`：监听回收、旧挂载结果隔离、卡片身份/焦点、前端请求过滤；没有验证 WebView2 中文输入法。
 - `internal/selection/clipboard_restore_test.go`：清空/格式写入故障注入及保护策略；没有调用 Windows 原生剪贴板。
 - Windows 的 A08、C02、B05、D06/D07 证据仍待补齐。未测不记为通过，也不因交叉编译成功而关闭发布门禁。
+
+## 新会话的隐藏布局握手
+
+- `ShowTask` 对所有入口执行 `replaceContent`，取消被替换会话的工作，递增 `layoutID`，置 `awaitingLayout`，先隐藏复用窗口，再发送新状态。
+- 前端 `apply` 在 `tick` 后调整 textarea，通过气泡根节点的 `getBoundingClientRect` 强制完成布局，调用 `BubbleSvc.Rendered` 回传 CSS 高度及 sessionID / showID / layoutID；被替换或已卸载的快照不发送确认。
+- 后端核对调用窗口和全部身份，将 CSS 高度按 Page.ZoomFactor 转为 DIP，限制尺寸并按当前锚点重新定位。只有布局确认、原生 OnReadyToShow 和入口有效性同时满足才显示。后续增长仍由 FitContent 跟踪。
+- OCR 完成更新文字时递增 layoutID，防止迟到的“正在识别”布局释放新内容的首次显示；即使旧布局已确认但原生页面尚未就绪，也必须等待文字布局；`presentationShown` 区分已确认和已显示。若识别状态已经显示，则正常随识别结果增长。关闭后的确认、旧会话确认和重复确认均不能再次显示窗口。
+- 本地依据：mygo v0.8.3 `window.go` 的 FitContent、Hidden、SetSize 与 `fit_content.go` 的 CSS → DIP 缩放；`loop.go` 的 RunOnMain 在主线程同步执行。WebView 的 Show 不会等待应用的 BubbleReset 渲染完成，因此需要显式握手。

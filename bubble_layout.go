@@ -1,6 +1,10 @@
 package main
 
-import "github.com/egoist/mygo"
+import (
+	"math"
+
+	"github.com/egoist/mygo"
+)
 
 const (
 	bubbleMargin    = 12
@@ -120,7 +124,7 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	}
 }
 
-// A hidden draft must also be reconciled before its next presentation; a
+// A hidden window must also be reconciled before its next presentation; a
 // visible bubble cannot rely on another translation causing a native resize.
 func (m *bubbleManager) refreshDisplays() {
 	mygo.RunOnMain(func() {
@@ -134,4 +138,47 @@ func (m *bubbleManager) refreshDisplays() {
 			m.reflow(b, true)
 		}
 	})
+}
+
+// Rendered applies a measured CSS height on the UI thread before exposing the
+// replacement. FitContent continues following subsequent translation updates.
+func (m *bubbleManager) Rendered(win *mygo.Window, id int64, session string, showID, layoutID int64, height float64) {
+	if win == nil || height <= 0 || math.IsNaN(height) || math.IsInf(height, 0) {
+		return
+	}
+	mygo.RunOnMain(func() {
+		m.mu.Lock()
+		b := m.byID[id]
+		accepted := b != nil && b.win == win && b.acceptLayout(session, showID, layoutID)
+		var valid func() bool
+		if accepted {
+			valid = b.canShow
+		}
+		m.mu.Unlock()
+		if !accepted || (valid != nil && !valid()) {
+			return
+		}
+		zoom := b.win.Page().ZoomFactor()
+		if zoom <= 0 {
+			zoom = 1
+		}
+		m.mu.Lock()
+		limit := b.maxHeight
+		m.mu.Unlock()
+		// Bound before converting to int, including measurements from stale DOM.
+		h := int(math.Ceil(min(height, limit) * zoom))
+		b.win.SetSize(480, max(160, min(h, bubbleMaxHeight)))
+		m.reflow(b, true)
+		m.showWin(b)
+	})
+}
+
+// acceptLayout is called under mu; OCR completion invalidates an earlier
+// recognition layout even though it belongs to the same session and show.
+func (b *bubble) acceptLayout(session string, showID, layoutID int64) bool {
+	if !b.awaitingLayout || b.closeClaimed || session != b.sessionID || showID != b.showID || layoutID != b.layoutID {
+		return false
+	}
+	b.awaitingLayout = false
+	return true
 }
