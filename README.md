@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
-  <img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
   <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
 </p>
@@ -93,7 +93,7 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 ## Development
 
-Requires Go (>= 1.24), Bun, and WebView2 Runtime.
+Requires Go (>= 1.27.3), Bun, and WebView2 Runtime. The MyGo module, `mygo-cli`, and `mygo-runtime` are pinned to 0.8.3.
 
 ```bash
 bun install                  # Install dependencies

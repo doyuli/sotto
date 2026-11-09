@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?logo=windows" alt="Platform">
   <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
-  <img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
   <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
 </p>
@@ -93,7 +93,7 @@ Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论�
 
 ## 开发与构建
 
-需准备 Go（>= 1.24）、Bun 及 WebView2 Runtime。
+需准备 Go（>= 1.27.3）、Bun 及 WebView2 Runtime。MyGo 模块、`mygo-cli` 和 `mygo-runtime` 均固定为 0.8.3。
 
 ```bash
 bun install                  # 安装依赖

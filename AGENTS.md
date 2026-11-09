@@ -1,6 +1,6 @@
 # Sotto — Agent 工作规则
 
-翻译工具 app：mygo v0.7.4（Go 后端 + WebView2 web 前端），Windows 优先，纯 Go 无 cgo。
+翻译工具 app：mygo v0.8.3（Go 后端 + WebView2 web 前端），Windows 优先，纯 Go 无 cgo。
 产品定位见 `PRODUCT.md`，品牌与视觉规范见 `DESIGN.md`；mygo 的 API 以本地源码为唯一事实来源。
 
 ## 开发循环
@@ -19,7 +19,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌
 ## 硬规则
 
 1. **不臆造 mygo API**。以本地源码为准：`go list -m -f '{{.Dir}}' github.com/egoist/mygo`
-   （模块缓存 `mygo@v0.7.4`）。窗口/事件/剪贴板/热键的常用签名先读该目录的
+   （模块缓存 `mygo@v0.8.3`）。窗口/事件/剪贴板/热键的常用签名先读该目录的
    `window.go`、`ipc.go`、`clipboard.go`、`modules.go`，不要凭记忆写。
 2. **依赖白名单**：`egoist/mygo`、`golang.org/x/sys`、`golang.org/x/time`、`go-ole/go-ole`。其余一律标准库；需要新依赖先上报，不要自行添加。
 3. **CGO_ENABLED=0 恒定**；平台代码放 `*_windows.go`（`//go:build windows`）配 `!windows` 桩。
