@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"sotto/internal/screencoords"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -118,18 +120,25 @@ func displays() []display {
 		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx != 0 {
 			d.dpi = int(dx)
 		}
-		// mygo's own conversion, so a DIP here is a DIP there.
-		d.dipX = (d.physX*96 + d.dpi/2) / d.dpi
-		d.dipY = (d.physY*96 + d.dpi/2) / d.dpi
 		out = append(out, d)
 	}
 	procEnumDisplayMonitors.Call(0, 0, displayEnumCb, 0)
 	displaySink = nil
+	if len(out) > 0 {
+		minDPI := out[0].dpi
+		for _, d := range out[1:] {
+			minDPI = min(minDPI, d.dpi)
+		}
+		for i := range out {
+			out[i].dipX = screencoords.Origin(out[i].physX, minDPI)
+			out[i].dipY = screencoords.Origin(out[i].physY, minDPI)
+		}
+	}
 	return out
 }
 
 // toPx is mygo's DIP-to-physical conversion.
-func toPx(v, dpi int) int32 { return int32((v*dpi + 48) / 96) }
+func toPx(v, dpi int) int32 { return int32(screencoords.Scale(float64(v), dpi, 96)) }
 
 // grabDIP converts the DIP rectangle to the physical pixels of the
 // display it sits on and captures them.
@@ -145,13 +154,13 @@ func grab(r Rect) (image.Image, error) {
 	best := all[0]
 	for _, d := range all {
 		best = d
-		if r.X >= d.dipX && r.X < d.dipX+d.physW*96/d.dpi &&
-			r.Y >= d.dipY && r.Y < d.dipY+d.physH*96/d.dpi {
+		if r.X >= d.dipX && r.X < d.dipX+screencoords.Scale(float64(d.physW), 96, d.dpi) &&
+			r.Y >= d.dipY && r.Y < d.dipY+screencoords.Scale(float64(d.physH), 96, d.dpi) {
 			break
 		}
 	}
-	px := int(toPx(r.X-best.dipX, best.dpi)) + best.physX
-	py := int(toPx(r.Y-best.dipY, best.dpi)) + best.physY
+	px := screencoords.ToPixels(r.X, best.physX, best.dipX, best.dpi)
+	py := screencoords.ToPixels(r.Y, best.physY, best.dipY, best.dpi)
 	pw := int(toPx(r.W, best.dpi))
 	ph := int(toPx(r.H, best.dpi))
 	if pw <= 0 || ph <= 0 {

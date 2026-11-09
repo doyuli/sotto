@@ -58,26 +58,6 @@ func TestKeyboardHookLayout(t *testing.T) {
 	}
 }
 
-func TestToDIP(t *testing.T) {
-	// mygo's conversion (internal/windows toDIP), rounding included.
-	tests := []struct {
-		v    float64
-		dpi  int
-		want int
-	}{
-		{0, 96, 0},
-		{100, 96, 100},  // (9600+48)/96 = 100.5 → 100
-		{150, 144, 100}, // 150% display: (14400+72)/144 = 100.5 → 100
-		{200, 96, 200},  // (19200+48)/96 = 200.5 → 200
-		{96, 120, 77},   // (9216+60)/120 = 77.3 → 77
-	}
-	for _, tt := range tests {
-		if got := toDIP(tt.v, tt.dpi); got != tt.want {
-			t.Errorf("toDIP(%v, %d) = %d, want %d", tt.v, tt.dpi, got, tt.want)
-		}
-	}
-}
-
 func TestCopyChordFor(t *testing.T) {
 	// Ctrl+C is the copy in nearly every app, but not in a terminal. In
 	// Windows Terminal even Ctrl+Shift+C reaches the shell as an interrupt

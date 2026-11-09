@@ -10,6 +10,8 @@ import (
 	"time"
 	"unsafe"
 
+	"sotto/internal/screencoords"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -471,17 +473,11 @@ func monitors() []monitor {
 	return out
 }
 
-// toDIP is mygo's own conversion (internal/windows toDIP), so selection
-// rects land in the coordinates its windows place.
-func toDIP(v float64, dpi int) int {
-	return int((v*96 + float64(dpi)/2) / float64(dpi))
-}
-
 // monitorAt returns the display containing a physical point, the last
 // one when the point is off them all.
-func monitorAt(x, y float64) monitor {
+func monitorAt(all []monitor, x, y float64) monitor {
 	var best monitor
-	for _, m := range monitors() {
+	for _, m := range all {
 		best = m
 		if x >= float64(m.physLeft) && x < float64(m.physRight) &&
 			y >= float64(m.physTop) && y < float64(m.physBottom) {
@@ -492,17 +488,24 @@ func monitorAt(x, y float64) monitor {
 }
 
 // physRectToDIP converts a physical-pixel rect to mygo's DIP
-// coordinates: mygo sizes each display by that display's own DPI, so
-// the point's display decides the scale.
+// coordinates, anchoring display origins at the layout's smallest DPI.
 func physRectToDIP(x, y, w, h float64) (Rect, bool) {
 	if w <= 0 || h <= 0 {
 		return Rect{}, false
 	}
-	m := monitorAt(x, y)
+	all := monitors()
+	if len(all) == 0 {
+		return Rect{}, false
+	}
+	minDPI := all[0].dpi
+	for _, m := range all[1:] {
+		minDPI = min(minDPI, m.dpi)
+	}
+	m := monitorAt(all, x, y)
 	return Rect{
-		X: toDIP(x, m.dpi),
-		Y: toDIP(y, m.dpi),
-		W: toDIP(w, m.dpi),
-		H: toDIP(h, m.dpi),
+		X: screencoords.ToDIP(x, m.physLeft, screencoords.Origin(m.physLeft, minDPI), m.dpi),
+		Y: screencoords.ToDIP(y, m.physTop, screencoords.Origin(m.physTop, minDPI), m.dpi),
+		W: screencoords.Scale(w, 96, m.dpi),
+		H: screencoords.Scale(h, 96, m.dpi),
 	}, true
 }
