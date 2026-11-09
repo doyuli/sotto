@@ -20,7 +20,7 @@
 | 服务身份 | `serviceRequests[service]` | 该卡片当前接受哪个 reqID 的结果；在重试开始时原子登记，不等凭据读取完成。 |
 | 正在运行 | `runCancels[reqID]` | 每个请求的取消函数。一个全文请求可能仍有其他服务未完成，单卡重试不取消它。完成时移除，全文替换/取消/关闭时统一取消。 |
 | 识别阶段 | `cancelCapture`、`phase` | OCR 尚未变成翻译请求时的取消函数和展示阶段。识别结果只能写回原会话且 revision 仍为 -1 的窗口。 |
-| 延迟显示 | `canShow`、`ready`、`awaitingLayout`、`layoutID`、`presentationShown` | 原生页面就绪且当前布局确认后才显示；关闭或入口失效后不得迟到弹窗。 |
+| 延迟显示 | `canShow`、`ready`、`awaitingLayout`、`layoutID`、`layoutSequence`、`presentationShown` | 原生页面就绪且当前布局确认后才显示；关闭或入口失效后不得迟到弹窗。 |
 
 前端的 `cardRequests` 对应服务请求身份，`cards` 保存结果，`cardNodes` 保留未变化的 DOM 节点。普通失焦只隐藏；下次入口重新唤起时清空输入草稿、译文和请求身份。钉住的窗口保留独立会话。
 
@@ -114,10 +114,12 @@ stateDiagram-v2
 - `internal/selection/clipboard_restore_test.go`：清空/格式写入故障注入及保护策略；没有调用 Windows 原生剪贴板。
 - Windows 的 A08、C02、B05、D06/D07 证据仍待补齐。未测不记为通过，也不因交叉编译成功而关闭发布门禁。
 
-## 新会话的隐藏布局握手
+## 新会话与内容尺寸更新
 
 - `ShowTask` 对所有入口执行 `replaceContent`，取消被替换会话的工作，递增 `layoutID`，置 `awaitingLayout`，先隐藏复用窗口，再发送新状态。
-- 前端 `apply` 在 `tick` 后调整 textarea，通过气泡根节点的 `getBoundingClientRect` 强制完成布局，调用 `BubbleSvc.Rendered` 回传 CSS 高度及 sessionID / showID / layoutID；被替换或已卸载的快照不发送确认。
-- 后端核对调用窗口和全部身份，将 CSS 高度按 Page.ZoomFactor 转为 DIP，限制尺寸并按当前锚点重新定位。只有布局确认、原生 OnReadyToShow 和入口有效性同时满足才显示。后续增长仍由 FitContent 跟踪。
-- OCR 完成更新文字时递增 layoutID，防止迟到的“正在识别”布局释放新内容的首次显示；即使旧布局已确认但原生页面尚未就绪，也必须等待文字布局；`presentationShown` 区分已确认和已显示。若识别状态已经显示，则正常随识别结果增长。关闭后的确认、旧会话确认和重复确认均不能再次显示窗口。
-- 本地依据：mygo v0.8.3 `window.go` 的 FitContent、Hidden、SetSize 与 `fit_content.go` 的 CSS → DIP 缩放；`loop.go` 的 RunOnMain 在主线程同步执行。WebView 的 Show 不会等待应用的 BubbleReset 渲染完成，因此需要显式握手。
+- 前端 `apply` 在 `tick` 后调整 textarea 并同步测量气泡根节点。`ResizeObserver` 持续观察该节点，覆盖译文流式增长、卡片折叠、输入框变化和缩放；窗口 resize 时也测量。每次读取当前 DOM，不使用可能过期的 observer entry；相同身份和宽高去重，卸载后断开 observer 和窗口监听。
+- 每条 `BubbleSvc.Rendered` 测量携带 sessionID / showID / layoutID、CSS 高度及页面单调递增的 sequence（组件重新挂载不重置；Ready 快照提供后端已接受序号的下界，页面重新加载后继续递增）。后端在 UI 线程核对调用窗口、全部身份和 sequence，只接受更新的测量；较高译文先到、较早短布局后到时，后者不能覆盖尺寸。导航取消的旧页面 IPC 在 UI 线程执行前再次校验 context，不能写回新页面。后续有效测量也可以让窗口正常缩短。
+- **尺寸只有一条写入通路**：气泡禁用 mygo FitContent，由 Rendered 将 CSS 高度按 Page.ZoomFactor 转为 DIP，通过 SetContentSize 更新内容区尺寸，并按工作区和锚点重新定位。固定宽度仍由窗口约束控制。避免应用 SetSize 与 FitContent 的缓存及去重逻辑竞争。
+- 只有布局确认、原生 OnReadyToShow 和入口有效性同时满足才首次显示；`claimShow` 在锁内只允许每个展示轮次显示一次。后续测量仍调整尺寸，但不会重新显示失焦隐藏的窗口。钉住窗口的后续尺寸更新不受新入口使旧 canShow 失效的影响。
+- OCR 完成更新文字时递增 layoutID，防止迟到的“正在识别”布局释放新内容的首次显示；即使旧布局已确认但原生页面尚未就绪，也必须等待文字布局。`presentationShown` 区分已确认和已显示。
+- 本地依据：mygo v0.8.3 `bridge.go` 中绑定调用由 goroutine 执行，content-size 在主线程同步处理；`window.go` 的 SetSize 不同步 FitContent 缓存，`fit_content.go` 与前端 sizeReporter 会对相同尺寸去重。因此不能混用两条内容尺寸写入通路。SetContentSize 的 DIP 语义及 Page.ZoomFactor 以本地源码为准。

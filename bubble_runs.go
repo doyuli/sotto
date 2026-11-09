@@ -15,6 +15,7 @@ func (b *bubble) replaceContent(cfg config.Settings, trigger, text, phase, messa
 	b.stopWork()
 	b.generation++
 	b.layoutID++
+	b.layoutSequence = 0
 	b.awaitingLayout = true
 	b.sessionID = newRequestID()
 	b.reqID = b.sessionID

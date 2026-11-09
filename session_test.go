@@ -366,11 +366,11 @@ func TestLayoutAcknowledgementOwnership(t *testing.T) {
 			case "closed":
 				b.closeClaimed = true
 			}
-			if b.acceptLayout(session, show, layout) || !b.awaitingLayout {
+			if b.acceptLayout(session, show, layout, 1) || !b.awaitingLayout {
 				t.Fatal("stale acknowledgement released the presentation")
 			}
 			b.closeClaimed = false
-			if !b.acceptLayout("current", 2, 3) || b.awaitingLayout || b.acceptLayout("current", 2, 3) {
+			if !b.acceptLayout("current", 2, 3, 1) || b.awaitingLayout || b.acceptLayout("current", 2, 3, 1) {
 				t.Fatal("current layout must release presentation exactly once")
 			}
 		})
@@ -379,17 +379,97 @@ func TestLayoutAcknowledgementOwnership(t *testing.T) {
 
 func TestOCRCompletionBeforeFirstShowRequiresReplacementLayout(t *testing.T) {
 	b := &bubble{sessionID: "ocr", showID: 1, layoutID: 1, awaitingLayout: true}
-	if !b.acceptLayout("ocr", 1, 1) {
+	if !b.acceptLayout("ocr", 1, 1, 1) {
 		t.Fatal("recognition layout rejected")
 	}
 	// Native readiness has not arrived yet; accepting a layout is not a show.
 	b.advanceCaptureLayout()
-	if !b.awaitingLayout || b.acceptLayout("ocr", 1, 1) || !b.acceptLayout("ocr", 1, 2) {
+	if !b.awaitingLayout || b.acceptLayout("ocr", 1, 1, 1) || !b.acceptLayout("ocr", 1, 2, 2) {
 		t.Fatal("OCR completion reused the hidden recognition layout")
 	}
 	b.presentationShown = true
 	b.advanceCaptureLayout()
 	if b.awaitingLayout {
-		t.Fatal("visible OCR completion must continue using FitContent")
+		t.Fatal("visible OCR completion must continue using content measurements")
+	}
+}
+
+func TestOrderedLayoutMeasurementsCannotOverwriteNewerContent(t *testing.T) {
+	b := &bubble{sessionID: "translation", showID: 1, layoutID: 1, awaitingLayout: true}
+	height := 400 // the preceding session's native size
+	apply := func(sequence int64, measured float64) {
+		if b.acceptLayout("translation", 1, 1, sequence) {
+			height = bubbleLayoutHeight(measured, 760, 1)
+		}
+	}
+	// IPC goroutines may dispatch the newer long result before the old loader.
+	apply(2, 560)
+	apply(1, 200)
+	if height != 560 || b.layoutSequence != 2 {
+		t.Fatal("late short layout overwrote the newer translation")
+	}
+	apply(2, 200)
+	apply(0, 200)
+	if height != 560 {
+		t.Fatal("duplicate or invalid measurement changed the height")
+	}
+	// A genuinely newer fold must still shrink; height itself is not monotonic.
+	apply(3, 200)
+	apply(2, 560)
+	if height != 200 || b.layoutSequence != 3 {
+		t.Fatal("newer fold did not win over the older long result")
+	}
+}
+
+func TestFirstPresentationRequiresReadinessAndCannotRepeat(t *testing.T) {
+	for _, nativeFirst := range []bool{false, true} {
+		b := &bubble{sessionID: "s", showID: 1, layoutID: 1, awaitingLayout: true}
+		if nativeFirst {
+			b.ready = true
+		} else {
+			b.acceptLayout("s", 1, 1, 1)
+		}
+		if b.claimShow() {
+			t.Fatal("presentation bypassed native or layout readiness")
+		}
+		b.ready = true
+		if nativeFirst {
+			b.acceptLayout("s", 1, 1, 1)
+		}
+		if !b.claimShow() {
+			t.Fatal("ready presentation did not show")
+		}
+		b.acceptLayout("s", 1, 1, 2)
+		if b.claimShow() {
+			t.Fatal("ongoing content measurement reopened a dismissed bubble")
+		}
+	}
+	b := &bubble{ready: true, showID: 1, closeClaimed: true}
+	if b.claimShow() {
+		t.Fatal("closed bubble presented")
+	}
+}
+
+func TestReadyLayoutSequenceFloorAndCanceledNavigation(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w, sessionID: "s", showID: 1, layoutID: 1}
+	m.byID[1] = b
+	if !b.acceptLayout("s", 1, 1, 40) {
+		t.Fatal("could not seed the accepted measurement")
+	}
+	state, _ := m.State(config.Default(), 1)
+	if state.LayoutSequence != 40 {
+		t.Fatal("Ready omitted the sequence floor needed after a page reload")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// A queued binding from a navigated-away page must not claim a sequence.
+	m.Rendered(ctx, w, 1, "s", 1, 1, 41, 200)
+	if b.layoutSequence != 40 {
+		t.Fatal("canceled page measurement claimed the next sequence")
+	}
+	if !b.acceptLayout("s", 1, 1, state.LayoutSequence+1) || b.acceptLayout("s", 1, 1, 40) {
+		t.Fatal("reloaded page cannot advance past its Ready floor")
 	}
 }

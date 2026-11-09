@@ -181,9 +181,9 @@ func (s BubbleSvc) Ready(id int64) (BubbleState, error) {
 	return state, nil
 }
 
-// Rendered acknowledges the current DOM layout before a hidden bubble is shown.
-func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, showID, layoutID int64, height float64) {
-	s.app.bubbles.Rendered(mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, height)
+// Rendered reports ordered content measurements for initial and ongoing layout.
+func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, showID, layoutID, sequence int64, height float64) {
+	s.app.bubbles.Rendered(ctx, mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, sequence, height)
 }
 
 // Pin keeps the bubble on screen when it loses focus.

@@ -1,3 +1,8 @@
+<script module lang="ts">
+  // Route remounts share the page's counter, including IPC still in flight.
+  let layoutSequence = 0;
+</script>
+
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
@@ -41,6 +46,8 @@
   let bubbleElem: HTMLDivElement | undefined = $state();
   let scrollElem: HTMLDivElement | undefined = $state();
   let maxHeight = $state(760);
+
+  let lastLayout = "";
 
   const cards = new SvelteMap<string, CardState>();
   const cardRequests = new Map<string, string>();
@@ -90,6 +97,7 @@
     ) {
       return;
     }
+    layoutSequence = Math.max(layoutSequence, st.layoutSequence);
     bubbleState = st;
     maxHeight = st.maxHeight || 760;
     const appliedState = bubbleState;
@@ -133,13 +141,28 @@
       growTextarea();
       if (scrollElem) scrollElem.scrollTop = 0;
       if (st.trigger === "input") textareaElem?.focus();
-      // Layout reads flush textarea sizing even while the native window is hidden.
-      const height = bubbleElem?.getBoundingClientRect().height;
-      if (height && height > 0) {
-        void BubbleSvc.rendered(bubbleID, st.sessionID, st.showID, st.layoutID, height).catch(() => {
-          // A closed window may reject its final layout acknowledgement.
-        });
-      }
+      reportLayout();
+    });
+  }
+
+  function observeLayout(node: HTMLDivElement): { destroy: () => void } {
+    // Keep the observer with its DOM node if a failed Ready replaces the root.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(reportLayout);
+    observer?.observe(node);
+    return { destroy: () => observer?.disconnect() };
+  }
+
+  function reportLayout(): void {
+    if (!bubbleState || !bubbleElem) return;
+    // Read the live DOM rather than cached observer entries from an older state.
+    const { width, height } = bubbleElem.getBoundingClientRect();
+    if (!(height > 0) || !Number.isFinite(height)) return;
+    const { sessionID, showID, layoutID } = bubbleState;
+    const key = JSON.stringify([sessionID, showID, layoutID, width, height]);
+    if (key === lastLayout) return;
+    lastLayout = key;
+    void BubbleSvc.rendered(bubbleID, sessionID, showID, layoutID, ++layoutSequence, height).catch(() => {
+      // A closed window may reject its final content measurement.
     });
   }
 
@@ -334,6 +357,8 @@
       collapsedCards[name] = sessionStorage.getItem(`collapse:${name}`) === "1";
     }
 
+    window.addEventListener("resize", reportLayout);
+
     let ready = false;
     let disposed = false;
     const queued: (() => void)[] = [];
@@ -429,6 +454,7 @@
 
     return () => {
       disposed = true;
+      window.removeEventListener("resize", reportLayout);
       for (const off of subscriptions) off();
       queued.length = 0;
       bubbleState = null;
@@ -445,7 +471,7 @@
 {#if readyFailed}
   <div class="bubble-error" role="status">气泡已关闭</div>
 {:else}
-  <div bind:this={bubbleElem} class="bubble" class:pinned={isPinned}
+  <div bind:this={bubbleElem} use:observeLayout class="bubble" class:pinned={isPinned}
     style:--bubble-max-height={`${maxHeight}px`}
   >
     <!-- Top Bar -->

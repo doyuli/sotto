@@ -63,6 +63,7 @@ type bubble struct {
 	awaitingLayout    bool
 	presentationShown bool
 	layoutID          int64
+	layoutSequence    int64
 	offBlur           func() // unregisters focus hiding; Pin calls it
 	// offOutsideClick belongs to the main thread, like the window it watches.
 	offOutsideClick func()
@@ -319,6 +320,7 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
 		ID:                  b.id,
 		LayoutID:            b.layoutID,
+		LayoutSequence:      b.layoutSequence,
 		MaxHeight:           b.maxHeight,
 		ShowID:              b.showID,
 		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
@@ -337,23 +339,30 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 // whether a reused page has rendered its replacement session.
 func (m *bubbleManager) showWin(b *bubble) {
 	m.mu.Lock()
-	ready := b.ready && !b.awaitingLayout && !b.closeClaimed && b.showID > 0
 	valid := b.canShow
 	m.mu.Unlock()
-	if !ready || (valid != nil && !valid()) {
+	if valid != nil && !valid() {
 		return
 	}
 	m.mu.Lock()
-	// OCR completion may have invalidated a layout while native sizing ran.
-	if b.awaitingLayout {
-		m.mu.Unlock()
+	show := b.claimShow()
+	m.mu.Unlock()
+	if !show {
 		return
 	}
-	b.presentationShown = true
-	m.mu.Unlock()
 	b.win.Show()
 	log.Printf("bubble: show id=%d show=%d visible=%t focused=%t", b.id, b.showID, b.win.IsVisible(), b.win.IsFocused())
 	m.refreshOutsideClick(b)
+}
+
+// claimShow commits each first presentation once under mu. Further content
+// measurements resize hidden windows without reopening a dismissed bubble.
+func (b *bubble) claimShow() bool {
+	if !b.ready || b.awaitingLayout || b.closeClaimed || b.showID == 0 || b.presentationShown {
+		return false
+	}
+	b.presentationShown = true
+	return true
 }
 
 // Windows can deny foreground activation when a bubble shows. If it never
@@ -416,9 +425,9 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		MaxWidth:        480,
 		MinHeight:       160,
 		MaxHeight:       760,
-		DisableResize:   true, // the bubble has a fixed width
-		FitContent:      true, // the bubble grows with its cards
-		Hidden:          true, // shown once placed and ready
+		DisableResize:   true,  // the bubble has a fixed width
+		FitContent:      false, // only ordered app measurements may resize the bubble
+		Hidden:          true,  // shown once placed and ready
 		Frameless:       true,
 		Panel:           true, // floats over every app, out of the taskbar
 		SkipTaskbar:     true,

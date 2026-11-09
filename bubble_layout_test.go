@@ -130,3 +130,26 @@ func TestBubblePlacementKeepsLiveAnchorDisplayDuringGrowth(t *testing.T) {
 		t.Fatal("content growth switched a still-connected anchor display")
 	}
 }
+
+func TestBubbleMeasuredHeightUsesZoomAndWorkArea(t *testing.T) {
+	for _, tt := range []struct {
+		name                string
+		height, limit, zoom float64
+		want                int
+	}{
+		{"100 percent", 200, 760, 1, 200},
+		{"125 percent", 200, 608, 1.25, 250},
+		{"150 percent fractional", 200.5, 760 / 1.5, 1.5, 301},
+		{"200 percent work area", 500, 300, 2, 600},
+		{"minimum", 80, 760, 1, 160},
+		{"maximum", 1e100, 760, 2, 760},
+		{"rounding tolerance", 200.001, 760, 1, 200},
+		{"default zoom", 200, 760, 0, 200},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bubbleLayoutHeight(tt.height, tt.limit, tt.zoom); got != tt.want {
+				t.Fatalf("height = %d; want %d", got, tt.want)
+			}
+		})
+	}
+}

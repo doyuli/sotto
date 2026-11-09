@@ -551,7 +551,7 @@ test("new input clears old draft and results before acknowledging measured layou
     await settle();
     expect(input().value).toBe("");
     expect(page.target.textContent).not.toContain("old translation");
-    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "fresh", 2, 2, 218.5]);
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "fresh", 2, 2, expect.any(Number), 218.5]);
   } finally {
     measure.mockRestore();
   }
@@ -567,7 +567,7 @@ test("only the latest OCR layout is acknowledged when completion supersedes reco
     await settle();
     expect(input().value).toBe("recognized text");
     const acks = page.backend.calls("BubbleSvc.Rendered").filter((args) => args[1] === "ocr");
-    expect(acks).toEqual([[1, "ocr", 2, 3, 240]]);
+    expect(acks).toEqual([[1, "ocr", 2, 3, expect.any(Number), 240]]);
   } finally {
     measure.mockRestore();
   }
@@ -583,4 +583,94 @@ test("late recognition snapshot cannot replace completed OCR content or its layo
   await settle();
   expect(input().value).toBe("recognized text");
   expect(page.target.textContent).not.toContain("正在识别文字");
+});
+
+test("one observer reports growth, folding and resize in order and disconnects on unmount", async () => {
+  let notify!: () => void;
+  const observe = vi.fn();
+  const disconnect = vi.fn();
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: ResizeObserverCallback) {
+      notify = () => callback([], this as unknown as ResizeObserver);
+    }
+    observe = observe;
+    disconnect = disconnect;
+  });
+  let height = 200;
+  let width = 480;
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => ({ width, height }) as DOMRect);
+  try {
+    await openBubble();
+    expect(observe).toHaveBeenCalledWith(page.target.querySelector(".bubble"));
+    const firstSequence = page.backend.calls("BubbleSvc.Rendered")[0]![4] as number;
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "test-session", 1, 1, firstSequence, 200]);
+    notify(); // unchanged dimensions are deduplicated
+    expect(page.backend.calls("BubbleSvc.Rendered")).toHaveLength(1);
+
+    update("google", "a longer translation");
+    await tick();
+    height = 560;
+    notify();
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "test-session", 1, 1, firstSequence + 1, 560]);
+    height = 200; // a newer card fold is allowed to shrink the window
+    notify();
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "test-session", 1, 1, firstSequence + 2, 200]);
+    width = 384; // page zoom can change width without changing measured height
+    window.dispatchEvent(new Event("resize"));
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)).toEqual([1, "test-session", 1, 1, firstSequence + 3, 200]);
+
+    await page.destroy();
+    expect(disconnect).toHaveBeenCalledOnce();
+    height = 760;
+    notify();
+    window.dispatchEvent(new Event("resize"));
+    expect(page.backend.calls("BubbleSvc.Rendered")).toHaveLength(4);
+  } finally {
+    measure.mockRestore();
+  }
+});
+
+test("layout sequence resumes above Ready floor and survives remount with old IPC still in flight", async () => {
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 480, height: 240 } as DOMRect);
+  try {
+    page.backend.bubble.layoutSequence = 1_000_000;
+    await openBubble();
+    const first = page.backend.calls("BubbleSvc.Rendered").at(-1)!;
+    expect(first[4]).toBeGreaterThan(page.backend.bubble.layoutSequence);
+    await page.destroy();
+    // Ready may not yet include the preceding mount's in-flight measurement.
+    await openBubble();
+    const next = page.backend.calls("BubbleSvc.Rendered").at(-1)!;
+    expect(next[4]).toBeGreaterThan(first[4] as number);
+  } finally {
+    measure.mockRestore();
+  }
+});
+
+test("recovering from Ready failure observes the replacement bubble root", async () => {
+  const observers: { observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; notify: () => void }[] = [];
+  vi.stubGlobal("ResizeObserver", class {
+    observe = vi.fn();
+    disconnect = vi.fn();
+    constructor(callback: ResizeObserverCallback) {
+      observers.push({ observe: this.observe, disconnect: this.disconnect, notify: () => callback([], this as unknown as ResizeObserver) });
+    }
+  });
+  let height = 200;
+  const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => ({ width: 480, height }) as DOMRect);
+  try {
+    page.backend.override("BubbleSvc.Ready", () => { throw new Error("temporary failure"); });
+    page.track(mount(BubblePage, { target: page.target, props: { id: 1 } }));
+    await vi.waitFor(() => expect(page.target.querySelector(".bubble-error")).not.toBeNull());
+    expect(observers[0]!.disconnect).toHaveBeenCalledOnce();
+    page.backend.emit("bubble-reset", structuredClone(page.backend.bubble));
+    await settle();
+    expect(observers).toHaveLength(2);
+    expect(observers[1]!.observe).toHaveBeenCalledWith(page.target.querySelector(".bubble"));
+    height = 500;
+    observers[1]!.notify();
+    expect(page.backend.calls("BubbleSvc.Rendered").at(-1)?.at(-1)).toBe(500);
+  } finally {
+    measure.mockRestore();
+  }
 });

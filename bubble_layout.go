@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math"
 
 	"github.com/egoist/mygo"
@@ -140,45 +141,53 @@ func (m *bubbleManager) refreshDisplays() {
 	})
 }
 
-// Rendered applies a measured CSS height on the UI thread before exposing the
-// replacement. FitContent continues following subsequent translation updates.
-func (m *bubbleManager) Rendered(win *mygo.Window, id int64, session string, showID, layoutID int64, height float64) {
-	if win == nil || height <= 0 || math.IsNaN(height) || math.IsInf(height, 0) {
+// Rendered is the sole content-size writer. Every measurement, including
+// translation growth and card folding, follows the same sequence checks.
+func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64, session string, showID, layoutID, sequence int64, height float64) {
+	if ctx.Err() != nil || win == nil || height <= 0 || math.IsNaN(height) || math.IsInf(height, 0) {
 		return
 	}
 	mygo.RunOnMain(func() {
-		m.mu.Lock()
-		b := m.byID[id]
-		accepted := b != nil && b.win == win && b.acceptLayout(session, showID, layoutID)
-		var valid func() bool
-		if accepted {
-			valid = b.canShow
-		}
-		m.mu.Unlock()
-		if !accepted || (valid != nil && !valid()) {
+		// Navigation cancels the old page context, including queued measurements.
+		if ctx.Err() != nil {
 			return
 		}
-		zoom := b.win.Page().ZoomFactor()
-		if zoom <= 0 {
-			zoom = 1
+		m.mu.Lock()
+		b := m.byID[id]
+		accepted := b != nil && b.win == win && b.acceptLayout(session, showID, layoutID, sequence)
+		m.mu.Unlock()
+		if !accepted {
+			return
 		}
+		// A pinned bubble still resizes after a new entry invalidates canShow.
+		// Entry ownership gates first presentation, not ongoing content layout.
+		m.reflow(b, false)
+		zoom := b.win.Page().ZoomFactor()
 		m.mu.Lock()
 		limit := b.maxHeight
 		m.mu.Unlock()
-		// Bound before converting to int, including measurements from stale DOM.
-		h := int(math.Ceil(min(height, limit) * zoom))
-		b.win.SetSize(480, max(160, min(h, bubbleMaxHeight)))
+		b.win.SetContentSize(480, bubbleLayoutHeight(height, limit, zoom))
 		m.reflow(b, true)
 		m.showWin(b)
 	})
 }
 
-// acceptLayout is called under mu; OCR completion invalidates an earlier
-// recognition layout even though it belongs to the same session and show.
-func (b *bubble) acceptLayout(session string, showID, layoutID int64) bool {
-	if !b.awaitingLayout || b.closeClaimed || session != b.sessionID || showID != b.showID || layoutID != b.layoutID {
+// Measurements share one monotonic sequence for the mounted page. The layout
+// identity additionally rejects old OCR stages and old sessions.
+func (b *bubble) acceptLayout(session string, showID, layoutID, sequence int64) bool {
+	if b.closeClaimed || session != b.sessionID || showID != b.showID || layoutID != b.layoutID || sequence <= b.layoutSequence {
 		return false
 	}
+	b.layoutSequence = sequence
 	b.awaitingLayout = false
 	return true
+}
+
+func bubbleLayoutHeight(height, limit, zoom float64) int {
+	if zoom <= 0 {
+		zoom = 1
+	}
+	// Clamp before conversion and round fractional CSS sizes as mygo does.
+	h := int(math.Ceil(min(min(height, limit)*zoom, bubbleMaxHeight) - 1.0/128))
+	return max(160, h)
 }

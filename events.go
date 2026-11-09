@@ -10,6 +10,7 @@ import (
 // its page mounts, and what BubbleReset carries when an unpinned bubble
 // is reused for a new query.
 type BubbleState struct {
+	LayoutSequence      int64                  `json:"layoutSequence"`
 	LayoutID            int64                  `json:"layoutID"`
 	MaxHeight           float64                `json:"maxHeight"`
 	ClipboardRecoveryID string                 `json:"clipboardRecoveryID"`
