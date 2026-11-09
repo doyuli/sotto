@@ -21,7 +21,7 @@ Sotto is a quiet, precise Windows utility: it stays out of the way, shows the an
 
 ## Shared tokens
 
-The bubble and settings share these tokens. Both follow the OS color scheme. The screenshot overlay uses the root palette.
+The bubble and settings share these tokens. Both follow the OS color scheme. The native screenshot overlay uses the fixed palette below.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
@@ -79,6 +79,13 @@ The service title strip is darker than the card in light mode and lighter in dar
 - **Result cards**: deeper title strip, lighter body, collapse chevron (down expanded, left collapsed), full-height translation text with no card scrollbar, tools row with naming-style icons then speak/copy.
 - **Overflow and placement**: the bubble grows to 760 DIPs or the display work area minus 12 DIPs on each edge, whichever is smaller. The header is outside the scroll region; the composer, language bar, and results scroll together below it. Content and composer scrollbar gutters always occupy space; thumbs appear during scrolling and fade after 900 ms of inactivity. Prefer an opening side with reading space, keep that side while results grow, and stay inside the work area. Pinned windows retain their dragged position.
 - **States**: skeleton lines until the first text arrives; streamed translations show cumulative text with a quiet “生成中” label in the title strip. Copy, speech, and naming formats become available only after successful completion. Interrupted translations retain their text with an incomplete notice and retry action. Red text plus retry for errors; empty composer hides the cards; focus rings use the accent.
+
+## Screenshot overlay
+
+- Native mygo `ui`, one full-display transparent window per monitor. The idle overlay paints nothing over the live desktop: no veil or instruction text.
+- Crosshair cursor and a 1-DIP `#4cc2ff` selection border; the selection interior has a light blue `#4cc2ff26` fill (15% opacity). The rounded size badge uses blue `#2f7fe8`, white 11-DIP text and explicitly labels DIPs; it stays within the screen.
+- Selection borders and size labels use the same colors in light and dark appearance; no instruction pill is shown.
+- Minimum region is 8×8 DIPs. Esc, right-click and pointer-capture loss cancel; gestures do not continue across displays. No desktop screenshot is painted in the overlay.
 
 ## Motion
 

@@ -6,7 +6,7 @@ web
 
 ## Stack
 
-Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3, WebView2, Vite + TypeScript frontend.
+Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3 native screenshot selection, and WebView2 bubble/settings with Vite + TypeScript.
 
 ## Users
 
@@ -33,6 +33,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 - Services: Bilibili IndexTranslate, SiliconFlow, Zhipu, DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx), plus a dictionary card for lone English words. Only IndexTranslate is enabled by default.
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
 - Selection via UIA with a clipboard fallback; OCR via PP-OCR with Windows.Media.Ocr fallback.
+- Screenshot selection uses a reusable native overlay per display over the live desktop. It is fully transparent while idle; dragging shows a selection border, a light translucent blue fill and a DIP size badge. Dragging stays on one display; Esc, right-click or lost pointer capture cancels. The overlay hides before GDI captures its local DIP rectangle; selecting a region does not freeze the desktop or preload OCR.
 - Each OCR engine releases its sessions or system worker after 5 minutes idle and reloads on demand. The shared ONNX runtime stays loaded; OCR and fallback remain serialized through one admission gate.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.

@@ -116,6 +116,8 @@ func (a *application) ready() {
 	a.bubbles = newBubbleManager(a.isQuitting)
 	mygo.Screen.OnDisplaysChanged(a.bubbles.refreshDisplays)
 	a.snip.isQuitting = a.isQuitting
+	a.snip.done = a.snipDone
+	mygo.Screen.OnDisplaysChanged(a.snip.refreshDisplays)
 	if runtime.GOOS == "windows" {
 		// Start WebView2 initialization while the app is launching, before
 		// the first selection needs a window. The page stays hidden until used.

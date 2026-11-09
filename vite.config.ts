@@ -9,7 +9,7 @@ export default defineConfig({
   },
   build: {
     rolldownOptions: {
-      input: ["bubble.html", "settings.html", "snip.html"],
+      input: ["bubble.html", "settings.html"],
     },
   },
   server: {

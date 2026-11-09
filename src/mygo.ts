@@ -136,13 +136,6 @@ export interface Settings {
   autoUpdate: boolean;
 }
 
-export interface SnipRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
 /**
  * TranslationUpdateMsg carries cumulative text for one service and request.
  * Streaming is true until completion; Err settles a failure without losing text.
@@ -260,15 +253,8 @@ export const HotkeySvc = {
   },
 } as const;
 
-/** SnipSvc serves the screenshot selection page. */
+/** SnipSvc starts native screenshot selection from the bubble's recovery action. */
 export const SnipSvc = {
-  /**
-   * Done closes a shot: rect is the dragged rectangle in client
-   * coordinates, nil for a cancel.
-   */
-  done(sessionID: number, rect: SnipRect | null): Promise<void> {
-    return call("SnipSvc.Done", sessionID, rect);
-  },
   /** Start opens a new screenshot session from a recovery action. */
   start(): Promise<void> {
     return call("SnipSvc.Start");

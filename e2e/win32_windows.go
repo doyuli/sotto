@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -23,6 +24,8 @@ var (
 	procSetForegroundWindow        = modUser32.NewProc("SetForegroundWindow")
 	procGetWindowThreadProcessId   = modUser32.NewProc("GetWindowThreadProcessId")
 	procEnumWindows                = modUser32.NewProc("EnumWindows")
+	procEnumChildWindows           = modUser32.NewProc("EnumChildWindows")
+	procGetClassNameW              = modUser32.NewProc("GetClassNameW")
 	procIsWindowVisible            = modUser32.NewProc("IsWindowVisible")
 	procGetWindowLongW             = modUser32.NewProc("GetWindowLongW")
 	procGetLayeredWindowAttributes = modUser32.NewProc("GetLayeredWindowAttributes")
@@ -32,16 +35,17 @@ var (
 	procRegisterClassExW           = modUser32.NewProc("RegisterClassExW")
 	procAllowSetForegroundWindow   = modUser32.NewProc("AllowSetForegroundWindow")
 
-	procGetModuleHandleW = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetModuleHandleW")
+	procGetModuleHandleW      = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetModuleHandleW")
+	procDwmGetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmGetWindowAttribute")
 )
 
 const (
-	inputKeyboard  = 1
-	keyeventfKeyUp = 0x0002
-	vkMenu         = 0x12                // Alt
-	gwlExStyle     = uintptr(0xFFFFFFEC) // -20 as an index
-	wsExLayered    = 0x00080000
-	lwaAlpha       = 2
+	inputKeyboard           = 1
+	keyeventfKeyUp          = 0x0002
+	gwlExStyle              = uintptr(0xFFFFFFEC) // -20 as an index
+	wsExLayered             = 0x00080000
+	wsExNoRedirectionBitmap = 0x00200000
+	lwaAlpha                = 2
 )
 
 // Modifier virtual keys, by the names in a mygo accelerator.
@@ -64,11 +68,6 @@ type keyboardInput struct {
 	pad2    uint32
 	Extra   uintptr
 	pad3    [8]byte
-}
-
-// tap sends Alt+vk down and up, as a user's chord would arrive.
-func tap(vk uint16) {
-	tapAccel("Alt+" + keyName(vk))
 }
 
 // tapAccel presses a mygo accelerator ("Ctrl+Alt+A") down and up, so the
@@ -111,21 +110,10 @@ func keyVK(name string) uint16 {
 		}
 	case name == "Space":
 		return 0x20
+	case name == "Escape":
+		return 0x1B
 	}
 	return 0
-}
-
-// keyName is a virtual key's accelerator name, the inverse of keyVK.
-func keyName(vk uint16) string {
-	switch {
-	case vk >= 'A' && vk <= 'Z', vk >= '0' && vk <= '9':
-		return string(rune(vk))
-	case vk >= 0x70 && vk <= 0x7B:
-		return fmt.Sprintf("F%d", vk-0x70+1)
-	case vk == 0x20:
-		return "Space"
-	}
-	return ""
 }
 
 // foregroundPID is the process owning the foreground window.
@@ -205,34 +193,86 @@ func syscallUTF16(s string) ([]uint16, error) {
 	return windows.UTF16FromString(s)
 }
 
-// visibleWindows lists the app's visible top-level windows: a count and
-// whether any is layered, with its alpha.
-func visibleWindows(pid uint32) (count int, layered bool, alpha byte) {
-	cb := syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
-		var owner uint32
-		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&owner)))
-		if owner != pid {
-			return 1
-		}
-		vis, _, _ := procIsWindowVisible.Call(hwnd)
-		if vis == 0 {
-			return 1
-		}
-		count++
-		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
-		if ex&wsExLayered != 0 {
-			layered = true
-			var key uint32
-			var a byte
-			var flags uint32
-			if ok, _, _ := procGetLayeredWindowAttributes.Call(hwnd, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&a)), uintptr(unsafe.Pointer(&flags))); ok != 0 {
-				alpha = a
-			}
+// Win32 retains callback addresses, so polling reuses these callbacks.
+var (
+	enumerationMu  sync.Mutex
+	windowSink     func(uintptr)
+	childSink      func(uintptr)
+	windowCallback = syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
+		if windowSink != nil {
+			windowSink(hwnd)
 		}
 		return 1
 	})
-	procEnumWindows.Call(cb, 0)
-	return count, layered, alpha
+	childCallback = syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
+		if childSink != nil {
+			childSink(hwnd)
+		}
+		return 1
+	})
+)
+
+func visibleHandles(pid uint32) []uintptr {
+	enumerationMu.Lock()
+	defer enumerationMu.Unlock()
+	var handles []uintptr
+	windowSink = func(hwnd uintptr) {
+		var owner uint32
+		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&owner)))
+		if owner != pid {
+			return
+		}
+		vis, _, _ := procIsWindowVisible.Call(hwnd)
+		if vis == 0 {
+			return
+		}
+		handles = append(handles, hwnd)
+	}
+	procEnumWindows.Call(windowCallback, 0)
+	windowSink = nil
+	return handles
+}
+
+// A visible snip must have native content and no WebView child. DWM cloaking
+// also has to end: IsWindowVisible alone accepts an unpresented native frame.
+func nativeSnipReady(pid uint32) ([]uintptr, bool) {
+	handles := visibleHandles(pid)
+	if len(handles) == 0 {
+		return nil, false
+	}
+	for _, hwnd := range handles {
+		var cloaked uint32
+		if status, _, _ := procDwmGetWindowAttribute.Call(hwnd, 14, uintptr(unsafe.Pointer(&cloaked)), unsafe.Sizeof(cloaked)); status != 0 || cloaked != 0 {
+			return handles, false
+		}
+		native, web := false, false
+		enumerationMu.Lock()
+		childSink = func(child uintptr) {
+			var name [256]uint16
+			procGetClassNameW.Call(child, uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)))
+			class := windows.UTF16ToString(name[:])
+			native = native || class == "MyGoSurface"
+			web = web || strings.Contains(class, "WebView") || strings.Contains(class, "Chrome_WidgetWin")
+		}
+		procEnumChildWindows.Call(hwnd, childCallback, 0)
+		childSink = nil
+		enumerationMu.Unlock()
+		if !native || web {
+			return handles, false
+		}
+	}
+	return handles, true
+}
+
+func rightClick() {
+	type mouseInput struct {
+		Type, pad               uint32
+		X, Y                    int32
+		Data, Flags, Time, pad2 uint32
+		Extra                   uintptr
+	}
+	events := []mouseInput{{Flags: 0x0008}, {Flags: 0x0010}}
+	procSendInput.Call(uintptr(len(events)), uintptr(unsafe.Pointer(&events[0])), unsafe.Sizeof(events[0]))
 }
 
 // fmtLastError names a failed call.
