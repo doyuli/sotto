@@ -7,6 +7,7 @@ on:
       - "internal/ocr/**/*.go"
       - "internal/ocr/models.json"
       - "internal/ocr/winrt.ps1"
+      - "internal/screencoords/**/*.go"
       - "resources/ocr/*.onnx"
       - "resources/ocr/ppocr_keys.txt"
       - "resources/windows-amd64/ocr/*.dll"
@@ -20,6 +21,7 @@ on:
       - "internal/ocr/**/*.go"
       - "internal/ocr/models.json"
       - "internal/ocr/winrt.ps1"
+      - "internal/screencoords/**/*.go"
       - "resources/ocr/*.onnx"
       - "resources/ocr/ppocr_keys.txt"
       - "resources/windows-amd64/ocr/*.dll"
@@ -45,6 +47,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Verify screen coordinates and DPI fallbacks
+        run: go test ./internal/screencoords/...
       - run: go test ./internal/ocr/...
       - name: Verify packaged x64 OCR runtime
         env:

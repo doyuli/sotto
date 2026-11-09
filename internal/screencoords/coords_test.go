@@ -2,9 +2,9 @@ package screencoords
 
 import "testing"
 
-func TestMixedDPIScreenCoordinates(t *testing.T) {
-	// Expected screen positions follow mygo's display-origin mapping. A
-	// selection anchor and a screen capture must refer to the same pixel.
+func TestDisplayCoordinateArithmetic(t *testing.T) {
+	// These cases cover arithmetic within a known display. Layout tests
+	// separately exercise monitor choice before performing the conversion.
 	for _, tt := range []struct {
 		name                  string
 		origin, dpi, minDPI   int

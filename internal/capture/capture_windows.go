@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"image"
 	"runtime"
-	"sync"
-
-	"syscall"
 	"unsafe"
 
 	"sotto/internal/screencoords"
@@ -24,12 +21,9 @@ import (
 var (
 	modUser32 = windows.NewLazySystemDLL("user32.dll")
 	modGdi32  = windows.NewLazySystemDLL("gdi32.dll")
-	modShcore = windows.NewLazySystemDLL("shcore.dll")
 
-	procGetDC               = modUser32.NewProc("GetDC")
-	procReleaseDC           = modUser32.NewProc("ReleaseDC")
-	procEnumDisplayMonitors = modUser32.NewProc("EnumDisplayMonitors")
-	procGetMonitorInfoW     = modUser32.NewProc("GetMonitorInfoW")
+	procGetDC     = modUser32.NewProc("GetDC")
+	procReleaseDC = modUser32.NewProc("ReleaseDC")
 
 	procCreateCompatibleDC = modGdi32.NewProc("CreateCompatibleDC")
 	procDeleteDC           = modGdi32.NewProc("DeleteDC")
@@ -38,28 +32,17 @@ var (
 	procSelectObject       = modGdi32.NewProc("SelectObject")
 	procBitBlt             = modGdi32.NewProc("BitBlt")
 	procGdiFlush           = modGdi32.NewProc("GdiFlush")
-
-	procGetDpiForMonitor = modShcore.NewProc("GetDpiForMonitor")
 )
 
 const (
-	biRGB              = 0
-	biBitCount         = 32
-	dibRGBColors       = 0 // BI_RGB
-	srcCopy            = 0x00CC0020
-	captureBlt         = 0x40000000
-	monitorInfoPrimary = 1
+	biRGB        = 0
+	biBitCount   = 32
+	dibRGBColors = 0 // BI_RGB
+	srcCopy      = 0x00CC0020
+	captureBlt   = 0x40000000
 )
 
 type rect struct{ Left, Top, Right, Bottom int32 }
-
-type monitorInfoEx struct {
-	cbSize    uint32
-	rcMonitor rect
-	rcWork    rect
-	dwFlags   uint32
-	szDevice  [32]uint16
-}
 
 // bitmapInfo is BITMAPINFOHEADER followed by no color table, for a
 // 32-bpp top-down DIB.
@@ -77,92 +60,20 @@ type bitmapInfo struct {
 	ClrImportant  uint32
 }
 
-// display is one monitor, in physical pixels with its DPI — the same
-// per-display scale mygo's window layer sizes by.
-type display struct {
-	physX, physY, physW, physH int
-	dipX, dipY                 int
-	dpi                        int
-}
-
-// displays enumerates the monitors. The callback is created once (see
-// internal/selection for the same pattern).
-var (
-	displaySink   func(uintptr)
-	displayEnumCb = syscall.NewCallback(func(mon, _, _, _ uintptr) uintptr {
-		if displaySink != nil {
-			displaySink(mon)
-		}
-		return 1
-	})
-)
-
-var displayMu sync.Mutex
-
-func displays() []display {
-	displayMu.Lock()
-	defer displayMu.Unlock()
-	var out []display
-	displaySink = func(mon uintptr) {
-		var info monitorInfoEx
-		info.cbSize = uint32(unsafe.Sizeof(info))
-		if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&info))); r == 0 {
-			return
-		}
-		d := display{
-			physX: int(info.rcMonitor.Left),
-			physY: int(info.rcMonitor.Top),
-			physW: int(info.rcMonitor.Right - info.rcMonitor.Left),
-			physH: int(info.rcMonitor.Bottom - info.rcMonitor.Top),
-			dpi:   96,
-		}
-		var dx, dy uint32
-		if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx != 0 {
-			d.dpi = int(dx)
-		}
-		out = append(out, d)
-	}
-	procEnumDisplayMonitors.Call(0, 0, displayEnumCb, 0)
-	displaySink = nil
-	if len(out) > 0 {
-		minDPI := out[0].dpi
-		for _, d := range out[1:] {
-			minDPI = min(minDPI, d.dpi)
-		}
-		for i := range out {
-			out[i].dipX = screencoords.Origin(out[i].physX, minDPI)
-			out[i].dipY = screencoords.Origin(out[i].physY, minDPI)
-		}
-	}
-	return out
-}
-
 // toPx is mygo's DIP-to-physical conversion.
 func toPx(v, dpi int) int32 { return int32(screencoords.Scale(float64(v), dpi, 96)) }
 
-// grabDIP converts the DIP rectangle to the physical pixels of the
-// display it sits on and captures them.
+// grab converts the DIP rectangle through the matching display layout
+// before capturing physical screen pixels.
 func grab(r Rect) (image.Image, error) {
 	if r.W <= 0 || r.H <= 0 {
 		return nil, fmt.Errorf("capture: empty rect %+v", r)
 	}
-	all := displays()
-	if len(all) == 0 {
+	pixels, ok := screencoords.Current().DIPToPixels(screencoords.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H})
+	if !ok {
 		return nil, fmt.Errorf("capture: no displays")
 	}
-	// The display holding the rect's top-left corner decides the scale.
-	best := all[0]
-	for _, d := range all {
-		best = d
-		if r.X >= d.dipX && r.X < d.dipX+screencoords.Scale(float64(d.physW), 96, d.dpi) &&
-			r.Y >= d.dipY && r.Y < d.dipY+screencoords.Scale(float64(d.physH), 96, d.dpi) {
-			break
-		}
-	}
-	px := screencoords.ToPixels(r.X, best.physX, best.dipX, best.dpi)
-	py := screencoords.ToPixels(r.Y, best.physY, best.dipY, best.dpi)
-	pw := int(toPx(r.W, best.dpi))
-	ph := int(toPx(r.H, best.dpi))
+	px, py, pw, ph := pixels.X, pixels.Y, pixels.W, pixels.H
 	if pw <= 0 || ph <= 0 {
 		return nil, fmt.Errorf("capture: rect %+v is sub-pixel on its display", r)
 	}
