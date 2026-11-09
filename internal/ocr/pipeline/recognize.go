@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
+	"io"
 	"time"
 )
 
@@ -11,8 +13,11 @@ type Recognizer struct {
 	det, rec Runner
 	labels   []string
 	config   Config
+	closed   bool
 }
 
+// New takes ownership of two distinct runners on success. The caller retains
+// ownership on failure and must clean up any partially initialized sessions.
 func New(det, rec Runner, dictionary []byte, c Config) (*Recognizer, error) {
 	if det == nil || rec == nil {
 		return nil, fmt.Errorf("ocr pipeline: both runners are required")
@@ -24,13 +29,38 @@ func New(det, rec Runner, dictionary []byte, c Config) (*Recognizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Recognizer{det, rec, labels, c}, nil
+	return &Recognizer{det: det, rec: rec, labels: labels, config: c}, nil
+}
+
+// Close consumes both runners' ownership, even if one closer fails. The
+// owner must serialize Close with Recognize; a closed recognizer is terminal.
+func (r *Recognizer) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	var errs []error
+	for _, runner := range []struct {
+		name string
+		run  Runner
+	}{{"detector", r.det}, {"recognizer", r.rec}} {
+		if closer, ok := runner.run.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("ocr close %s: %w", runner.name, err))
+			}
+		}
+	}
+	r.det, r.rec, r.labels = nil, nil, nil
+	return errors.Join(errs...)
 }
 
 // Recognize retains low-confidence lines. An error never returns a partial
 // success; diagnostics accumulated before failure are still available.
 func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, error) {
 	var result Result
+	if r.closed {
+		return result, fmt.Errorf("ocr pipeline: recognizer closed")
+	}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}

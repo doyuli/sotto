@@ -54,17 +54,24 @@ type askMsg struct {
 	Error string       `json:"error"`
 }
 
-func recognizeWith(ctx context.Context, img image.Image, lang string) (Text, error) {
-	return recognizeEngines(ctx, img, strings.TrimSpace(lang), recognizePPOCR, recognizeWinRT)
+func recognizeWith(ctx context.Context, img image.Image, lang string, request *idleRequest) (Text, error) {
+	local := func(ctx context.Context, img image.Image, lang string) (Text, error) {
+		return recognizePPOCR(ctx, img, lang, request)
+	}
+	system := func(ctx context.Context, img image.Image, lang string) (Text, error) {
+		return recognizeWinRT(ctx, img, lang, request)
+	}
+	return recognizeEngines(ctx, img, strings.TrimSpace(lang), local, system)
 }
 
-func recognizeWinRT(ctx context.Context, img image.Image, lang string) (Text, error) {
+func recognizeWinRT(ctx context.Context, img image.Image, lang string, request *idleRequest) (Text, error) {
 	t := Text{Engine: "winrt"}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
+	request.used[systemOCR] = true
 	start := time.Now()
 	starting := engine.cmd == nil
 	err := engine.ensure(ctx)
@@ -269,4 +276,5 @@ func (w *winrt) killLocked() {
 	w.cmd = nil
 	w.stdin = nil
 	w.stdout = nil
+	w.maxDimension = 0
 }

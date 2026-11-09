@@ -10,4 +10,6 @@ import (
 
 var errUnsupported = errors.New("ocr is only supported on Windows")
 
-func recognizeWith(context.Context, image.Image, string) (Text, error) { return Text{}, errUnsupported }
+func recognizeWith(context.Context, image.Image, string, *idleRequest) (Text, error) {
+	return Text{}, errUnsupported
+}
