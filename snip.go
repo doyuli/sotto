@@ -2,175 +2,209 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 	"sotto/internal/capture"
 	"sotto/internal/ocr"
 )
 
-// Each display gets its own client coordinate space and DPI. A drag is bounded
-// to that display; cross-display text can be captured in separate shots.
+// All manager and native-view state belongs to the UI thread. Capture workers
+// return their HWND leases through RunOnMain after GDI has finished.
 type snipManager struct {
-	mu         sync.Mutex
-	wins       []*mygo.Window
+	screens    map[int64]*snipScreen
 	task       *entryTask
 	shownAt    time.Time
 	isQuitting func() bool
+	done       func(*mygo.Window, int64, *snipRect)
 }
 
 func (s *snipManager) Show(task *entryTask) {
 	s.Hide()
 	displays := mygo.Screen.Displays()
+	s.prune(displays)
 	if len(displays) == 0 {
 		task.cancel()
 		return
 	}
-	s.mu.Lock()
+	if s.screens == nil {
+		s.screens = make(map[int64]*snipScreen)
+	}
 	s.task = task
-	s.mu.Unlock()
 	cursor := mygo.Screen.CursorScreenPoint()
 	active := 0
+	ordered := make([]*snipScreen, 0, len(displays))
 	for i, d := range displays {
-		s.mu.Lock()
-		var win *mygo.Window
-		if i < len(s.wins) {
-			win = s.wins[i]
+		screen := s.reusableScreen(d.ID)
+		if screen == nil {
+			screen = s.newScreen(d)
+			s.screens[d.ID] = screen
 		}
-		s.mu.Unlock()
-		if win == nil {
-			win = mygo.NewWindow(mygo.WindowOptions{
-				Title: "Sotto 截图", URL: "/snip.html", Hidden: true, Frameless: true,
-				Panel: true, SkipTaskbar: true, AlwaysOnTop: true, DisableResize: true,
-				Opacity: 0.35, BackgroundColor: "#10141c", Page: mygo.PageOptions{DevTools: mygo.DevToolsAuto},
-			})
-			w := win
-			w.OnClose(func(e *mygo.CloseEvent) {
-				if s.isQuitting != nil && s.isQuitting() {
-					return
-				}
-				e.PreventDefault()
-				s.Hide()
-				taskToCancel := s.current()
-				if taskToCancel != nil {
-					taskToCancel.cancel()
-				}
-			})
-			w.OnBlur(func() {
-				task := s.current()
-				s.mu.Lock()
-				shownAt := s.shownAt
-				s.mu.Unlock()
-				if task == nil || time.Since(shownAt) < 500*time.Millisecond {
-					return
-				}
-				// Focus can move to another display's overlay in the same shot.
-				go func() {
-					time.Sleep(150 * time.Millisecond)
-					mygo.RunOnMain(func() {
-						if s.current() != task {
-							return
-						}
-						for _, other := range s.windows() {
-							if other.IsFocused() {
-								return
-							}
-						}
-						s.Hide()
-						task.cancel()
-					})
-				}()
-			})
-			s.mu.Lock()
-			s.wins = append(s.wins, win)
-			s.mu.Unlock()
-		}
-		win.SetBounds(d.Bounds)
-		win.Page().LoadURL(fmt.Sprintf("/snip.html#t=%d", task.id))
+		screen.round = &snipRound{task: task}
+		screen.win.SetBounds(d.Bounds)
+		screen.win.Invalidate()
+		ordered = append(ordered, screen)
 		if cursor.X >= d.Bounds.X && cursor.X < d.Bounds.X+d.Bounds.Width && cursor.Y >= d.Bounds.Y && cursor.Y < d.Bounds.Y+d.Bounds.Height {
 			active = i
 		}
 	}
-	wins := s.windows()
-	s.mu.Lock()
 	s.shownAt = time.Now()
-	s.mu.Unlock()
-	for _, win := range wins[:len(displays)] {
-		win.ShowInactive()
+	for _, screen := range ordered {
+		screen.win.ShowInactive()
 	}
-	wins[active].Show()
-}
-func (s *snipManager) windows() []*mygo.Window {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]*mygo.Window(nil), s.wins...)
-}
-func (s *snipManager) current() *entryTask {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.task
-}
-func (s *snipManager) Hide() {
-	for _, w := range s.windows() {
-		w.Hide()
-	}
+	ordered[active].win.Show()
 }
 
-// take is called on the UI thread so a stale Done cannot hide a newer shot.
-func (s *snipManager) take(id int64, win *mygo.Window) *entryTask {
-	s.mu.Lock()
-	t := s.task
-	validWindow := false
-	for _, w := range s.wins {
-		if w == win {
-			validWindow = true
+func (s *snipManager) reusableScreen(id int64) *snipScreen {
+	screen := s.screens[id]
+	if screen != nil && (screen.used || screen.captures != 0) {
+		// Hidden surfaces can retain the last selection: Invalidate is async,
+		// and hidden windows need not present a clean frame before Show.
+		// On Windows a new surface stays cloaked until its first frame. Keep
+		// any borrowed HWND hidden and alive until its capture returns.
+		delete(s.screens, id)
+		screen.retire()
+		return nil
+	}
+	return screen
+}
+
+func (s *snipManager) newScreen(display mygo.Display) *snipScreen {
+	screen := &snipScreen{display: display}
+	w := mygo.NewWindow(mygo.WindowOptions{
+		Title: "Sotto 截图", Hidden: true, Frameless: true,
+		Panel: true, SkipTaskbar: true, AlwaysOnTop: true, DisableResize: true,
+		Transparent: true, BackgroundColor: snipBackground,
+		Content: ui.View(screen.view),
+	})
+	screen.win, screen.dispose = w, w.Destroy
+	screen.submit = func(round *snipRound, rect *snipRect) {
+		if s.task == round.task && s.done != nil {
+			s.done(w, round.task.id, rect)
 		}
 	}
-	if t == nil || t.id != id || !validWindow {
-		s.mu.Unlock()
-		return nil
-	}
-	s.task = nil
-	s.mu.Unlock()
-	s.Hide()
-	if !t.valid() {
-		return nil
-	}
-	return t
+	w.OnClose(func(e *mygo.CloseEvent) {
+		if s.isQuitting != nil && s.isQuitting() {
+			return
+		}
+		e.PreventDefault()
+		s.cancelCurrent()
+	})
+	w.OnClosed(func() {
+		screen.disposed = true
+		if s.screens[display.ID] == screen {
+			delete(s.screens, display.ID)
+		}
+	})
+	w.OnBlur(func() {
+		task := s.task
+		if task == nil || time.Since(s.shownAt) < 500*time.Millisecond {
+			return
+		}
+		// Focus can transfer between displays within the same shot.
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			mygo.RunOnMain(func() {
+				if s.task != task {
+					return
+				}
+				for _, other := range s.screens {
+					if other.win.IsFocused() {
+						return
+					}
+				}
+				s.cancelCurrent()
+			})
+		}()
+	})
+	return screen
 }
 
-type snipRect struct {
-	X int `json:"x"`
-	Y int `json:"y"`
-	W int `json:"w"`
-	H int `json:"h"`
+func (s *snipManager) Hide() {
+	s.task = nil
+	for _, screen := range s.screens {
+		screen.round = nil
+		screen.win.Hide()
+		screen.win.Invalidate()
+	}
+}
+
+func (s *snipManager) cancelCurrent() {
+	task := s.task
+	s.Hide()
+	if task != nil {
+		task.cancel()
+	}
+}
+
+func (s *snipManager) refreshDisplays() {
+	s.cancelCurrent()
+	s.prune(mygo.Screen.Displays())
+}
+
+// Call after hiding the overlays: a changed display invalidates the current
+// gesture, and an outstanding capture keeps its original HWND until completion.
+func (s *snipManager) prune(displays []mygo.Display) {
+	current := make(map[int64]mygo.Display, len(displays))
+	for _, d := range displays {
+		current[d.ID] = d
+	}
+	for id, screen := range s.screens {
+		d, present := current[id]
+		if !present || d.Bounds != screen.display.Bounds || d.ScaleFactor != screen.display.ScaleFactor {
+			delete(s.screens, id)
+			screen.retire()
+		}
+	}
+}
+
+// take only consumes a current task from one of its live screen windows. The
+// caller hides the overlays after acceptance; stale events never hide a new shot.
+func (s *snipManager) take(id int64, win *mygo.Window) (*entryTask, *snipScreen) {
+	task := s.task
+	if task == nil || task.id != id || !task.valid() {
+		return nil, nil
+	}
+	for _, screen := range s.screens {
+		if screen.win == win && !screen.retired && !screen.disposed {
+			s.task = nil
+			return task, screen
+		}
+	}
+	return nil, nil
 }
 
 func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect) {
 	var task *entryTask
+	var screen *snipScreen
 	var hwnd uintptr
 	var anchor *Anchor
 	mygo.RunOnMain(func() {
-		task = a.snip.take(sessionID, win)
+		task, screen = a.snip.take(sessionID, win)
 		if task == nil {
 			return
 		}
-		if rect == nil || rect.W < 8 || rect.H < 8 {
+		anchor = snipCaptureAnchor(win.ContentBounds(), rect)
+		if anchor == nil {
+			a.snip.Hide()
 			task.cancel()
 			task = nil
 			return
 		}
+		screen.captures++
+		screen.captureTask = task
 		hwnd = win.NativeHandle()
-		x, y := win.Position()
-		anchor = &Anchor{X: x + rect.X, Y: y + rect.Y + rect.H}
+		a.snip.Hide()
 	})
 	if task == nil {
 		return
 	}
 	go func() {
+		release := sync.OnceFunc(func() { mygo.RunOnMain(screen.releaseCapture) })
+		defer release()
 		timer := time.NewTimer(120 * time.Millisecond)
 		defer timer.Stop()
 		select {
@@ -182,6 +216,7 @@ func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect
 			return
 		}
 		img, err := capture.GrabWindow(hwnd, capture.Rect{X: rect.X, Y: rect.Y, W: rect.W, H: rect.H})
+		release()
 		if !task.valid() {
 			return
 		}

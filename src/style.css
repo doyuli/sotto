@@ -37,7 +37,7 @@ body {
   color: var(--fg);
 }
 
-/* Shared by the bubble and settings. The snip overlay uses the root palette. */
+/* Shared by the bubble and settings. */
 body[data-route="bubble"],
 body[data-route="settings"] {
   --panel: #ffffff;
@@ -1378,65 +1378,6 @@ body[data-route="settings"]:not(:has(.service-drag-preview)) > #dnd-action-dragg
     transition: none;
   }
 }
-
-/* ---- The snip page: the window spans the virtual screen and is
-   transparent; the veil dims it, the box is the selection. ---- */
-
-body[data-route="snip"] {
-  min-height: 0;
-  background: transparent;
-  overflow: hidden;
-}
-
-/* The dimming is the window's own opacity (Go side): the veil is only
-   the interaction layer. */
-.snip-veil {
-  position: fixed;
-  inset: 0;
-  background: transparent;
-  cursor: crosshair;
-}
-
-.snip-box {
-  position: fixed;
-  display: none;
-  border: 1px solid #4cc2ff;
-  background: rgba(76, 194, 255, 0.08);
-  pointer-events: none;
-}
-
-.snip-box.active {
-  display: block;
-}
-
-.snip-size {
-  position: absolute;
-  left: 0;
-  top: -22px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 11px;
-  border-radius: 4px;
-  padding: 1px 7px;
-  white-space: nowrap;
-}
-
-.snip-hint {
-  position: fixed;
-  top: 24px;
-  left: 0;
-  right: 0;
-  margin: auto;
-  width: fit-content;
-  background: rgba(16, 20, 28, 0.9);
-  color: #e8eaed;
-  font-size: 13px;
-  border-radius: 8px;
-  padding: 7px 16px;
-  pointer-events: none;
-}
-
-
 
 .capture-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:var(--muted); font-size:12px; line-height:1.55; }
 .capture-message { display:flex; align-items:center; gap:8px; flex:1; min-width:180px; }

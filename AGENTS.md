@@ -1,6 +1,6 @@
 # Sotto — Agent 工作规则
 
-翻译工具 app：mygo v0.8.3（Go 后端 + WebView2 web 前端），Windows 优先，纯 Go 无 cgo。
+翻译工具 app：mygo v0.8.3（Go 后端 + 原生截图遮罩 + WebView2 气泡/设置），Windows 优先，纯 Go 无 cgo。
 产品定位见 `PRODUCT.md`，品牌与视觉规范见 `DESIGN.md`；mygo 的 API 以本地源码为唯一事实来源。
 
 ## 开发循环
@@ -27,7 +27,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌
    - GlobalShortcut/托盘/菜单回调在**主线程**：只做派发，禁止阻塞；耗时工作 `go` 出去。
    - `Window` 的方法（Show/Hide/SetPosition…）内部自动 marshal，goroutine 可安全调用。
    - `Event.Emit` 任意 goroutine 可调；但 DOM 未就绪只暂存有限条——初始数据用"页面 mount 主动拉"（`Ready`），事件只做增量。
-   - `Window.Update` 是 native UI 专用，本项目禁用。
+   - `Window.Update` 仅用于向原生 `ui` 视图异步发布后台状态；WebView 禁用，继续使用绑定/事件。原生视图状态归 UI 线程，绘制回调不做抓屏或 OCR。
    - UIA/COM 调用只在专用 MTA 线程（见 internal/selection/uia_windows.go）。
 5. **改 Go 绑定/事件后必须** `bunx mygo generate` → `bun run typecheck`，否则前端调不到新方法。
 6. **纯逻辑包必须有单测**（config/langdetect/naming/translate）；平台包（selection/capture/ocr）用手工清单验收。
@@ -57,5 +57,6 @@ internal/translate # Translator 接口 + fan-out + deepl/openai/baidu/tencent/yo
 internal/selection # 划词：UIA 主路径 + Ctrl+C 兜底；气泡外部点击检测
 internal/capture   # GDI 截屏
 internal/ocr       # PP-OCR（ONNX Runtime 直调）+ Windows.Media.Ocr 兜底
-src/               # 前端（Svelte 5 多入口）：bubble.html / settings.html / snip.html
+snip*.go           # 原生截图：每屏视图、框选状态、窗口与抓屏 HWND 租约
+src/               # Web 前端（Svelte 5 多入口）：bubble.html / settings.html
 ```

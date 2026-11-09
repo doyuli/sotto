@@ -9,21 +9,25 @@
 //
 // What it covers:
 //   - the app comes up with all three hotkeys registered
-//   - Alt+A opens the input bubble, which takes the focus and goes away
+//   - the panel hotkey opens the input bubble, which takes focus and goes away
 //     when something else takes it (the "click elsewhere" behavior)
-//   - Alt+S opens the screenshot overlay, which stays up as a 35%-alpha
-//     layered window (a plain transparent window shows black on Windows)
+//   - the OCR hotkey opens translucent native screenshot overlays;
+//     Escape/right-click cancel, unused windows are reused, and a dragged
+//     surface is replaced before it can show a previous selection
 package e2e
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 const appPath = "../build/windows-amd64/sotto.exe"
@@ -118,7 +122,7 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 	tapAccel(hotkeys["panel"])
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		count, _, _ := visibleWindows(pid)
+		count := len(visibleHandles(pid))
 		if count >= 1 {
 			break
 		}
@@ -139,7 +143,7 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 	defer closeDummy()
 	deadline = time.Now().Add(5 * time.Second)
 	for {
-		count, _, _ := visibleWindows(pid)
+		count := len(visibleHandles(pid))
 		if count == 0 {
 			return // gone, as a click elsewhere should leave it
 		}
@@ -150,45 +154,95 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 	}
 }
 
-// TestSnipOverlay covers the screenshot overlay: the OCR hotkey brings
-// up a full-screen layered window that stays up (it once hid itself at
-// birth) at 35% alpha, so the desktop shows through dimmed instead of
-// the plain black a transparent page composites to.
+// TestSnipOverlay verifies the transparent composition window, native content,
+// keyboard/mouse cancellation and clean surface reuse over the live desktop.
 func TestSnipOverlay(t *testing.T) {
 	pid, stop := start(t)
 	defer stop()
-
-	tapAccel(hotkeys["ocr"])
-	deadline := time.Now().Add(5 * time.Second)
-	var count int
-	var layered bool
-	var alpha byte
-	for {
-		count, layered, alpha = visibleWindows(pid)
-		if count >= 1 {
-			break
+	open := func() []uintptr {
+		t.Helper()
+		start := time.Now()
+		tapAccel(hotkeys["ocr"])
+		for time.Since(start) < 5*time.Second {
+			if handles, ready := nativeSnipReady(pid); ready {
+				t.Logf("native overlays ready in %s", time.Since(start).Round(time.Millisecond))
+				return handles
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("overlay never appeared after Alt+S")
+		t.Fatal("native screenshot overlay never presented after the OCR hotkey")
+		return nil
+	}
+	waitHidden := func() {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for len(visibleHandles(pid)) != 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("overlay did not cancel")
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(150 * time.Millisecond)
 	}
-	if !layered {
-		t.Errorf("overlay is not a layered window; page transparency composites to black on Windows")
+	first := open()
+	slices.Sort(first)
+	for _, hwnd := range first {
+		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
+		if ex&wsExNoRedirectionBitmap == 0 {
+			t.Fatal("transparent native overlay did not use a composition surface")
+		}
+		if ex&wsExLayered != 0 {
+			var key uint32
+			var alpha byte
+			var flags uint32
+			if ok, _, _ := procGetLayeredWindowAttributes.Call(hwnd, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&alpha)), uintptr(unsafe.Pointer(&flags))); ok != 0 && flags&lwaAlpha != 0 && alpha != 255 {
+				t.Fatalf("overlay applied whole-window dimming: alpha=%d", alpha)
+			}
+		}
 	}
-	if alpha == 0 {
-		t.Errorf("overlay alpha is 0: the desktop would not show through")
-	}
-	if want := byte(89); alpha != want { // 0.35*255+0.5
-		t.Errorf("overlay alpha = %d, want %d (35%%)", alpha, want)
-	}
-
-	// The overlay survives its birth: it is still there after a beat —
-	// a blur racing the page load used to hide it instantly.
 	time.Sleep(700 * time.Millisecond)
-	if count, _, _ = visibleWindows(pid); count == 0 {
-		t.Fatal("overlay hid itself right after showing (blur race)")
+	if _, ready := nativeSnipReady(pid); !ready {
+		t.Fatal("native overlay hid itself after presentation")
 	}
+	for cycle := range 20 {
+		if cycle != 0 {
+			handles := open()
+			slices.Sort(handles)
+			if !slices.Equal(first, handles) {
+				t.Fatal("opening/canceling screenshots did not reuse the per-display windows")
+			}
+		}
+		if cycle%2 == 0 {
+			tapAccel("Escape")
+		} else {
+			rightClick()
+		}
+		waitHidden()
+	}
+	before := open()
+	active, _, _ := procGetForegroundWindow.Call()
+	if !slices.Contains(before, active) {
+		t.Fatal("screenshot did not focus one of its overlays")
+	}
+	release, err := beginSnipDrag(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	time.Sleep(150 * time.Millisecond)
+	tapAccel("Escape")
+	waitHidden()
+	release()
+	after := open()
+	if len(before) != len(after) || slices.Contains(after, active) {
+		t.Fatal("a surface with a previous selection was shown again")
+	}
+	for _, hwnd := range before {
+		if hwnd != active && !slices.Contains(after, hwnd) {
+			t.Fatal("an unused display's overlay was unnecessarily replaced")
+		}
+	}
+	tapAccel("Escape")
+	waitHidden()
 }
 
 // TestSelectionBubbleShows covers the selection hotkey end to end as far
@@ -202,7 +256,7 @@ func TestSelectionBubbleShows(t *testing.T) {
 	tapAccel(hotkeys["selection"])
 	deadline := time.Now().Add(8 * time.Second)
 	for {
-		count, _, _ := visibleWindows(pid)
+		count := len(visibleHandles(pid))
 		if count >= 1 {
 			return // the fallback panel came up
 		}
@@ -213,7 +267,12 @@ func TestSelectionBubbleShows(t *testing.T) {
 	}
 }
 
-// TestMain guards against a leftover app instance holding the hotkeys.
+// Use the app's DPI context so window rectangles and synthesized drags share
+// physical screen coordinates, including on a differently scaled side monitor.
 func TestMain(m *testing.M) {
+	if err := setTestDPIAwareness(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }

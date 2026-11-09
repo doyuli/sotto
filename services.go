@@ -213,14 +213,8 @@ func (HotkeySvc) Busy(accel string) bool {
 	return mygo.GlobalShortcut.IsRegistered(accel)
 }
 
-// SnipSvc serves the screenshot selection page.
+// SnipSvc starts native screenshot selection from the bubble's recovery action.
 type SnipSvc struct{ app *application }
-
-// Done closes a shot: rect is the dragged rectangle in client
-// coordinates, nil for a cancel.
-func (s SnipSvc) Done(ctx context.Context, sessionID int64, rect *snipRect) {
-	s.app.snipDone(mygo.CallerWindow(ctx), sessionID, rect)
-}
 
 // Start opens a new screenshot session from a recovery action.
 func (s SnipSvc) Start() { mygo.RunOnMain(func() { s.app.startEntry("ocr") }) }
