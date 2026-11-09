@@ -212,15 +212,24 @@ func (a *application) onHotkey(action string) func() {
 
 // startEntry runs on the UI thread: capture the source before dispatching.
 func (a *application) startEntry(action string) {
+	if a.isQuitting() {
+		return
+	}
+	// Preserve the active input page before begin revokes its entry ownership.
+	if action == "panel" && a.bubbles.focusVisibleInput() {
+		return
+	}
 	task := a.entry.begin()
 	log.Printf("entry: start id=%d action=%s", task.id, action)
 	switch action {
 	case "panel":
 		a.snip.Hide()
+		a.bubbles.hideTransient()
 		go a.bubbles.ShowTask(a.settings(), "input", "", nil, "", "", task.valid, nil)
 	case "selection":
 		grab := selection.Prepare()
 		a.snip.Hide()
+		a.bubbles.hideTransient()
 		go a.grabSelection(task, grab)
 	case "ocr":
 		a.bubbles.hideTransient()
@@ -559,9 +568,11 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 		}
 	}
 	meta := RunMetaMsg{ReqID: req.ReqID, SourceLang: source, TargetLang: target, Services: services}
-	if a.bubbles.recordMeta(win, meta, req.Service) {
-		RunMeta.Emit(win, meta)
+	if !a.bubbles.recordMeta(win, meta, req.Service) {
+		a.bubbles.finishRun(win, req.ReqID)
+		return
 	}
+	RunMeta.Emit(win, meta)
 	if req.Service != "" && !slices.Contains(services, req.Service) {
 		msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Err: "该服务当前不可用，请检查设置"}
 		if a.bubbles.recordResult(win, msg) {

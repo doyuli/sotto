@@ -181,9 +181,9 @@ func (s BubbleSvc) Ready(id int64) (BubbleState, error) {
 	return state, nil
 }
 
-// Rendered reports ordered content measurements for initial and ongoing layout.
-func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, showID, layoutID, sequence int64, height float64) {
-	s.app.bubbles.Rendered(ctx, mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, sequence, height)
+// Rendered reports whether the UI thread accepted and applied the measurement.
+func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, showID, layoutID, sequence int64, height float64) bool {
+	return s.app.bubbles.Rendered(ctx, mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, sequence, height)
 }
 
 // Pin keeps the bubble on screen when it loses focus.
@@ -192,9 +192,9 @@ func (s BubbleSvc) Pin(id int64) { s.app.bubbles.Pin(id) }
 // Unpin returns a pinned bubble to hiding on blur.
 func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
 
-// Close hides an unpinned bubble and closes a pinned one.
-func (s BubbleSvc) Close(id int64, sessionID string, showID, revision int64) {
-	s.app.bubbles.Close(id, sessionID, showID, revision)
+// Close reports whether this presentation's close was accepted.
+func (s BubbleSvc) Close(id int64, sessionID string, showID, revision int64) bool {
+	return s.app.bubbles.Close(id, sessionID, showID, revision)
 }
 
 // OpenTranslationSettings opens the services tab from the bubble.

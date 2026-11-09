@@ -92,6 +92,9 @@ class MockBackend {
         return "";
       case "BubbleSvc.Ready":
         return structuredClone(this.bubble);
+      case "BubbleSvc.Rendered":
+      case "BubbleSvc.Close":
+        return true;
       case "TranslateSvc.Formats":
         return [{ style: "lowerCamel", label: "小驼峰", value: "userName" }];
       default:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"math"
 
 	"github.com/egoist/mygo"
@@ -143,10 +144,11 @@ func (m *bubbleManager) refreshDisplays() {
 
 // Rendered is the sole content-size writer. Every measurement, including
 // translation growth and card folding, follows the same sequence checks.
-func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64, session string, showID, layoutID, sequence int64, height float64) {
+func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64, session string, showID, layoutID, sequence int64, height float64) bool {
 	if ctx.Err() != nil || win == nil || height <= 0 || math.IsNaN(height) || math.IsInf(height, 0) {
-		return
+		return false
 	}
+	applied := false
 	mygo.RunOnMain(func() {
 		// Navigation cancels the old page context, including queued measurements.
 		if ctx.Err() != nil {
@@ -157,6 +159,7 @@ func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64
 		accepted := b != nil && b.win == win && b.acceptLayout(session, showID, layoutID, sequence)
 		m.mu.Unlock()
 		if !accepted {
+			log.Printf("bubble: layout rejected id=%d show=%d layout=%d sequence=%d", id, showID, layoutID, sequence)
 			return
 		}
 		// A pinned bubble still resizes after a new entry invalidates canShow.
@@ -169,7 +172,9 @@ func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64
 		b.win.SetContentSize(480, bubbleLayoutHeight(height, limit, zoom))
 		m.reflow(b, true)
 		m.showWin(b)
+		applied = true
 	})
+	return applied
 }
 
 // Measurements share one monotonic sequence for the mounted page. The layout

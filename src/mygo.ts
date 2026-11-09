@@ -211,8 +211,8 @@ export const TranslateSvc = {
 
 /** BubbleSvc serves the bubble pages. */
 export const BubbleSvc = {
-  /** Close hides an unpinned bubble and closes a pinned one. */
-  close(id: number, sessionID: string, showID: number, revision: number): Promise<void> {
+  /** Close reports whether this presentation's close was accepted. */
+  close(id: number, sessionID: string, showID: number, revision: number): Promise<boolean> {
     return call("BubbleSvc.Close", id, sessionID, showID, revision);
   },
   /** Copy puts text on the clipboard. */
@@ -237,8 +237,8 @@ export const BubbleSvc = {
   ready(id: number): Promise<BubbleState> {
     return call("BubbleSvc.Ready", id);
   },
-  /** Rendered reports ordered content measurements for initial and ongoing layout. */
-  rendered(id: number, sessionID: string, showID: number, layoutID: number, sequence: number, height: number): Promise<void> {
+  /** Rendered reports whether the UI thread accepted and applied the measurement. */
+  rendered(id: number, sessionID: string, showID: number, layoutID: number, sequence: number, height: number): Promise<boolean> {
     return call("BubbleSvc.Rendered", id, sessionID, showID, layoutID, sequence, height);
   },
   /** RestoreClipboard retries a retained snapshot without replacing a newer copy. */

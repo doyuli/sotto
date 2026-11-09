@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 
@@ -62,6 +63,7 @@ type bubble struct {
 	ready             bool
 	awaitingLayout    bool
 	presentationShown bool
+	layoutWaitLogged  bool
 	layoutID          int64
 	layoutSequence    int64
 	offBlur           func() // unregisters focus hiding; Pin calls it
@@ -88,6 +90,47 @@ type Shown struct {
 
 func newBubbleManager(isQuitting func() bool) *bubbleManager {
 	return &bubbleManager{byID: map[int64]*bubble{}, isQuitting: isQuitting}
+}
+
+// focusVisibleInput runs on the UI thread before a new entry is acquired.
+// A pending selection can leave input visible, so visibility alone is not reuse.
+func (m *bubbleManager) focusVisibleInput() bool {
+	m.mu.Lock()
+	b := m.input
+	var valid func() bool
+	if b != nil {
+		valid = b.canShow
+	}
+	m.mu.Unlock()
+	if b == nil || valid == nil || !valid() {
+		return false
+	}
+	visible := b.win.IsVisible()
+	m.mu.Lock()
+	reuse := m.input == b && m.byID[b.id] == b && b.refocusInput(visible)
+	var presented BubblePresentedMsg
+	if reuse {
+		presented = BubblePresentedMsg{ClipboardRecoveryID: selection.PendingClipboardRecovery(), SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision, Focus: true}
+	}
+	m.mu.Unlock()
+	if !reuse {
+		return false
+	}
+	b.win.Focus()
+	BubblePresented.Emit(b.win, presented)
+	m.refreshOutsideClick(b)
+	log.Printf("bubble: focus existing input id=%d show=%d", b.id, presented.ShowID)
+	return true
+}
+
+// refocusInput preserves content and first-show state while revoking callbacks
+// from the previous presentation. Entry ownership is checked separately.
+func (b *bubble) refocusInput(visible bool) bool {
+	if !visible || b.trigger != "input" || b.pinned || b.closeClaimed || !b.presentationShown || b.awaitingLayout {
+		return false
+	}
+	b.showID++
+	return true
 }
 
 // ShowTask starts a fresh session in the input or capture window.
@@ -154,8 +197,27 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		BubbleReset.Emit(b.win, state)
 		BubblePresented.Emit(b.win, BubblePresentedMsg{ClipboardRecoveryID: state.ClipboardRecoveryID, SessionID: state.SessionID, ShowID: state.ShowID, Revision: state.Revision, Focus: trigger == "input"})
 		shown = Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
+		m.showWin(b)
+		m.watchLayout(b, state.SessionID, state.ShowID)
 	})
 	return shown
+}
+
+// A timeout diagnoses missing acknowledgements without exposing a reused page's
+// old DOM. The page owns bounded retries; only a current layout may release show.
+func (m *bubbleManager) watchLayout(b *bubble, session string, showID int64) {
+	time.AfterFunc(400*time.Millisecond, func() {
+		mygo.RunOnMain(func() {
+			m.mu.Lock()
+			valid := b.canShow
+			waiting := m.byID[b.id] == b && b.sessionID == session && b.showID == showID && !b.closeClaimed && !b.presentationShown && b.awaitingLayout
+			ready, layoutID, sequence := b.ready, b.layoutID, b.layoutSequence
+			m.mu.Unlock()
+			if waiting && (valid == nil || valid()) {
+				log.Printf("bubble: layout timeout id=%d show=%d layout=%d sequence=%d ready=%t", b.id, showID, layoutID, sequence, ready)
+			}
+		})
+	})
 }
 
 // stopWork is called under mu. Cancel functions never wait for UI work.
@@ -235,7 +297,8 @@ func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 }
 
 // Close hides an unpinned bubble and closes a pinned one for good.
-func (m *bubbleManager) Close(id int64, sessionID string, showID, revision int64) {
+func (m *bubbleManager) Close(id int64, sessionID string, showID, revision int64) bool {
+	accepted := false
 	mygo.RunOnMain(func() {
 		m.mu.Lock()
 		b, ok := m.byID[id]
@@ -247,8 +310,10 @@ func (m *bubbleManager) Close(id int64, sessionID string, showID, revision int64
 		m.mu.Unlock()
 		if ok {
 			b.win.Close()
+			accepted = true
 		}
 	})
+	return accepted
 }
 
 // Blur can be delivered while Show/Hide is changing activation. Defer the
@@ -266,7 +331,7 @@ func (m *bubbleManager) blurHandler(b *bubble) func() {
 			m.mu.Unlock()
 			if hide {
 				log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
-				b.win.Hide()
+				m.hideTransientBubble(b)
 			}
 		})
 	}
@@ -346,7 +411,15 @@ func (m *bubbleManager) showWin(b *bubble) {
 	}
 	m.mu.Lock()
 	show := b.claimShow()
+	waiting := !show && b.awaitingLayout && !b.closeClaimed && !b.presentationShown && b.showID != 0 && !b.layoutWaitLogged
+	if waiting {
+		b.layoutWaitLogged = true
+	}
+	ready, showID, layoutID, sequence := b.ready, b.showID, b.layoutID, b.layoutSequence
 	m.mu.Unlock()
+	if waiting {
+		log.Printf("bubble: show waiting for layout id=%d show=%d layout=%d sequence=%d ready=%t", b.id, showID, layoutID, sequence, ready)
+	}
 	if !show {
 		return
 	}
@@ -387,7 +460,7 @@ func (m *bubbleManager) refreshOutsideClick(b *bubble) {
 				dismiss := active && b.sessionID == sessionID && b.showID == showID && b.offBlur != nil
 				m.mu.Unlock()
 				if dismiss {
-					b.win.Hide()
+					m.hideTransientBubble(b)
 				}
 			})
 		})
@@ -454,14 +527,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		quitting := m.isQuitting != nil && m.isQuitting()
 		m.mu.Lock()
 		pinned := b.pinned
-		b.stopWork()
-		b.reqID = ""
-		b.serviceRequests = nil
-		b.revision++
-		b.closeClaimed = true
-		b.fullRevision, b.fullReqID = b.revision, ""
-		stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
-		b.canShow = func() bool { return false }
+		stopped := b.stopPresentation()
 		m.mu.Unlock()
 		RunStopped.Emit(b.win, stopped)
 		if quitting || pinned {
@@ -544,12 +610,16 @@ func (m *bubbleManager) hideTransient() {
 	}
 }
 
+// Semantic dismissal, unlike ShowTask's internal layout Hide, revokes all work
+// before native events can deliver late requests or results for this session.
 func (m *bubbleManager) hideTransientBubble(b *bubble) {
 	mygo.RunOnMain(func() {
 		m.mu.Lock()
-		pinned := b.pinned
+		dismissed := m.byID[b.id] == b && b.dismiss()
+		stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
 		m.mu.Unlock()
-		if !pinned {
+		if dismissed {
+			RunStopped.Emit(b.win, stopped)
 			b.win.Hide()
 		}
 	})

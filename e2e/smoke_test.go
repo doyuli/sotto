@@ -135,6 +135,20 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 		t.Errorf("bubble did not take the focus: foreground pid = %d, want %d", fg, pid)
 	}
 
+	// Reopening a visible input panel keeps its native window and focus. Draft
+	// and in-flight request preservation are covered by the page/state tests.
+	handles := visibleHandles(pid)
+	for range 3 {
+		tapAccel(hotkeys["panel"])
+		time.Sleep(100 * time.Millisecond)
+		if current := visibleHandles(pid); !slices.Equal(current, handles) {
+			t.Fatalf("repeated panel hotkey changed visible windows: got %v, want %v", current, handles)
+		}
+		if fg := foregroundPID(); fg != pid {
+			t.Fatalf("repeated panel hotkey lost focus: foreground pid = %d", fg)
+		}
+	}
+
 	// Something else takes the focus; the bubble must go.
 	closeDummy, err := activateOwnWindow()
 	if err != nil {

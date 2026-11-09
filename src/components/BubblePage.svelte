@@ -47,7 +47,14 @@
   let scrollElem: HTMLDivElement | undefined = $state();
   let maxHeight = $state(760);
 
-  let lastLayout = "";
+  let lastLayout: { key: string; retries: number } | undefined;
+  let layoutTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function cancelLayout(): void {
+    clearTimeout(layoutTimer);
+    layoutTimer = undefined;
+    lastLayout = undefined;
+  }
 
   const cards = new SvelteMap<string, CardState>();
   const cardRequests = new Map<string, string>();
@@ -96,6 +103,9 @@
         (st.sessionID === bubbleState.sessionID && (st.revision < bubbleState.revision || st.showID < bubbleState.showID || st.layoutID < bubbleState.layoutID)))
     ) {
       return;
+    }
+    if (st.sessionID !== bubbleState?.sessionID || st.showID !== bubbleState?.showID || st.layoutID !== bubbleState?.layoutID) {
+      cancelLayout();
     }
     layoutSequence = Math.max(layoutSequence, st.layoutSequence);
     bubbleState = st;
@@ -153,17 +163,42 @@
   }
 
   function reportLayout(): void {
-    if (!bubbleState || !bubbleElem) return;
-    // Read the live DOM rather than cached observer entries from an older state.
+    measureLayout();
+  }
+
+  function measureLayout(retry?: NonNullable<typeof lastLayout>): void {
+    if (!bubbleState || !bubbleElem || (retry && retry !== lastLayout)) return;
+    // Retries also read live geometry; an observer may not have delivered the new size yet.
     const { width, height } = bubbleElem.getBoundingClientRect();
-    if (!(height > 0) || !Number.isFinite(height)) return;
+    if (!(height > 0) || !Number.isFinite(height)) {
+      cancelLayout();
+      return;
+    }
     const { sessionID, showID, layoutID } = bubbleState;
     const key = JSON.stringify([sessionID, showID, layoutID, width, height]);
-    if (key === lastLayout) return;
-    lastLayout = key;
-    void BubbleSvc.rendered(bubbleID, sessionID, showID, layoutID, ++layoutSequence, height).catch(() => {
-      // A closed window may reject its final content measurement.
-    });
+    if (key === lastLayout?.key && !retry) return;
+    clearTimeout(layoutTimer);
+    const task = lastLayout && key === lastLayout.key ? lastLayout : { key, retries: 0 };
+    lastLayout = task;
+    let settled = false;
+    function finish(accepted: boolean): void {
+      // A timeout or a newer measurement owns the timer once this attempt ends.
+      if (settled || lastLayout !== task) return;
+      settled = true;
+      clearTimeout(layoutTimer);
+      layoutTimer = undefined;
+      if (!accepted && task.retries < 3) {
+        layoutTimer = setTimeout(() => {
+          if (lastLayout !== task) return;
+          task.retries++;
+          measureLayout(task);
+        }, 50 * (task.retries + 1));
+      }
+    }
+    // Bound both rejected IPC and calls which never settle, without observer-driven loops.
+    layoutTimer = setTimeout(() => finish(false), 1000);
+    void BubbleSvc.rendered(bubbleID, sessionID, showID, layoutID, ++layoutSequence, height)
+      .then((accepted) => finish(accepted === true), () => finish(false));
   }
 
   function applyResult(msg: TranslationUpdateMsg): void {
@@ -230,9 +265,15 @@
     if (!bubbleState) return;
     const session = bubbleState.sessionID;
     const show = bubbleState.showID;
-    const closingRevision = revision + 1;
-    stopRenderedRun(closingRevision);
-    void BubbleSvc.close(bubbleID, session, show, closingRevision).catch((err) => toast(String(err)));
+    const closingRevision = ++revision;
+    bubbleState.revision = closingRevision;
+    void BubbleSvc.close(bubbleID, session, show, closingRevision)
+      .then((accepted) => {
+        if (accepted === true && bubbleState?.sessionID === session && bubbleState.showID === show && revision <= closingRevision) {
+          stopRenderedRun(closingRevision);
+        }
+      })
+      .catch((err) => toast(String(err)));
   }
 
   function togglePin(): void {
@@ -380,7 +421,11 @@
       events.bubblePresented.on((msg) => {
         afterReady(() => {
           if (!bubbleState || msg.sessionID !== bubbleState.sessionID || msg.showID < bubbleState.showID) return;
-          bubbleState.showID = msg.showID;
+          if (msg.showID !== bubbleState.showID) {
+            cancelLayout();
+            bubbleState.showID = msg.showID;
+            void tick().then(reportLayout);
+          }
           bubbleState.clipboardRecoveryID = msg.clipboardRecoveryID;
           if (msg.revision > revision) stopRenderedRun(msg.revision);
           if (msg.focus) textareaElem?.focus();
@@ -454,6 +499,7 @@
 
     return () => {
       disposed = true;
+      cancelLayout();
       window.removeEventListener("resize", reportLayout);
       for (const off of subscriptions) off();
       queued.length = 0;

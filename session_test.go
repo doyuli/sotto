@@ -26,6 +26,69 @@ func TestEntryOwnership(t *testing.T) {
 	}
 }
 
+func TestVisibleInputReusePreservesSessionAndWork(t *testing.T) {
+	var gate entryGate
+	entry := gate.begin()
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w, canShow: entry.valid}
+	m.byID[1], m.input = b, b
+	b.replaceContent(config.Default(), "input", "submitted text", "", "", nil)
+	b.present()
+	b.ready = true
+	b.acceptLayout(b.sessionID, b.showID, b.layoutID, 1)
+	b.claimShow()
+	ctx, ok := m.startRun(w, RunReq{SessionID: b.sessionID, ReqID: "run", Revision: 1, Text: "submitted text", SourceLang: "en", TargetLang: "ja"})
+	if !ok {
+		t.Fatal("input translation did not start")
+	}
+	session, show, layout, revision := b.sessionID, b.showID, b.layoutID, b.revision
+	if !b.refocusInput(true) || !b.canShow() || ctx.Err() != nil {
+		t.Fatal("visible current input should preserve its work")
+	}
+	if b.sessionID != session || b.showID != show+1 || b.layoutID != layout || b.revision != revision || b.targetLang != "ja" || !b.presentationShown {
+		t.Fatal("refocus changed content or reset first-show state")
+	}
+	if b.claimClose(session, show, revision+1) || b.shouldHideAfterBlur(show, true, false) || b.acceptLayout(session, show, layout, 2) {
+		t.Fatal("old presentation callback affected refocused input")
+	}
+	if !b.acceptLayout(session, b.showID, layout, 2) || ctx.Err() != nil {
+		t.Fatal("refocused input stopped accepting layout or canceled translation")
+	}
+	// A newer acquisition can leave the old input window visible. It must not
+	// consume panel entry as a no-op or the pending selection would later win.
+	next := gate.begin()
+	if b.canShow() || !next.valid() || ctx.Err() != nil {
+		t.Fatal("new acquisition must revoke entry ownership, not independent translation")
+	}
+}
+
+func TestInputFocusRequiresVisibleReusablePresentation(t *testing.T) {
+	for _, blocked := range []string{"hidden", "pinned", "closed", "waiting", "not-shown", "selection", "ocr"} {
+		t.Run(blocked, func(t *testing.T) {
+			b := &bubble{trigger: "input", presentationShown: true}
+			visible := true
+			switch blocked {
+			case "hidden":
+				visible = false
+			case "pinned":
+				b.pinned = true
+			case "closed":
+				b.closeClaimed = true
+			case "waiting":
+				b.awaitingLayout = true
+			case "not-shown":
+				b.presentationShown = false
+			default:
+				b.trigger = blocked
+			}
+			if b.refocusInput(visible) {
+				t.Fatal("non-current input presentation was reused")
+			}
+		})
+	}
+}
+
 func TestRunOrderingAndIsolation(t *testing.T) {
 	m := newBubbleManager(nil)
 	w1, w2 := &mygo.Window{}, &mygo.Window{}
@@ -465,7 +528,9 @@ func TestReadyLayoutSequenceFloorAndCanceledNavigation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// A queued binding from a navigated-away page must not claim a sequence.
-	m.Rendered(ctx, w, 1, "s", 1, 1, 41, 200)
+	if m.Rendered(ctx, w, 1, "s", 1, 1, 41, 200) {
+		t.Fatal("canceled page measurement was acknowledged")
+	}
 	if b.layoutSequence != 40 {
 		t.Fatal("canceled page measurement claimed the next sequence")
 	}
