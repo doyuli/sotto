@@ -25,6 +25,8 @@ var (
 	procSetCursorPos                  = modUser32.NewProc("SetCursorPos")
 	procGetWindowRect                 = modUser32.NewProc("GetWindowRect")
 	procSetProcessDpiAwarenessContext = modUser32.NewProc("SetProcessDpiAwarenessContext")
+	procGetThreadDpiAwarenessContext  = modUser32.NewProc("GetThreadDpiAwarenessContext")
+	procAreDpiAwarenessContextsEqual  = modUser32.NewProc("AreDpiAwarenessContextsEqual")
 	procSetForegroundWindow           = modUser32.NewProc("SetForegroundWindow")
 	procGetWindowThreadProcessId      = modUser32.NewProc("GetWindowThreadProcessId")
 	procEnumWindows                   = modUser32.NewProc("EnumWindows")
@@ -50,7 +52,27 @@ const (
 	wsExLayered             = 0x00080000
 	wsExNoRedirectionBitmap = 0x00200000
 	lwaAlpha                = 2
+	dpiPerMonitorAwareV2    = ^uintptr(0) - 3 // -4 as an opaque DPI context
 )
+
+func setTestDPIAwareness() error {
+	if err := procSetProcessDpiAwarenessContext.Find(); err != nil {
+		return fmt.Errorf("e2e: per-monitor DPI API unavailable: %w", err)
+	}
+	ok, _, err := procSetProcessDpiAwarenessContext.Call(dpiPerMonitorAwareV2)
+	if ok != 0 {
+		return nil
+	}
+	// A manifest may have set the correct context already. Accept that case,
+	// but never run coordinate assertions under an unknown DPI context.
+	if procGetThreadDpiAwarenessContext.Find() == nil && procAreDpiAwarenessContextsEqual.Find() == nil {
+		current, _, _ := procGetThreadDpiAwarenessContext.Call()
+		if equal, _, _ := procAreDpiAwarenessContextsEqual.Call(current, dpiPerMonitorAwareV2); equal != 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("e2e: set per-monitor DPI awareness: %w", err)
+}
 
 // Modifier virtual keys, by the names in a mygo accelerator.
 var modVKs = map[string]uint16{

@@ -36,6 +36,30 @@ func TestSnipSelectionGeometry(t *testing.T) {
 	}
 }
 
+func TestSnipCaptureUsesClientBounds(t *testing.T) {
+	content := mygo.Rectangle{X: -1912, Y: -92, Width: 1904, Height: 1064}
+	for _, tt := range []struct {
+		name string
+		rect *snipRect
+		want *Anchor
+	}{
+		{"client origin", &snipRect{0, 0, 8, 8}, &Anchor{-1912, -84}},
+		{"bottom right", &snipRect{1896, 1056, 8, 8}, &Anchor{-16, 972}},
+		{"beyond client width", &snipRect{1900, 0, 8, 8}, nil},
+		{"beyond client height", &snipRect{0, 1060, 8, 8}, nil},
+		{"outside origin", &snipRect{-1, 0, 8, 8}, nil},
+		{"too small", &snipRect{0, 0, 7, 8}, nil},
+		{"cancel", nil, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := snipCaptureAnchor(content, tt.rect)
+			if (got == nil) != (tt.want == nil) || got != nil && *got != *tt.want {
+				t.Fatalf("capture anchor = %v; want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func snipTestScreen(t *testing.T) (*snipScreen, *ui.Tester, *[]*snipRect) {
 	t.Helper()
 	var gate entryGate

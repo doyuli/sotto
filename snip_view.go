@@ -81,6 +81,7 @@ func (s *snipScreen) input(round *snipRound, ev ui.InputEvent) bool {
 		switch ev.Button {
 		case 0:
 			if round.selection.begin(ev.X, ev.Y) {
+				// A press can paint a 0×0 size badge before the pointer moves.
 				s.used = true
 				return true
 			}

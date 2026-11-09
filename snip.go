@@ -187,8 +187,8 @@ func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect
 		if task == nil {
 			return
 		}
-		if rect == nil || rect.W < 8 || rect.H < 8 || rect.X < 0 || rect.Y < 0 ||
-			rect.X > screen.display.Bounds.Width-rect.W || rect.Y > screen.display.Bounds.Height-rect.H {
+		anchor = snipCaptureAnchor(win.ContentBounds(), rect)
+		if anchor == nil {
 			a.snip.Hide()
 			task.cancel()
 			task = nil
@@ -197,8 +197,6 @@ func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect
 		screen.captures++
 		screen.captureTask = task
 		hwnd = win.NativeHandle()
-		x, y := win.Position()
-		anchor = &Anchor{X: x + rect.X, Y: y + rect.Y + rect.H}
 		a.snip.Hide()
 	})
 	if task == nil {

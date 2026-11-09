@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -269,8 +270,9 @@ func TestSelectionBubbleShows(t *testing.T) {
 // Use the app's DPI context so window rectangles and synthesized drags share
 // physical screen coordinates, including on a differently scaled side monitor.
 func TestMain(m *testing.M) {
-	if procSetProcessDpiAwarenessContext.Find() == nil {
-		procSetProcessDpiAwarenessContext.Call(^uintptr(0) - 3) // PER_MONITOR_AWARE_V2
+	if err := setTestDPIAwareness(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }

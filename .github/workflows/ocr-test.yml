@@ -59,6 +59,8 @@ jobs:
         run: go test .
       - name: Check desktop smoke tests
         run: go vet -tags e2e ./e2e
+      - name: Verify desktop test DPI initialization
+        run: go test -tags e2e ./e2e -run '^TestDPIAwarenessAlreadyInitialized$' -count=1 -v
       - run: go test ./internal/ocr/...
       - name: Verify packaged x64 OCR runtime
         env:

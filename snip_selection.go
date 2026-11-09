@@ -1,9 +1,23 @@
 package main
 
-import "math"
+import (
+	"math"
+
+	"github.com/egoist/mygo"
+)
 
 type snipRect struct{ X, Y, W, H int }
 type snipPoint struct{ x, y float32 }
+
+// Both the selection and capture are relative to the client area, which can
+// differ from the outer window bounds if the window's frame style changes.
+func snipCaptureAnchor(content mygo.Rectangle, r *snipRect) *Anchor {
+	if r == nil || r.W < 8 || r.H < 8 || r.X < 0 || r.Y < 0 ||
+		r.X > content.Width-r.W || r.Y > content.Height-r.H {
+		return nil
+	}
+	return &Anchor{X: content.X + r.X, Y: content.Y + r.Y + r.H}
+}
 
 // Coordinates remain local DIPs. Only GrabWindow converts them to physical
 // pixels, using the HWND of the display where the gesture began.
