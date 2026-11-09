@@ -72,6 +72,19 @@ func (c *fakeIdleClock) latest() *fakeIdleTimer {
 	return c.timers[len(c.timers)-1]
 }
 
+type gateCheckingIdleClock struct {
+	*fakeIdleClock
+	gate chan struct{}
+	t    *testing.T
+}
+
+func (c gateCheckingIdleClock) AfterFunc(d time.Duration, f func()) idleTimer {
+	if d == 0 && len(c.gate) != 0 {
+		c.t.Error("immediate timer would race the completing request's admission token")
+	}
+	return c.fakeIdleClock.AfterFunc(d, f)
+}
+
 type idleFixture struct {
 	coordinator *idleCoordinator
 	clock       *fakeIdleClock
@@ -96,7 +109,6 @@ func (f *idleFixture) warm(ids ...int) {
 		f.resources[id], r.used[id] = true, true
 	}
 	r.done(&f.resources)
-	<-f.coordinator.admission
 }
 
 func TestIdleNoResourcesAndDeadline(t *testing.T) {
@@ -149,6 +161,69 @@ func TestIdleEngineDeadlinesAreIndependent(t *testing.T) {
 	}
 }
 
+func TestIdleExpiredEngineIsNotStarvedByOtherRequests(t *testing.T) {
+	for _, expired := range []int{localOCR, systemOCR} {
+		f := newIdleFixture()
+		f.coordinator.clock = gateCheckingIdleClock{f.clock, f.coordinator.admission, t}
+		active := 1 - expired
+		f.warm(expired)
+		lastUsed := f.coordinator.engines[expired].lastUsed
+		f.clock.advance(defaultIdleTimeout - 100*time.Millisecond)
+		request := f.coordinator.begin()
+		f.coordinator.admission <- struct{}{}
+		request.used[active], f.resources[active] = true, true
+		f.clock.advance(200 * time.Millisecond)
+		request.done(&f.resources)
+		if f.coordinator.engines[expired].lastUsed != lastUsed || f.clock.latest().at != f.clock.Now() {
+			t.Fatal("another engine's completion postponed an overdue deadline")
+		}
+		// No quiet interval reaches the one-second contention backoff. The
+		// overdue resource must still close while the other engine stays warm.
+		for range 40 {
+			f.clock.advance(500 * time.Millisecond)
+			f.warm(active)
+		}
+		if f.closed[expired] != 1 || f.closed[active] != 0 || f.clock.active() != 1 {
+			t.Fatalf("expired engine %d starved: releases=%v timers=%d", expired, f.closed, f.clock.active())
+		}
+	}
+}
+
+func TestIdleContentionRetryKeepsItsAbsoluteDeadline(t *testing.T) {
+	for _, expired := range []int{localOCR, systemOCR} {
+		for _, busyGate := range []bool{false, true} {
+			f := newIdleFixture()
+			active := 1 - expired
+			f.warm(expired)
+			if busyGate {
+				f.coordinator.admission <- struct{}{}
+			} else {
+				release := f.coordinator.release
+				f.coordinator.release = func(id int) (bool, error) {
+					f.coordinator.release = release
+					return false, nil
+				}
+			}
+			f.clock.advance(defaultIdleTimeout)
+			retry := f.clock.latest().at
+			if busyGate {
+				<-f.coordinator.admission
+			}
+			for range 2 {
+				f.clock.advance(400 * time.Millisecond)
+				f.warm(active)
+				if f.clock.latest().at != retry || f.closed[expired] != 0 {
+					t.Fatal("unrelated completion restarted or bypassed the contention backoff")
+				}
+			}
+			f.clock.advance(200 * time.Millisecond)
+			if f.closed[expired] != 1 || f.closed[active] != 0 || f.clock.active() != 1 {
+				t.Fatalf("expired engine %d lost its contention retry: %v", expired, f.closed)
+			}
+		}
+	}
+}
+
 func TestIdleBusyAdmissionAndWorkerAreRetried(t *testing.T) {
 	for _, busyGate := range []bool{false, true} {
 		f := newIdleFixture()
@@ -191,7 +266,6 @@ func TestIdleQueuedRequestsProtectResourcesAndRestoreTimer(t *testing.T) {
 	}
 	running.used[localOCR] = true
 	running.done(&f.resources)
-	<-f.coordinator.admission
 	f.clock.advance(defaultIdleTimeout - time.Nanosecond)
 	if f.closed[0] != 0 {
 		t.Fatal("idle time started before inference actually returned")
@@ -266,6 +340,7 @@ func TestIdleCloseErrorLeavesCacheTerminalAndCanReload(t *testing.T) {
 func TestIdleInitializationFailureAndCanceledAttempt(t *testing.T) {
 	f := newIdleFixture()
 	r := f.coordinator.begin()
+	f.coordinator.admission <- struct{}{}
 	r.used[localOCR] = true
 	r.done(&f.resources) // Initialization failed and produced no resource.
 	if f.clock.active() != 0 || f.coordinator.requests != 0 {
@@ -274,6 +349,7 @@ func TestIdleInitializationFailureAndCanceledAttempt(t *testing.T) {
 	f.warm(localOCR)
 	f.clock.advance(time.Minute)
 	r = f.coordinator.begin()
+	f.coordinator.admission <- struct{}{}
 	r.used[localOCR] = true
 	f.clock.advance(defaultIdleTimeout) // Canceled native work has not returned.
 	if f.closed[0] != 0 {

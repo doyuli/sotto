@@ -86,7 +86,6 @@ func recognizeRequest(ctx context.Context, img image.Image, lang string, coordin
 	defer func() {
 		snapshot := resources()
 		request.done(&snapshot)
-		<-coordinator.admission
 	}()
 	if err := ctx.Err(); err != nil {
 		return Text{}, err

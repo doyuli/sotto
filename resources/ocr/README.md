@@ -42,7 +42,7 @@ Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 
 
 ## Idle resource lifetime
 
-Each engine has its own 5-minute idle deadline, measured from the actual completion of its most recent request. Using system OCR does not renew idle local sessions, or vice versa. Local inference and system fallback share one admission gate for the full request. Queued requests, active inference and cancellation while a native call is still running prevent idle release; cancellation alone does not mean inference has returned.
+Each engine has its own 5-minute idle deadline, measured from the actual completion of its most recent request. Using system OCR does not renew idle local sessions, or vice versa. Local inference and system fallback share one admission gate for the full request. Queued requests, active inference and cancellation while a native call is still running prevent idle release; cancellation alone does not mean inference has returned. Once admission is returned, already-expired resources are scheduled immediately. Admission/worker contention uses a one-second retry deadline that requests using the other engine do not postpone.
 
 When idle, Sotto closes both local model sessions, drops the recognizer and dictionary references, and terminates and waits for an idle PowerShell worker. The next request initializes the resources it needs again; failed initialization is not cached. ONNX Runtime's successful DLL, environment and shared memory-info initialization remain loaded for the process lifetime. Idle cleanup does not unload the runtime, release the screenshot/bubble WebViews, force a GC or call `FreeOSMemory`. It targets retained OCR resources, not peak inference memory or a guaranteed return to the pre-OCR baseline.
 

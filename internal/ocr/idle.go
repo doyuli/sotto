@@ -34,6 +34,15 @@ func (wallIdleClock) AfterFunc(d time.Duration, f func()) idleTimer {
 type idleEngine struct {
 	loaded   bool
 	lastUsed time.Time
+	retryAt  time.Time
+}
+
+func (e idleEngine) deadline(timeout time.Duration) time.Time {
+	deadline := e.lastUsed.Add(timeout)
+	if e.retryAt.After(deadline) {
+		return e.retryAt
+	}
+	return deadline
 }
 
 // admission is the only resource lock. mu protects scheduling metadata and is
@@ -68,25 +77,33 @@ func (c *idleCoordinator) begin() *idleRequest {
 	return &idleRequest{owner: c}
 }
 
-// A nil snapshot means the request canceled before taking admission; existing
-// resources and their deadlines must survive that early return unchanged.
+// A non-nil snapshot is captured under admission. Publish it before releasing
+// the gate, then schedule from current metadata so an overdue timer can run
+// without competing with this request's own admission token. A nil snapshot
+// means cancellation before admission and leaves existing deadlines unchanged.
 func (r *idleRequest) done(snapshot *engineResources) {
 	c := r.owner
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.requests--
 	if snapshot != nil {
 		now := c.clock.Now()
 		for i, loaded := range snapshot {
 			c.engines[i].loaded = loaded
 			if !loaded {
-				c.engines[i].lastUsed = time.Time{}
+				c.engines[i] = idleEngine{}
 			} else if r.used[i] {
-				c.engines[i].lastUsed = now
+				c.engines[i] = idleEngine{loaded: true, lastUsed: now}
 			}
 		}
 	}
+	c.invalidateLocked()
+	c.mu.Unlock()
+	if snapshot != nil {
+		<-c.admission
+	}
+	c.mu.Lock()
 	c.scheduleLocked()
+	c.mu.Unlock()
 }
 
 func (c *idleCoordinator) invalidateLocked() {
@@ -104,17 +121,14 @@ func (c *idleCoordinator) scheduleLocked() {
 	}
 	var next time.Time
 	for _, e := range c.engines {
-		if deadline := e.lastUsed.Add(c.timeout); e.loaded && (next.IsZero() || deadline.Before(next)) {
+		if deadline := e.deadline(c.timeout); e.loaded && (next.IsZero() || deadline.Before(next)) {
 			next = deadline
 		}
 	}
 	if next.IsZero() {
 		return
 	}
-	delay := next.Sub(c.clock.Now())
-	if delay <= 0 {
-		delay = idleRetryDelay
-	}
+	delay := max(time.Duration(0), next.Sub(c.clock.Now()))
 	generation := c.generation
 	c.timer = c.clock.AfterFunc(delay, func() { c.expire(generation) })
 }
@@ -135,6 +149,12 @@ func (c *idleCoordinator) expire(generation uint64) {
 	default:
 		c.mu.Lock()
 		if c.generation == claim {
+			now := c.clock.Now()
+			for i, e := range c.engines {
+				if e.loaded && !now.Before(e.deadline(c.timeout)) {
+					c.engines[i].retryAt = now.Add(idleRetryDelay)
+				}
+			}
 			c.scheduleLocked()
 		}
 		c.mu.Unlock()
@@ -147,7 +167,7 @@ func (c *idleCoordinator) expire(generation uint64) {
 	}
 	var due engineResources
 	for i, e := range c.engines {
-		due[i] = e.loaded && !c.clock.Now().Before(e.lastUsed.Add(c.timeout))
+		due[i] = e.loaded && !c.clock.Now().Before(e.deadline(c.timeout))
 	}
 	if due == (engineResources{}) {
 		c.scheduleLocked()
@@ -174,6 +194,8 @@ func (c *idleCoordinator) expire(generation uint64) {
 	for i, gone := range released {
 		if gone {
 			c.engines[i] = idleEngine{}
+		} else if due[i] {
+			c.engines[i].retryAt = c.clock.Now().Add(idleRetryDelay)
 		}
 	}
 	c.releasing = false
