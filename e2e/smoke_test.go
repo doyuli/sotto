@@ -266,7 +266,11 @@ func TestSelectionBubbleShows(t *testing.T) {
 	}
 }
 
-// TestMain guards against a leftover app instance holding the hotkeys.
+// Use the app's DPI context so window rectangles and synthesized drags share
+// physical screen coordinates, including on a differently scaled side monitor.
 func TestMain(m *testing.M) {
+	if procSetProcessDpiAwarenessContext.Find() == nil {
+		procSetProcessDpiAwarenessContext.Call(^uintptr(0) - 3) // PER_MONITOR_AWARE_V2
+	}
 	os.Exit(m.Run())
 }
