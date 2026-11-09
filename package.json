@@ -17,13 +17,13 @@
     "typecheck": "svelte-check --tsconfig tsconfig.json"
   },
   "dependencies": {
-    "mygo-runtime": "^0.7.4"
+    "mygo-runtime": "0.8.3"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "^1.4.4",
     "jsdom": "^31.0.0",
-    "mygo-cli": "^0.7.4",
+    "mygo-cli": "0.8.3",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.8",
     "svelte-dnd-action": "^0.9.80",

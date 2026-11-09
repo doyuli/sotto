@@ -6,7 +6,7 @@ web
 
 ## Stack
 
-Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.7.4, WebView2, Vite + TypeScript frontend.
+Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3, WebView2, Vite + TypeScript frontend.
 
 ## Users
 

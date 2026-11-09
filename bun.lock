@@ -5,13 +5,13 @@
     "": {
       "name": "sotto",
       "dependencies": {
-        "mygo-runtime": "^0.7.4",
+        "mygo-runtime": "0.8.3",
       },
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^7.3.1",
         "@types/bun": "^1.4.4",
         "jsdom": "^31.0.0",
-        "mygo-cli": "^0.7.4",
+        "mygo-cli": "0.8.3",
         "svelte": "^5.57.3",
         "svelte-check": "^4.7.8",
         "svelte-dnd-action": "^0.9.80",
@@ -22,17 +22,17 @@
     },
   },
   "packages": {
-    "@egoist/mygo-cli-darwin-arm64": ["@egoist/mygo-cli-darwin-arm64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-darwin-arm64/-/mygo-cli-darwin-arm64-0.7.4.tgz", { "os": "darwin", "cpu": "arm64" }, "sha512-FZyQSzeRAlT5w8D7MfUZTmaTcJXhuT3ukztjD3Oo2Kc3Ohnqp5hVlsJr1OX5LEbOdNOfgeOIIU7ceeG/6hLcBw=="],
+    "@egoist/mygo-cli-darwin-arm64": ["@egoist/mygo-cli-darwin-arm64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-darwin-arm64/-/mygo-cli-darwin-arm64-0.8.3.tgz", { "os": "darwin", "cpu": "arm64" }, "sha512-qLkqs58idBSBONs1ce4YO5x+R67F/4HHiNMlT7fZE5QeyRHLdXnbqgVcvZ0Fwi2XSXMtXMF/AxZYtcrn5rJVrg=="],
 
-    "@egoist/mygo-cli-darwin-x64": ["@egoist/mygo-cli-darwin-x64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-darwin-x64/-/mygo-cli-darwin-x64-0.7.4.tgz", { "os": "darwin", "cpu": "x64" }, "sha512-ctVPT6pZX/fwEPglh96oAKP6jF8XHIdnhSj5TnEe98vPaFMBkrhasMaKF/JNQmk1QGNXuFR5KlUAJqwQ30j5Gg=="],
+    "@egoist/mygo-cli-darwin-x64": ["@egoist/mygo-cli-darwin-x64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-darwin-x64/-/mygo-cli-darwin-x64-0.8.3.tgz", { "os": "darwin", "cpu": "x64" }, "sha512-G4UcPrqJxeXhIe8v/nF/Nu3l7MAbq0KloB1Hy75i50Ulc6YX4yvTTVNZjYFPfatJ3uoeIfRiolQmKLwhQ5vFUQ=="],
 
-    "@egoist/mygo-cli-linux-arm64": ["@egoist/mygo-cli-linux-arm64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-linux-arm64/-/mygo-cli-linux-arm64-0.7.4.tgz", { "os": "linux", "cpu": "arm64" }, "sha512-bG/go4V79VycOo1j/Q0fldpcK8WUl9kWJ8ayYmTsBwEp6EheHq6duXeFIVXz/DnsR9YQI2KV5DMeJcQHVJpNtQ=="],
+    "@egoist/mygo-cli-linux-arm64": ["@egoist/mygo-cli-linux-arm64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-linux-arm64/-/mygo-cli-linux-arm64-0.8.3.tgz", { "os": "linux", "cpu": "arm64" }, "sha512-RcEeK3VwYbxEuuifL4N5PaUiKqTRt0NbDHt21bHBO8KMhM79xbMoK1rVBo0iinorP5lFJD2QSzn6OLwLZAR/PA=="],
 
-    "@egoist/mygo-cli-linux-x64": ["@egoist/mygo-cli-linux-x64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-linux-x64/-/mygo-cli-linux-x64-0.7.4.tgz", { "os": "linux", "cpu": "x64" }, "sha512-AKGpGbpj9IBg0j3ty9wLCX857JI/9f88dv6KQNmClW5wT6IL2HlEHkTMRnjJHNaBt6uJmjZGgcHnVtQCW+qEuQ=="],
+    "@egoist/mygo-cli-linux-x64": ["@egoist/mygo-cli-linux-x64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-linux-x64/-/mygo-cli-linux-x64-0.8.3.tgz", { "os": "linux", "cpu": "x64" }, "sha512-MHWMyaBLKLgLUugnzrS3OanZEO57w1Zf3XY2X3Gz0rMneKGAlszBgz0+I7bIY5dGZcdJXJ+2mPp9CqxJXSV2QA=="],
 
-    "@egoist/mygo-cli-win32-arm64": ["@egoist/mygo-cli-win32-arm64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-win32-arm64/-/mygo-cli-win32-arm64-0.7.4.tgz", { "os": "win32", "cpu": "arm64" }, "sha512-3dhN1UVKgiPG7JKD45R7AmxdwOlSr98yepj/a6Uou/PBZ9aFyrg/+xCg+Sv/G+BhKTPa170EVRgUogwd6qWsrw=="],
+    "@egoist/mygo-cli-win32-arm64": ["@egoist/mygo-cli-win32-arm64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-win32-arm64/-/mygo-cli-win32-arm64-0.8.3.tgz", { "os": "win32", "cpu": "arm64" }, "sha512-25crS7CLiLv7rnx2+cYFa2zdNYyMrhgjQqXT6+5nvsGg+3/n9xY3ojkYtTOCN5nEXRTxOeUNXC9AJNrQFrf3HQ=="],
 
-    "@egoist/mygo-cli-win32-x64": ["@egoist/mygo-cli-win32-x64@0.7.4", "https://registry.npmmirror.com/@egoist/mygo-cli-win32-x64/-/mygo-cli-win32-x64-0.7.4.tgz", { "os": "win32", "cpu": "x64" }, "sha512-a0o00ibtfJypvNFc/CFxCLLhhTn6sBHlp1Hr7zmd6T7wZziEv2l4MyenoDcaAE314xPzkew5YriGA+BLnc8U4Q=="],
+    "@egoist/mygo-cli-win32-x64": ["@egoist/mygo-cli-win32-x64@0.8.3", "https://registry.npmmirror.com/@egoist/mygo-cli-win32-x64/-/mygo-cli-win32-x64-0.8.3.tgz", { "os": "win32", "cpu": "x64" }, "sha512-OE6v5PMN+2zpwgUpQlI/lUM9oqBO65+T0n6WrtR8F5YQ5PcIjvfMvyR558shrVXmw41IiZgan7ukaQJqs+/PBQ=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.16.0", "https://registry.npmmirror.com/@exodus/bytes/-/bytes-1.16.0.tgz", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA=="],
 
@@ -192,9 +192,9 @@
 
     "mri": ["mri@1.2.0", "https://registry.npmmirror.com/mri/-/mri-1.2.0.tgz", {}, "sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA=="],
 
-    "mygo-cli": ["mygo-cli@0.7.4", "https://registry.npmmirror.com/mygo-cli/-/mygo-cli-0.7.4.tgz", { "optionalDependencies": { "@egoist/mygo-cli-darwin-arm64": "0.7.4", "@egoist/mygo-cli-darwin-x64": "0.7.4", "@egoist/mygo-cli-linux-arm64": "0.7.4", "@egoist/mygo-cli-linux-x64": "0.7.4", "@egoist/mygo-cli-win32-arm64": "0.7.4", "@egoist/mygo-cli-win32-x64": "0.7.4" }, "bin": { "mygo": "bin/mygo.js" } }, "sha512-OfX+JBxHQXTkF937vtM1uRuRPrbQ2FiuDH+ikHAYk5bMQy5TjTQymWHAI0AkEGa1l5VbUkw5Q1OJj6egkKszUA=="],
+    "mygo-cli": ["mygo-cli@0.8.3", "https://registry.npmmirror.com/mygo-cli/-/mygo-cli-0.8.3.tgz", { "optionalDependencies": { "@egoist/mygo-cli-darwin-arm64": "0.8.3", "@egoist/mygo-cli-darwin-x64": "0.8.3", "@egoist/mygo-cli-linux-arm64": "0.8.3", "@egoist/mygo-cli-linux-x64": "0.8.3", "@egoist/mygo-cli-win32-arm64": "0.8.3", "@egoist/mygo-cli-win32-x64": "0.8.3" }, "bin": { "mygo": "bin/mygo.js" } }, "sha512-JHJkkrekMO9rKG/5au2NoFT0POF6LO6Q9p0wYKz0b4Rv6PV4fIqKZpLCpyS6FN3kfQudFtu64T/AcZ/1SJtbVQ=="],
 
-    "mygo-runtime": ["mygo-runtime@0.7.4", "https://registry.npmmirror.com/mygo-runtime/-/mygo-runtime-0.7.4.tgz", {}, "sha512-11BHbfdLp3OdVb5691zkj4xKtU6Qk9ZCVxbi2xOxPvtGTVo1xwKs1cx61Ow/p95qmJvUp8p+DjeXRnVkeSnFww=="],
+    "mygo-runtime": ["mygo-runtime@0.8.3", "https://registry.npmmirror.com/mygo-runtime/-/mygo-runtime-0.8.3.tgz", {}, "sha512-B2hbQcb6obuqYR+ZP+aJaB+zW7OIsjZrEdj3EqL42VZYyGKa6J4qXvbGkJ0mfxl8zVEkQBO76QDg3/Sl87RDIg=="],
 
     "nanoid": ["nanoid@3.3.20", "https://registry.npmmirror.com/nanoid/-/nanoid-3.3.20.tgz", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ=="],
 

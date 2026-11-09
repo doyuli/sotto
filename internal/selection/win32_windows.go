@@ -5,10 +5,11 @@ package selection
 import (
 	"context"
 	"fmt"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"sotto/internal/screencoords"
 
 	"golang.org/x/sys/windows"
 )
@@ -22,7 +23,6 @@ var (
 	modUser32   = windows.NewLazySystemDLL("user32.dll")
 	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	modOleAut32 = windows.NewLazySystemDLL("oleaut32.dll")
-	modShcore   = windows.NewLazySystemDLL("shcore.dll")
 
 	procSendInput                  = modUser32.NewProc("SendInput")
 	procGetAsyncKeyState           = modUser32.NewProc("GetAsyncKeyState")
@@ -39,9 +39,6 @@ var (
 	procIsClipboardFormatAvailable = modUser32.NewProc("IsClipboardFormatAvailable")
 	procGetClipboardOwner          = modUser32.NewProc("GetClipboardOwner")
 	procRegisterClipboardFormatW   = modUser32.NewProc("RegisterClipboardFormatW")
-	procEnumDisplayMonitors        = modUser32.NewProc("EnumDisplayMonitors")
-	procGetMonitorInfoW            = modUser32.NewProc("GetMonitorInfoW")
-	procGetDpiForMonitor           = modShcore.NewProc("GetDpiForMonitor")
 
 	procGlobalAlloc  = modKernel32.NewProc("GlobalAlloc")
 	procGlobalFree   = modKernel32.NewProc("GlobalFree")
@@ -409,100 +406,12 @@ func readClipboardText() (string, bool) {
 	return syscall.UTF16ToString(runes), true
 }
 
-// A monitor, in the physical pixels Win32 reports, with its DPI.
-type monitor struct {
-	physLeft, physTop     int
-	physRight, physBottom int
-	dpi                   int
-}
-
-type monitorInfoEx struct {
-	cbSize    uint32
-	rcMonitor rect
-	rcWork    rect
-	dwFlags   uint32
-	szDevice  [32]uint16
-}
-
-type rect struct{ Left, Top, Right, Bottom int32 }
-
-// monitorSink and monitorEnumProc: the enumeration callback is made
-// once — Windows keeps a small pool of them — and the sink it feeds is
-// guarded, as grabs can run concurrently.
-var (
-	monitorsMu    sync.Mutex
-	monitorSink   func(uintptr)
-	monitorEnumCb = syscall.NewCallback(func(mon, _, _, _ uintptr) uintptr {
-		if monitorSink != nil {
-			monitorSink(mon)
-		}
-		return 1
-	})
-)
-
-// monitors enumerates the displays, in physical pixels with their DPI.
-func monitors() []monitor {
-	monitorsMu.Lock()
-	defer monitorsMu.Unlock()
-	var out []monitor
-	monitorSink = func(mon uintptr) {
-		var info monitorInfoEx
-		info.cbSize = uint32(unsafe.Sizeof(info))
-		if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&info))); r == 0 {
-			return
-		}
-		m := monitor{
-			physLeft:   int(info.rcMonitor.Left),
-			physTop:    int(info.rcMonitor.Top),
-			physRight:  int(info.rcMonitor.Right),
-			physBottom: int(info.rcMonitor.Bottom),
-		}
-		m.dpi = 96
-		if procGetDpiForMonitor.Find() == nil {
-			var dx, dy uint32
-			if r, _, _ := procGetDpiForMonitor.Call(mon, 0, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); r == 0 && dx != 0 {
-				m.dpi = int(dx)
-			}
-		}
-		out = append(out, m)
-	}
-	procEnumDisplayMonitors.Call(0, 0, monitorEnumCb, 0)
-	monitorSink = nil
-	return out
-}
-
-// toDIP is mygo's own conversion (internal/windows toDIP), so selection
-// rects land in the coordinates its windows place.
-func toDIP(v float64, dpi int) int {
-	return int((v*96 + float64(dpi)/2) / float64(dpi))
-}
-
-// monitorAt returns the display containing a physical point, the last
-// one when the point is off them all.
-func monitorAt(x, y float64) monitor {
-	var best monitor
-	for _, m := range monitors() {
-		best = m
-		if x >= float64(m.physLeft) && x < float64(m.physRight) &&
-			y >= float64(m.physTop) && y < float64(m.physBottom) {
-			return m
-		}
-	}
-	return best
-}
-
-// physRectToDIP converts a physical-pixel rect to mygo's DIP
-// coordinates: mygo sizes each display by that display's own DPI, so
-// the point's display decides the scale.
+// physRectToDIP uses the same display selection as screen capture, so an
+// off-screen or cross-display UIA rectangle cannot pick an arbitrary monitor.
 func physRectToDIP(x, y, w, h float64) (Rect, bool) {
 	if w <= 0 || h <= 0 {
 		return Rect{}, false
 	}
-	m := monitorAt(x, y)
-	return Rect{
-		X: toDIP(x, m.dpi),
-		Y: toDIP(y, m.dpi),
-		W: toDIP(w, m.dpi),
-		H: toDIP(h, m.dpi),
-	}, true
+	r, ok := screencoords.Current().PixelsToDIP(x, y, w, h)
+	return Rect{X: r.X, Y: r.Y, W: r.W, H: r.H}, ok
 }
