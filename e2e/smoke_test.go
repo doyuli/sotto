@@ -11,8 +11,9 @@
 //   - the app comes up with all three hotkeys registered
 //   - the panel hotkey opens the input bubble, which takes focus and goes away
 //     when something else takes it (the "click elsewhere" behavior)
-//   - the OCR hotkey opens fully transparent native screenshot overlays;
-//     Escape/right-click cancel and repeated sessions reuse their windows
+//   - the OCR hotkey opens translucent native screenshot overlays;
+//     Escape/right-click cancel, unused windows are reused, and a dragged
+//     surface is replaced before it can show a previous selection
 package e2e
 
 import (
@@ -153,7 +154,7 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 }
 
 // TestSnipOverlay verifies the transparent composition window, native content,
-// keyboard/mouse cancellation and HWND reuse over the live desktop.
+// keyboard/mouse cancellation and clean surface reuse over the live desktop.
 func TestSnipOverlay(t *testing.T) {
 	pid, stop := start(t)
 	defer stop()
@@ -170,6 +171,16 @@ func TestSnipOverlay(t *testing.T) {
 		}
 		t.Fatal("native screenshot overlay never presented after the OCR hotkey")
 		return nil
+	}
+	waitHidden := func() {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for len(visibleHandles(pid)) != 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("overlay did not cancel")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 	first := open()
 	slices.Sort(first)
@@ -204,17 +215,33 @@ func TestSnipOverlay(t *testing.T) {
 		} else {
 			rightClick()
 		}
-		deadline := time.Now().Add(3 * time.Second)
-		for {
-			if count := len(visibleHandles(pid)); count == 0 {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("overlay did not cancel in cycle %d", cycle)
-			}
-			time.Sleep(50 * time.Millisecond)
+		waitHidden()
+	}
+	before := open()
+	active, _, _ := procGetForegroundWindow.Call()
+	if !slices.Contains(before, active) {
+		t.Fatal("screenshot did not focus one of its overlays")
+	}
+	release, err := beginSnipDrag(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	time.Sleep(150 * time.Millisecond)
+	tapAccel("Escape")
+	waitHidden()
+	release()
+	after := open()
+	if len(before) != len(after) || slices.Contains(after, active) {
+		t.Fatal("a surface with a previous selection was shown again")
+	}
+	for _, hwnd := range before {
+		if hwnd != active && !slices.Contains(after, hwnd) {
+			t.Fatal("an unused display's overlay was unnecessarily replaced")
 		}
 	}
+	tapAccel("Escape")
+	waitHidden()
 }
 
 // TestSelectionBubbleShows covers the selection hotkey end to end as far

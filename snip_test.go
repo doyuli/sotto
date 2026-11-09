@@ -59,24 +59,78 @@ func TestNativeSnipDragAndRepeatedFrames(t *testing.T) {
 	}
 }
 
-func TestNativeSnipDrawsTranslucentSelectionOnTransparentBackground(t *testing.T) {
+func TestNativeSnipDrawsLightVeilAndTranslucentSelection(t *testing.T) {
 	_, tt, _ := snipTestScreen(t)
-	for _, a := range tt.Image().Pix {
-		if a != 0 {
-			t.Fatal("idle overlay painted a background or hint")
+	idle := tt.Image()
+	veil := idle.RGBAAt(20, 20)
+	if veil.A == 0 || veil.A > 40 {
+		t.Fatalf("idle overlay needs a light veil, got %v", veil)
+	}
+	for y := range idle.Bounds().Dy() {
+		for x := range idle.Bounds().Dx() {
+			if idle.RGBAAt(x, y) != veil {
+				t.Fatal("idle overlay painted something besides the veil")
+			}
 		}
 	}
 	tt.Press(100, 100)
 	tt.Move(500, 400)
 	img := tt.Image()
-	if a := img.RGBAAt(300, 250).A; a == 0 || a >= 128 {
+	if a := img.RGBAAt(300, 250).A; a <= veil.A || a >= 128 {
 		t.Fatalf("selection needs a light translucent fill, got alpha %d", a)
 	}
-	if img.RGBAAt(20, 20).A != 0 {
-		t.Fatal("overlay painted outside the selection")
+	if img.RGBAAt(20, 20) != veil {
+		t.Fatal("dragging changed the veil outside the selection")
 	}
-	if img.RGBAAt(100, 200).A == 0 || img.RGBAAt(110, 95).A == 0 {
+	if img.RGBAAt(100, 200).A <= veil.A || img.RGBAAt(110, 95).A <= veil.A {
 		t.Fatal("selection border or size badge was not painted")
+	}
+}
+
+func TestSnipUsedSurfaceIsReplacedBeforeReuse(t *testing.T) {
+	for _, cancel := range []bool{false, true} {
+		screen, tt, _ := snipTestScreen(t)
+		clean := &snipScreen{}
+		manager := snipManager{screens: map[int64]*snipScreen{1: screen, 2: clean}}
+		if manager.reusableScreen(1) != screen {
+			t.Fatal("unused overlay was not reused")
+		}
+		tt.Press(100, 100)
+		tt.Move(500, 400)
+		if cancel {
+			tt.Key(0, ui.KeyEscape)
+		} else {
+			tt.Release(500, 400)
+		}
+		// Hiding clears the model before a clean frame is guaranteed to
+		// replace the surface's previous contents.
+		screen.round = nil
+		closes := 0
+		screen.dispose = func() { closes++ }
+		if manager.reusableScreen(1) != nil || !screen.disposed || closes != 1 {
+			t.Fatal("a surface with an old selection could be shown again")
+		}
+		if _, retained := manager.screens[1]; retained || manager.reusableScreen(2) != clean {
+			t.Fatal("replacement did not preserve the other display's unused overlay")
+		}
+	}
+}
+
+func TestSnipUsedSurfaceKeepsBorrowedHWNDUntilCaptureReturns(t *testing.T) {
+	screen, tt, _ := snipTestScreen(t)
+	tt.Press(100, 100)
+	tt.Release(500, 400)
+	screen.round = nil
+	screen.captures = 1
+	closes := 0
+	screen.dispose = func() { closes++ }
+	manager := snipManager{screens: map[int64]*snipScreen{1: screen}}
+	if manager.reusableScreen(1) != nil || !screen.retired || closes != 0 {
+		t.Fatal("replacement destroyed a borrowed HWND")
+	}
+	screen.releaseCapture()
+	if closes != 1 {
+		t.Fatal("capture completion did not dispose the old surface")
 	}
 }
 

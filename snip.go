@@ -38,14 +38,7 @@ func (s *snipManager) Show(task *entryTask) {
 	active := 0
 	ordered := make([]*snipScreen, 0, len(displays))
 	for i, d := range displays {
-		screen := s.screens[d.ID]
-		if screen != nil && screen.captures != 0 {
-			// A previous shot may still be copying pixels after cancellation.
-			// Leave its hidden HWND and coordinate system alone until it returns.
-			delete(s.screens, d.ID)
-			screen.retire()
-			screen = nil
-		}
+		screen := s.reusableScreen(d.ID)
 		if screen == nil {
 			screen = s.newScreen(d)
 			s.screens[d.ID] = screen
@@ -63,6 +56,20 @@ func (s *snipManager) Show(task *entryTask) {
 		screen.win.ShowInactive()
 	}
 	ordered[active].win.Show()
+}
+
+func (s *snipManager) reusableScreen(id int64) *snipScreen {
+	screen := s.screens[id]
+	if screen != nil && (screen.used || screen.captures != 0) {
+		// Hidden surfaces can retain the last selection: Invalidate is async,
+		// and hidden windows need not present a clean frame before Show.
+		// On Windows a new surface stays cloaked until its first frame. Keep
+		// any borrowed HWND hidden and alive until its capture returns.
+		delete(s.screens, id)
+		screen.retire()
+		return nil
+	}
+	return screen
 }
 
 func (s *snipManager) newScreen(display mygo.Display) *snipScreen {

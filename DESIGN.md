@@ -82,7 +82,7 @@ The service title strip is darker than the card in light mode and lighter in dar
 
 ## Screenshot overlay
 
-- Native mygo `ui`, one full-display transparent window per monitor. The idle overlay paints nothing over the live desktop: no veil or instruction text.
+- Native mygo `ui`, one full-display transparent window per monitor. A dark `#10141c1a` veil (10% opacity) indicates selection mode over the live desktop; no instruction text is shown.
 - Crosshair cursor and a 1-DIP `#4cc2ff` selection border; the selection interior has a light blue `#4cc2ff26` fill (15% opacity). The rounded size badge uses blue `#2f7fe8`, white 11-DIP text and explicitly labels DIPs; it stays within the screen.
 - Selection borders and size labels use the same colors in light and dark appearance; no instruction pill is shown.
 - Minimum region is 8×8 DIPs. Esc, right-click and pointer-capture loss cancel; gestures do not continue across displays. No desktop screenshot is painted in the overlay.

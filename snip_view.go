@@ -7,7 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-const snipBackground = "#00000000"
+const snipBackground = "#10141c1a"
 
 type snipRound struct {
 	task      *entryTask
@@ -24,6 +24,7 @@ type snipScreen struct {
 	dispose     func()
 	captures    int
 	captureTask *entryTask
+	used        bool
 	retired     bool
 	disposed    bool
 }
@@ -79,7 +80,10 @@ func (s *snipScreen) input(round *snipRound, ev ui.InputEvent) bool {
 	case ui.InputPointerDown:
 		switch ev.Button {
 		case 0:
-			return round.selection.begin(ev.X, ev.Y)
+			if round.selection.begin(ev.X, ev.Y) {
+				s.used = true
+				return true
+			}
 		case 1:
 			finished = round.selection.cancel()
 		}

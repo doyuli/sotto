@@ -21,6 +21,9 @@ var (
 
 	procSendInput                  = modUser32.NewProc("SendInput")
 	procGetForegroundWindow        = modUser32.NewProc("GetForegroundWindow")
+	procGetCursorPos               = modUser32.NewProc("GetCursorPos")
+	procSetCursorPos               = modUser32.NewProc("SetCursorPos")
+	procGetWindowRect              = modUser32.NewProc("GetWindowRect")
 	procSetForegroundWindow        = modUser32.NewProc("SetForegroundWindow")
 	procGetWindowThreadProcessId   = modUser32.NewProc("GetWindowThreadProcessId")
 	procEnumWindows                = modUser32.NewProc("EnumWindows")
@@ -264,15 +267,50 @@ func nativeSnipReady(pid uint32) ([]uintptr, bool) {
 	return handles, true
 }
 
+type mouseInput struct {
+	Type, pad               uint32
+	X, Y                    int32
+	Data, Flags, Time, pad2 uint32
+	Extra                   uintptr
+}
+
+func sendMouse(events ...mouseInput) bool {
+	n, _, _ := procSendInput.Call(uintptr(len(events)), uintptr(unsafe.Pointer(&events[0])), unsafe.Sizeof(events[0]))
+	return n == uintptr(len(events))
+}
+
 func rightClick() {
-	type mouseInput struct {
-		Type, pad               uint32
-		X, Y                    int32
-		Data, Flags, Time, pad2 uint32
-		Extra                   uintptr
+	sendMouse(mouseInput{Flags: 0x0008}, mouseInput{Flags: 0x0010})
+}
+
+// Leave the primary button held until Escape cancels, so this regression
+// exercises a painted selection without starting OCR on the test desktop.
+func beginSnipDrag(hwnd uintptr) (release func(), err error) {
+	var bounds struct{ Left, Top, Right, Bottom int32 }
+	var cursor struct{ X, Y int32 }
+	if ok, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok == 0 {
+		return nil, fmtLastError("GetWindowRect")
 	}
-	events := []mouseInput{{Flags: 0x0008}, {Flags: 0x0010}}
-	procSendInput.Call(uintptr(len(events)), uintptr(unsafe.Pointer(&events[0])), unsafe.Sizeof(events[0]))
+	if ok, _, _ := procGetCursorPos.Call(uintptr(unsafe.Pointer(&cursor))); ok == 0 {
+		return nil, fmtLastError("GetCursorPos")
+	}
+	release = sync.OnceFunc(func() {
+		sendMouse(mouseInput{Flags: 0x0004})
+		procSetCursorPos.Call(uintptr(cursor.X), uintptr(cursor.Y))
+	})
+	x, y := (bounds.Left+bounds.Right)/2, (bounds.Top+bounds.Bottom)/2
+	if ok, _, _ := procSetCursorPos.Call(uintptr(x), uintptr(y)); ok == 0 {
+		return nil, fmtLastError("SetCursorPos")
+	}
+	if !sendMouse(mouseInput{Flags: 0x0002}) {
+		release()
+		return nil, fmtLastError("SendInput")
+	}
+	if ok, _, _ := procSetCursorPos.Call(uintptr(x+40), uintptr(y+30)); ok == 0 {
+		release()
+		return nil, fmtLastError("SetCursorPos")
+	}
+	return release, nil
 }
 
 // fmtLastError names a failed call.
