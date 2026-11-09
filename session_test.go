@@ -26,6 +26,69 @@ func TestEntryOwnership(t *testing.T) {
 	}
 }
 
+func TestVisibleInputReusePreservesSessionAndWork(t *testing.T) {
+	var gate entryGate
+	entry := gate.begin()
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w, canShow: entry.valid}
+	m.byID[1], m.input = b, b
+	b.replaceContent(config.Default(), "input", "submitted text", "", "", nil)
+	b.present()
+	b.ready = true
+	b.acceptLayout(b.sessionID, b.showID, b.layoutID, 1)
+	b.claimShow()
+	ctx, ok := m.startRun(w, RunReq{SessionID: b.sessionID, ReqID: "run", Revision: 1, Text: "submitted text", SourceLang: "en", TargetLang: "ja"})
+	if !ok {
+		t.Fatal("input translation did not start")
+	}
+	session, show, layout, revision := b.sessionID, b.showID, b.layoutID, b.revision
+	if !b.refocusInput(true) || !b.canShow() || ctx.Err() != nil {
+		t.Fatal("visible current input should preserve its work")
+	}
+	if b.sessionID != session || b.showID != show+1 || b.layoutID != layout || b.revision != revision || b.targetLang != "ja" || !b.presentationShown {
+		t.Fatal("refocus changed content or reset first-show state")
+	}
+	if b.claimClose(session, show, revision+1) || b.shouldHideAfterBlur(show, true, false) || b.acceptLayout(session, show, layout, 2) {
+		t.Fatal("old presentation callback affected refocused input")
+	}
+	if !b.acceptLayout(session, b.showID, layout, 2) || ctx.Err() != nil {
+		t.Fatal("refocused input stopped accepting layout or canceled translation")
+	}
+	// A newer acquisition can leave the old input window visible. It must not
+	// consume panel entry as a no-op or the pending selection would later win.
+	next := gate.begin()
+	if b.canShow() || !next.valid() || ctx.Err() != nil {
+		t.Fatal("new acquisition must revoke entry ownership, not independent translation")
+	}
+}
+
+func TestInputFocusRequiresVisibleReusablePresentation(t *testing.T) {
+	for _, blocked := range []string{"hidden", "pinned", "closed", "waiting", "not-shown", "selection", "ocr"} {
+		t.Run(blocked, func(t *testing.T) {
+			b := &bubble{trigger: "input", presentationShown: true}
+			visible := true
+			switch blocked {
+			case "hidden":
+				visible = false
+			case "pinned":
+				b.pinned = true
+			case "closed":
+				b.closeClaimed = true
+			case "waiting":
+				b.awaitingLayout = true
+			case "not-shown":
+				b.presentationShown = false
+			default:
+				b.trigger = blocked
+			}
+			if b.refocusInput(visible) {
+				t.Fatal("non-current input presentation was reused")
+			}
+		})
+	}
+}
+
 func TestRunOrderingAndIsolation(t *testing.T) {
 	m := newBubbleManager(nil)
 	w1, w2 := &mygo.Window{}, &mygo.Window{}
@@ -237,7 +300,7 @@ func TestRetryCannotCrossReplacementOrCancellation(t *testing.T) {
 
 func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
 	for _, submit := range []bool{false, true} {
-		t.Run(map[bool]string{false: "reopened draft", true: "reopened translation"}[submit], func(t *testing.T) {
+		t.Run(map[bool]string{false: "unsubmitted presentation", true: "submitted presentation"}[submit], func(t *testing.T) {
 			m := newBubbleManager(nil)
 			w := &mygo.Window{}
 			b := &bubble{win: w, sessionID: "draft", revision: -1}
@@ -251,7 +314,7 @@ func TestCloseRequiresCurrentPresentationAndRevision(t *testing.T) {
 			}
 			before := b.revision
 			if b.claimClose("draft", oldShow, 1) || b.revision != before || ctx.Err() != nil {
-				t.Fatal("late close affected reopened draft or request")
+				t.Fatal("late close affected current presentation or request")
 			}
 			if b.claimClose("old session", b.showID, 99) || b.claimClose("draft", b.showID, before) {
 				t.Fatal("accepted stale session/revision")
@@ -323,5 +386,155 @@ func TestStreamingSnapshotsAndCancellation(t *testing.T) {
 	}
 	if m.recordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: "stale", Streaming: true}) {
 		t.Fatal("canceled stream reclaimed its card")
+	}
+}
+
+func TestNewInputReplacesSessionAndRejectsOldWork(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w}
+	m.byID[1] = b
+	cfg := config.Default()
+	b.replaceContent(cfg, "input", "previous text", "", "", nil)
+	b.present()
+	oldSession := b.sessionID
+	ctx, _ := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "old", Revision: 1, Text: "previous text"})
+	m.recordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "previous result"})
+	b.replaceContent(cfg, "input", "", "", "", nil)
+	b.present()
+	state := m.state(b, cfg)
+	if ctx.Err() != context.Canceled || state.SessionID == oldSession || state.Text != "" || len(state.Results) != 0 || state.Meta != nil || len(state.ServiceRequests) != 0 {
+		t.Fatalf("new input retained old content/work: %+v", state)
+	}
+	if !b.awaitingLayout || state.LayoutID != 2 || state.Generation != 2 {
+		t.Fatal("new input did not require a fresh layout")
+	}
+	if _, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "late", Revision: 99}); ok || m.recordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "late"}) {
+		t.Fatal("old input work entered the fresh session")
+	}
+}
+
+func TestLayoutAcknowledgementOwnership(t *testing.T) {
+	for _, stale := range []string{"session", "show", "layout", "closed"} {
+		t.Run(stale, func(t *testing.T) {
+			b := &bubble{sessionID: "current", showID: 2, layoutID: 3, awaitingLayout: true}
+			session, show, layout := "current", int64(2), int64(3)
+			switch stale {
+			case "session":
+				session = "old"
+			case "show":
+				show--
+			case "layout":
+				layout-- // OCR completed before recognition layout arrived.
+			case "closed":
+				b.closeClaimed = true
+			}
+			if b.acceptLayout(session, show, layout, 1) || !b.awaitingLayout {
+				t.Fatal("stale acknowledgement released the presentation")
+			}
+			b.closeClaimed = false
+			if !b.acceptLayout("current", 2, 3, 1) || b.awaitingLayout || b.acceptLayout("current", 2, 3, 1) {
+				t.Fatal("current layout must release presentation exactly once")
+			}
+		})
+	}
+}
+
+func TestOCRCompletionBeforeFirstShowRequiresReplacementLayout(t *testing.T) {
+	b := &bubble{sessionID: "ocr", showID: 1, layoutID: 1, awaitingLayout: true}
+	if !b.acceptLayout("ocr", 1, 1, 1) {
+		t.Fatal("recognition layout rejected")
+	}
+	// Native readiness has not arrived yet; accepting a layout is not a show.
+	b.advanceCaptureLayout()
+	if !b.awaitingLayout || b.acceptLayout("ocr", 1, 1, 1) || !b.acceptLayout("ocr", 1, 2, 2) {
+		t.Fatal("OCR completion reused the hidden recognition layout")
+	}
+	b.presentationShown = true
+	b.advanceCaptureLayout()
+	if b.awaitingLayout {
+		t.Fatal("visible OCR completion must continue using content measurements")
+	}
+}
+
+func TestOrderedLayoutMeasurementsCannotOverwriteNewerContent(t *testing.T) {
+	b := &bubble{sessionID: "translation", showID: 1, layoutID: 1, awaitingLayout: true}
+	height := 400 // the preceding session's native size
+	apply := func(sequence int64, measured float64) {
+		if b.acceptLayout("translation", 1, 1, sequence) {
+			height = bubbleLayoutHeight(measured, 760, 1)
+		}
+	}
+	// IPC goroutines may dispatch the newer long result before the old loader.
+	apply(2, 560)
+	apply(1, 200)
+	if height != 560 || b.layoutSequence != 2 {
+		t.Fatal("late short layout overwrote the newer translation")
+	}
+	apply(2, 200)
+	apply(0, 200)
+	if height != 560 {
+		t.Fatal("duplicate or invalid measurement changed the height")
+	}
+	// A genuinely newer fold must still shrink; height itself is not monotonic.
+	apply(3, 200)
+	apply(2, 560)
+	if height != 200 || b.layoutSequence != 3 {
+		t.Fatal("newer fold did not win over the older long result")
+	}
+}
+
+func TestFirstPresentationRequiresReadinessAndCannotRepeat(t *testing.T) {
+	for _, nativeFirst := range []bool{false, true} {
+		b := &bubble{sessionID: "s", showID: 1, layoutID: 1, awaitingLayout: true}
+		if nativeFirst {
+			b.ready = true
+		} else {
+			b.acceptLayout("s", 1, 1, 1)
+		}
+		if b.claimShow() {
+			t.Fatal("presentation bypassed native or layout readiness")
+		}
+		b.ready = true
+		if nativeFirst {
+			b.acceptLayout("s", 1, 1, 1)
+		}
+		if !b.claimShow() {
+			t.Fatal("ready presentation did not show")
+		}
+		b.acceptLayout("s", 1, 1, 2)
+		if b.claimShow() {
+			t.Fatal("ongoing content measurement reopened a dismissed bubble")
+		}
+	}
+	b := &bubble{ready: true, showID: 1, closeClaimed: true}
+	if b.claimShow() {
+		t.Fatal("closed bubble presented")
+	}
+}
+
+func TestReadyLayoutSequenceFloorAndCanceledNavigation(t *testing.T) {
+	m := newBubbleManager(nil)
+	w := &mygo.Window{}
+	b := &bubble{win: w, sessionID: "s", showID: 1, layoutID: 1}
+	m.byID[1] = b
+	if !b.acceptLayout("s", 1, 1, 40) {
+		t.Fatal("could not seed the accepted measurement")
+	}
+	state, _ := m.State(config.Default(), 1)
+	if state.LayoutSequence != 40 {
+		t.Fatal("Ready omitted the sequence floor needed after a page reload")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// A queued binding from a navigated-away page must not claim a sequence.
+	if m.Rendered(ctx, w, 1, "s", 1, 1, 41, 200) {
+		t.Fatal("canceled page measurement was acknowledged")
+	}
+	if b.layoutSequence != 40 {
+		t.Fatal("canceled page measurement claimed the next sequence")
+	}
+	if !b.acceptLayout("s", 1, 1, state.LayoutSequence+1) || b.acceptLayout("s", 1, 1, 40) {
+		t.Fatal("reloaded page cannot advance past its Ready floor")
 	}
 }
