@@ -49,6 +49,7 @@ type EngineTimings struct {
 }
 
 var admission = make(chan struct{}, 1)
+var idle = newIdleCoordinator(admission, wallIdleClock{}, configuredIdleTimeout(), releaseIdleResource)
 
 func Recognize(ctx context.Context, img image.Image) (Text, error) {
 	return RecognizeWith(ctx, img, "")
@@ -59,6 +60,12 @@ func Recognize(ctx context.Context, img image.Image) (Text, error) {
 // retained for system fallback. The gate also makes cancellation responsive
 // while an earlier native inference is still running.
 func RecognizeWith(ctx context.Context, img image.Image, lang string) (result Text, err error) {
+	return recognizeRequest(ctx, img, lang, idle, recognizeWith, cachedOCRResources)
+}
+
+func recognizeRequest(ctx context.Context, img image.Image, lang string, coordinator *idleCoordinator,
+	run func(context.Context, image.Image, string, *idleRequest) (Text, error), resources func() engineResources,
+) (result Text, err error) {
 	start := time.Now()
 	defer func() {
 		result.Elapsed = time.Since(start).Round(time.Millisecond).String()
@@ -67,21 +74,26 @@ func RecognizeWith(ctx context.Context, img image.Image, lang string) (result Te
 			log.Printf("ocr: failed attempts=%+v", result.Attempts)
 		}
 	}()
+	request := coordinator.begin()
 	select {
-	case admission <- struct{}{}:
+	case coordinator.admission <- struct{}{}:
 	case <-ctx.Done():
+		request.done(nil)
 		return Text{QueueWaitUS: time.Since(start).Microseconds()}, ctx.Err()
 	}
 	queueWaitUS := time.Since(start).Microseconds()
 	defer func() { result.QueueWaitUS = queueWaitUS }()
-	defer func() { <-admission }()
+	defer func() {
+		snapshot := resources()
+		request.done(&snapshot)
+	}()
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
 	if err := validateImage(img); err != nil {
 		return Text{}, err
 	}
-	result, err = recognizeWith(ctx, img, lang)
+	result, err = run(ctx, img, lang, request)
 	if cancel := ctx.Err(); cancel != nil {
 		return Text{Attempts: result.Attempts}, cancel
 	}

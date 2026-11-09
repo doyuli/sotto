@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"sotto/internal/ocr/pipeline"
 )
 
 // This opt-in probe checks native model loading and tensor contracts.
@@ -56,7 +58,7 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(session.close)
+			t.Cleanup(func() { _ = session.Close() })
 			n := preflightElements(t, inputShape)
 			output, shape, err := session.run(make([]float32, n), inputShape)
 			if err != nil {
@@ -82,6 +84,54 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			t.Logf("ORT API %d, windows/%s: %v -> %v; zero-tensor smoke only", ortAPIVersion, runtime.GOARCH, inputShape, shape)
 		})
 	}
+	t.Run("idle release and rebuild retains runtime", func(t *testing.T) {
+		rt := ortRT
+		env, mem, lib := rt.env, rt.memInfo, rt.lib
+		dictionary, err := os.ReadFile(filepath.Join(modelDir, m.Dictionary.File))
+		if err != nil {
+			t.Fatal(err)
+		}
+		admission <- struct{}{}
+		defer func() { <-admission }()
+		for cycle := range 20 {
+			det, err := newORTSession(filepath.Join(modelDir, m.Models[0].File), m.Models[0].InputName, m.Models[0].OutputName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, err := newORTSession(filepath.Join(modelDir, m.Models[1].File), m.Models[1].InputName, m.Models[1].OutputName)
+			if err != nil {
+				_ = det.Close()
+				t.Fatal(err)
+			}
+			r, err := pipeline.New(det, rec, dictionary, pipeline.DefaultConfig())
+			if err != nil {
+				_ = det.Close()
+				_ = rec.Close()
+				t.Fatal(err)
+			}
+			ppEngine = r
+			if cycle == 19 {
+				// Run again after repeated release, not just CreateSession, so
+				// the retained shared memory-info object is actually exercised.
+				for i, session := range []*ortSession{det, rec} {
+					if _, _, err := session.run(make([]float32, preflightElements(t, inputs[i])), inputs[i]); err != nil {
+						_, _ = releaseIdleResource(localOCR)
+						t.Fatal(err)
+					}
+				}
+			}
+			gone, err := releaseIdleResource(localOCR)
+			if !gone || err != nil || ppEngine != nil || det.ptr != 0 || rec.ptr != 0 {
+				t.Fatalf("cycle %d did not release both cached sessions: %v", cycle, err)
+			}
+			if err := r.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if cached, err := sharedORT(); err != nil || cached != rt || det.rt != rt || rec.rt != rt || rt.env != env || rt.memInfo != mem || rt.lib != lib {
+				t.Fatalf("cycle %d changed shared runtime ownership: %v", cycle, err)
+			}
+		}
+	})
 }
 
 func preflightElements(t *testing.T, shape []int64) int {

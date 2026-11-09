@@ -5,6 +5,7 @@ import (
 	"errors"
 	"image"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,6 +13,55 @@ import (
 type runnerFunc func(context.Context, Tensor) (Tensor, error)
 
 func (f runnerFunc) Run(ctx context.Context, in Tensor) (Tensor, error) { return f(ctx, in) }
+
+type closingRunner struct {
+	runnerFunc
+	closes int
+	err    error
+}
+
+func (r *closingRunner) Close() error { r.closes++; return r.err }
+
+func TestRecognizerCloseConsumesBothRunners(t *testing.T) {
+	failure := errors.New("detector close failed")
+	other := errors.New("recognizer close failed")
+	for _, errs := range [][2]error{{nil, nil}, {failure, nil}, {nil, other}, {failure, other}} {
+		det, rec := &closingRunner{err: errs[0]}, &closingRunner{err: errs[1]}
+		r, err := New(det, rec, testDictionary(), smallConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = r.Close()
+		for _, want := range errs {
+			if want != nil && !errors.Is(err, want) {
+				t.Fatalf("lost close error %v: %v", want, err)
+			}
+		}
+		if errs == ([2]error{}) && err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Close(); err != nil || det.closes != 1 || rec.closes != 1 {
+			t.Fatalf("repeated close: %v, calls %d/%d", err, det.closes, rec.closes)
+		}
+		if r.det != nil || r.rec != nil || r.labels != nil {
+			t.Fatal("closed recognizer retained runners or dictionary")
+		}
+		if _, err := r.Recognize(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "closed") {
+			t.Fatalf("closed recognizer remained usable: %v", err)
+		}
+	}
+}
+
+func TestRecognizerCloseAllowsRunnersWithoutCloser(t *testing.T) {
+	runner := runnerFunc(func(context.Context, Tensor) (Tensor, error) { return Tensor{}, nil })
+	r, err := New(runner, runner, testDictionary(), smallConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestRecognizeWithInjectedRunners(t *testing.T) {
 	detCalls, recCalls := 0, 0

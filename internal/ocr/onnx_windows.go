@@ -247,13 +247,14 @@ func newORTSessionWithThreads(modelPath, inputName, outputName string, threads i
 	return &ortSession{rt: rt, ptr: sess, inputName: inputName, outputName: outputName}, nil
 }
 
-func (s *ortSession) close() {
+func (s *ortSession) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ptr != 0 {
 		s.rt.call(ortSlotReleaseSession, s.ptr)
 		s.ptr = 0
 	}
+	return nil
 }
 
 func (s *ortSession) Run(ctx context.Context, input pipeline.Tensor) (pipeline.Tensor, error) {

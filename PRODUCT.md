@@ -33,6 +33,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 - Services: Bilibili IndexTranslate, SiliconFlow, Zhipu, DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx), plus a dictionary card for lone English words. Only IndexTranslate is enabled by default.
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
 - Selection via UIA with a clipboard fallback; OCR via PP-OCR with Windows.Media.Ocr fallback.
+- Each OCR engine releases its sessions or system worker after 5 minutes idle and reloads on demand. The shared ONNX runtime stays loaded; OCR and fallback remain serialized through one admission gate.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.
 - Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, mygo-only desktop APIs, whitelisted dependencies.

@@ -36,9 +36,107 @@ func TestWinRTProtocolWorker(t *testing.T) {
 	fmt.Println(`{"ready":true,"maxDimension":4096}`)
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
+		if mode == "no-response" {
+			continue
+		}
 		fmt.Println(`{"ok":true,"lines":[{"text":"recovered","box":[0,0,1,1]}]}`)
 	}
 	os.Exit(0)
+}
+
+func TestWinRTIdleReleaseAndRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	starts := 0
+	w := &winrt{command: func() *exec.Cmd { starts++; return workerCommand(t, "ready") }}
+	t.Cleanup(w.killLocked)
+	f := newIdleFixture()
+	f.coordinator.release = func(int) (bool, error) { return w.releaseIdle(), nil }
+	for range 20 {
+		w.mu.Lock()
+		_, err := w.ask(ctx, image.NewNRGBA(image.Rect(0, 0, 2, 2)), "en")
+		w.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := w.cmd
+		f.warm(systemOCR)
+		// A worker held by another operation must survive TryLock failure.
+		w.mu.Lock()
+		f.clock.advance(defaultIdleTimeout)
+		if w.cmd != cmd || f.clock.active() != 1 {
+			t.Fatal("busy worker was killed or lost its retry")
+		}
+		w.mu.Unlock()
+		f.clock.advance(idleRetryDelay)
+		if w.cmd != nil || w.stdin != nil || w.stdout != nil || cmd.ProcessState == nil || !cmd.ProcessState.Exited() || w.command == nil || f.clock.active() != 0 {
+			t.Fatal("idle release did not reap the worker and preserve its factory")
+		}
+	}
+	if starts != 20 {
+		t.Fatalf("restart count %d, want 20", starts)
+	}
+}
+
+type notifyingWorkerPipe struct {
+	io.WriteCloser
+	written chan struct{}
+}
+
+func (p notifyingWorkerPipe) Write(data []byte) (int, error) {
+	n, err := p.WriteCloser.Write(data)
+	close(p.written)
+	return n, err
+}
+
+func TestWinRTRequestCannotBeReapedWhileWaitingForResponse(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	w := &winrt{command: func() *exec.Cmd { return workerCommand(t, "no-response") }}
+	t.Cleanup(w.killLocked)
+	if err := w.ensure(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cmd := w.cmd
+	written := make(chan struct{})
+	w.stdin = notifyingWorkerPipe{w.stdin, written}
+	f := newIdleFixture()
+	f.coordinator.release = func(int) (bool, error) { return w.releaseIdle(), nil }
+	f.warm(systemOCR)
+	done := make(chan error, 1)
+	go func() {
+		_, err := recognizeRequest(ctx, image.NewNRGBA(image.Rect(0, 0, 2, 2)), "ko", f.coordinator,
+			func(ctx context.Context, img image.Image, lang string, request *idleRequest) (Text, error) {
+				request.used[systemOCR] = true
+				w.mu.Lock()
+				defer w.mu.Unlock()
+				_, err := w.ask(ctx, img, lang)
+				return Text{}, err
+			}, func() engineResources {
+				w.mu.Lock()
+				defer w.mu.Unlock()
+				return engineResources{false, w.cmd != nil}
+			})
+		done <- err
+	}()
+	select {
+	case <-written:
+	case <-ctx.Done():
+		t.Fatal("worker never received the request")
+	}
+	f.clock.advance(defaultIdleTimeout)
+	if cmd.ProcessState != nil {
+		t.Fatal("in-flight request was killed at the idle deadline")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || w.cmd != nil || f.clock.active() != 0 || len(f.coordinator.admission) != 0 {
+			t.Fatalf("cancellation did not finish the request: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation left the worker or request blocked")
+	}
 }
 
 func workerCommand(t *testing.T, mode string) *exec.Cmd {

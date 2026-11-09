@@ -19,11 +19,12 @@ import (
 // initialization is retried on the next request, allowing repaired resources.
 var ppEngine *pipeline.Recognizer
 
-func recognizePPOCR(ctx context.Context, img image.Image, _ string) (Text, error) {
+func recognizePPOCR(ctx context.Context, img image.Image, _ string, request *idleRequest) (Text, error) {
 	t := Text{Engine: "ppocr-v6-small"}
 	if err := ctx.Err(); err != nil {
 		return Text{}, err
 	}
+	request.used[localOCR] = true
 	if ppEngine == nil {
 		start := time.Now()
 		r, err := newPPOCR(ctx)
@@ -72,7 +73,7 @@ func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
 	success := false
 	defer func() {
 		if !success {
-			det.close()
+			_ = det.Close()
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -84,7 +85,7 @@ func newPPOCR(ctx context.Context) (*pipeline.Recognizer, error) {
 	}
 	defer func() {
 		if !success {
-			rec.close()
+			_ = rec.Close()
 		}
 	}()
 	if err := ctx.Err(); err != nil {
