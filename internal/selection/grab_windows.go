@@ -41,7 +41,7 @@ func Prepare() func(context.Context) (Selection, error) {
 		if err == nil && sel.Text != "" {
 			return sel, nil
 		}
-		log.Printf("selection: clipboard fallback uia_error=%v", err)
+		log.Printf("selection: clipboard fallback hwnd=%x pid=%d class=%q uia_error=%v", hwnd, pid, class, err)
 		return grabClipboardFrom(ctx, hwnd, pid, class)
 	}
 }

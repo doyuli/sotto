@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -86,6 +88,10 @@ var breaker uiaBreaker
 // UIA for the rest of the process; the clipboard path carries on.
 var uiaMu = make(chan struct{}, 1)
 
+// Correlate a late worker return with its timed-out caller without logging
+// element names, selection text, or other provider content.
+var uiaCallID atomic.Uint64
+
 func init() { uiaMu <- struct{}{} }
 
 func (b *uiaBreaker) allow() bool {
@@ -101,6 +107,7 @@ func (b *uiaBreaker) noteTimeout() {
 	if b.timeouts >= uiaBreakerAfter {
 		b.openUntil = time.Now().Add(uiaBreakerCooldown)
 		b.timeouts = 0
+		log.Printf("selection: uia breaker=open cooldown=%s", uiaBreakerCooldown)
 	}
 }
 
@@ -112,11 +119,17 @@ func (b *uiaBreaker) noteAnswer() {
 
 // grabUIA asks the focused element for its selection, through the
 // single-slot, timeout-and-breaker wrapper.
-func grabUIA(ctx context.Context) (Selection, error) {
+func grabUIA(ctx context.Context) (sel Selection, err error) {
+	started, outcome := time.Now(), "canceled"
+	callID := uiaCallID.Add(1)
+	defer func() {
+		log.Printf("selection: uia call=%d outcome=%s elapsed=%s err=%v", callID, outcome, time.Since(started).Round(time.Millisecond), err)
+	}()
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
 	if !breaker.allow() {
+		outcome = "breaker_open"
 		return Selection{}, errUIASkipped
 	}
 	select {
@@ -126,6 +139,7 @@ func grabUIA(ctx context.Context) (Selection, error) {
 	case <-time.After(uiaBusyWait):
 		// The slot is taken by a call still inside the provider —
 		// exactly the call a timeout has already abandoned once.
+		outcome = "slot_busy"
 		return Selection{}, errUIASkipped
 	}
 	if err := ctx.Err(); err != nil {
@@ -141,7 +155,11 @@ func grabUIA(ctx context.Context) (Selection, error) {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		defer func() { uiaMu <- struct{}{} }()
+		started := time.Now()
 		sel, err := uiaGrabThread()
+		// This also identifies calls that return long after the caller's
+		// timeout. Neither log includes the selected text.
+		log.Printf("selection: uia call=%d worker=returned elapsed=%s err=%v", callID, time.Since(started).Round(time.Millisecond), err)
 		ch <- answer{sel, err}
 	}()
 	timer := time.NewTimer(uiaTimeout)
@@ -149,9 +167,20 @@ func grabUIA(ctx context.Context) (Selection, error) {
 	select {
 	case a := <-ch:
 		breaker.noteAnswer()
+		switch {
+		case errors.Is(a.err, errUIAMiss):
+			outcome = "miss"
+		case a.err != nil:
+			outcome = "error"
+		case a.sel.Text == "":
+			outcome = "empty"
+		default:
+			outcome = "selected"
+		}
 		return a.sel, a.err
 	case <-timer.C:
 		breaker.noteTimeout()
+		outcome = "timeout"
 		return Selection{}, errUIATimeout
 	case <-ctx.Done():
 		return Selection{}, ctx.Err()

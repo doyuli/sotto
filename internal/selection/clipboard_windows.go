@@ -5,6 +5,7 @@ package selection
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -22,13 +23,18 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 
 // A copy is a bounded transaction. Never undo a late write in the background:
 // a later deliberate copy from the same process cannot be distinguished by PID.
-func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class string) (Selection, error) {
+func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class string) (sel Selection, err error) {
+	started, stage := time.Now(), "wait_slot"
+	defer func() {
+		log.Printf("selection: clipboard stage=%s hwnd=%x pid=%d elapsed=%s err=%v", stage, hwnd, pid, time.Since(started).Round(time.Millisecond), err)
+	}()
 	select {
 	case <-ctx.Done():
 		return Selection{}, ctx.Err()
 	case <-clipboardMu:
 	}
 	defer func() { clipboardMu <- struct{}{} }()
+	stage = "check_recovery"
 	if PendingClipboardRecovery() != "" {
 		return Selection{}, ErrClipboardRestore
 	}
@@ -36,6 +42,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if !ok {
 		return Selection{}, ErrNoSelection
 	}
+	stage = "wait_input_release"
 	if err := waitCopyRelease(ctx, inputReleaseWait); err != nil {
 		return Selection{}, err
 	}
@@ -45,15 +52,18 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
+	stage = "create_owner"
 	owner, cleanup, err := clipboardOwner()
 	if err != nil {
 		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
 	}
 	defer cleanup()
-	saved := saveClipboard()
-	if saved == nil {
-		return Selection{}, ErrClipboardUnsafe
+	stage = "snapshot"
+	saved, err := saveClipboard()
+	if err != nil {
+		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
 	}
+	stage = "prepare_restore"
 	prepared, err := prepareClipboardRestore(saved)
 	if err != nil {
 		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
@@ -66,6 +76,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if err := ctx.Err(); err != nil {
 		return Selection{}, err
 	}
+	stage = "watch_input"
 	watch, err := watchCopyInput()
 	if err != nil {
 		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
@@ -84,6 +95,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if err := watch.check("preparing to send copy"); err != nil {
 		return Selection{}, err
 	}
+	stage = "send_copy"
 	if !sendCopy(chord, watch.marker) {
 		return Selection{}, ErrNoSelection
 	}
@@ -91,6 +103,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	defer deadline.Stop()
 	tick := time.NewTicker(clipboardPoll)
 	defer tick.Stop()
+	stage = "wait_copy"
 	for {
 		if err := watch.check("waiting for copy"); err != nil {
 			return Selection{}, err
@@ -120,6 +133,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 				return Selection{}, fmt.Errorf("clipboard or foreground while reading copy: %w", ErrSourceChanged)
 			}
 			// Compare again while holding the clipboard open; an intervening copy wins.
+			stage = "restore"
 			outcome, restoredSeq, restoreErr := prepared.restore(owner, seq, func() bool {
 				return clipboardSeq() == seq && clipboardOwnerPID() == pid && sameForeground(hwnd, pid) && watch.unchanged()
 			})
@@ -139,6 +153,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 			if !read || text == "" {
 				return Selection{}, ErrNoSelection
 			}
+			stage = "complete"
 			return Selection{Text: text, Via: "clipboard"}, nil
 		}
 		select {

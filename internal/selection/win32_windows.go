@@ -232,62 +232,6 @@ func openClipboardFor(owner uintptr) bool {
 
 func closeClipboard() { procCloseClipboard.Call() }
 
-// gdiClipboardFormats hold GDI handles rather than global memory, which
-// a save cannot copy. Refuse simulated copy when any are present rather
-// than silently dropping the user's original content.
-var gdiClipboardFormats = map[uint16]bool{
-	2:    true, // CF_BITMAP
-	3:    true, // CF_METAFILEPICT
-	9:    true, // CF_PALETTE
-	14:   true, // CF_ENHMETAFILE
-	0x80: true, // CF_OWNERDISPLAY
-	0x82: true, // CF_DSPMETAFILEPICT
-	0x8E: true, // CF_DSPENHMETAFILE
-}
-
-// saveClipboard copies every global-memory format off the clipboard,
-// under one open. Returns nil if any format cannot be preserved or the
-// snapshot exceeds the memory budget.
-func saveClipboard() *clipboardSnapshot {
-	if !openClipboard() {
-		return nil
-	}
-	defer closeClipboard()
-	var snap clipboardSnapshot
-	var total uintptr
-	for f := uintptr(0); ; {
-		f, _, _ = procEnumClipboardFormats.Call(f)
-		if f == 0 {
-			break
-		}
-		id := uint16(f)
-		if gdiClipboardFormats[id] {
-			return nil
-		}
-		h, _, _ := procGetClipboardData.Call(f)
-		if h == 0 {
-			return nil
-		}
-		size, _, _ := procGlobalSize.Call(h)
-		total += size
-		if size == 0 || total > 32<<20 {
-			return nil
-		}
-		p, _, _ := procGlobalLock.Call(h)
-		if p == 0 {
-			return nil
-		}
-		data := make([]byte, size)
-		copy(data, unsafe.Slice((*byte)(native(p)), size))
-		procGlobalUnlock.Call(h)
-		snap.formats = append(snap.formats, clipboardFormat{id: id, data: data})
-	}
-	// Reading delayed formats can advance the sequence. Record it after
-	// materializing the snapshot while the clipboard is still open.
-	snap.sequence = clipboardSeq()
-	return &snap
-}
-
 // prepareClipboardRestore allocates every handle before simulated copy can
 // replace the original. Successful SetClipboardData transfers its handle;
 // only untransferred handles may be freed or retried.
@@ -311,7 +255,7 @@ func prepareClipboardRestore(snap *clipboardSnapshot) (*preparedClipboard, error
 		name, _ := syscall.UTF16PtrFromString(marker.name)
 		id, _, err := procRegisterClipboardFormatW.Call(uintptr(unsafe.Pointer(name)))
 		if id == 0 {
-			return nil, fmt.Errorf("register clipboard protection: %w", err)
+			return nil, fmt.Errorf("register clipboard protection %s: %w", marker.name, err)
 		}
 		protected = append(protected, clipboardFormat{id: uint16(id), data: marker.data})
 		filtered := formats[:0]
@@ -325,19 +269,12 @@ func prepareClipboardRestore(snap *clipboardSnapshot) (*preparedClipboard, error
 	p := &preparedClipboard{formats: append(protected, formats...)}
 	p.handles = make([]uintptr, len(p.formats))
 	for i, f := range p.formats {
-		h, _, err := procGlobalAlloc.Call(gmemMoveable, uintptr(len(f.data)))
-		if h == 0 {
+		h, err := prepareClipboardFormat(f)
+		if err != nil {
 			p.free()
-			return nil, fmt.Errorf("allocate clipboard format: %w", err)
+			return nil, fmt.Errorf("prepare clipboard format %d (%s), bytes=%d: %w", f.id, clipboardFormatName(f.id), len(f.data), err)
 		}
 		p.handles[i] = h
-		address, _, err := procGlobalLock.Call(h)
-		if address == 0 {
-			p.free()
-			return nil, fmt.Errorf("lock clipboard format: %w", err)
-		}
-		copy(unsafe.Slice((*byte)(native(address)), len(f.data)), f.data)
-		procGlobalUnlock.Call(h)
 	}
 	return p, nil
 }
@@ -345,7 +282,11 @@ func prepareClipboardRestore(snap *clipboardSnapshot) (*preparedClipboard, error
 func (p *preparedClipboard) free() {
 	for i, h := range p.handles {
 		if h != 0 {
-			procGlobalFree.Call(h)
+			if p.formats[i].id == cfPalette {
+				procDeleteObject.Call(h)
+			} else {
+				procGlobalFree.Call(h)
+			}
 			p.handles[i] = 0
 		}
 	}
@@ -368,7 +309,7 @@ func (p *preparedClipboard) restore(owner uintptr, sequence uint32, unchanged fu
 		return nil
 	}, func(i int) error {
 		if ok, _, err := procSetClipboardData.Call(uintptr(p.formats[i].id), p.handles[i]); ok == 0 {
-			return fmt.Errorf("restore clipboard format %d: %w", p.formats[i].id, err)
+			return fmt.Errorf("restore clipboard format %d (%s): %w", p.formats[i].id, clipboardFormatName(p.formats[i].id), err)
 		}
 		p.handles[i] = 0
 		return nil

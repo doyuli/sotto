@@ -27,6 +27,18 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # 需要桌面会话（本机
 - 热键由 `SendInput` 合成，测试进程先 `AllowSetForegroundWindow` 授予 app 前台权限，模拟真实键盘热键的权益。
 - 此冒烟测试覆盖截图窗口打开、取消和拖拽取消后重新打开的窗口生命周期；拖拽几何和取消输入另由 native Tester 覆盖，Windows 实际拖拽到截屏、OCR 的完整链路仍需手工验收。`sotto --ocr <png>` 可单独复核图片识别。
 
+## 划词与剪贴板手工验收
+
+需在 Windows 桌面会话验证；宿主机单测和 Windows 交叉编译不能替代原生剪贴板验收。
+
+- 先用 Win+Shift+S、微信/QQ/Snipaste 或浏览器复制图片，随后在 VS Code 编辑器、实际使用的聊天界面分别双击选词并触发划词翻译。对照剪贴板为纯文本、HTML/RTF、文件复制和文件剪切时的行为；取词结束后粘贴原内容，检查图片、富文本、文件列表和剪切语义保留。
+- 用普通截图、透明 PNG、4K 截图、多屏大截图和带调色板的图片分别验证。保留原 PNG/其他注册格式和两种 DIB；确认尺寸、像素、透明度和颜色，比较恢复前后各可备份格式的原始数据，并确认恢复后请求 CF_BITMAP 仍能得到有效位图。CF_PALETTE 的颜色和条目标志也要保留。
+- 全流程若 UIA 命中，不会进入剪贴板路径。单独验证图片兜底时运行 `sotto.exe --grab clipboard`，在 3 秒等待内切到目标窗口并选词。该诊断命令的 stdout JSON 包含取词文本；新增诊断日志写 stderr，只含格式元数据和状态。通过 `--grab uia` 可单独比较 UIA 结果，但持续槽位占用要在同一个常驻进程内观察。
+- 快照总预算为 128 MiB，非 DIB/DIBV5 数据合计仍限 32 MiB。4K DIB+DIBV5 可同时备份；超总预算、超非图片预算、DIB 读取失败、未知格式无法读取、metafile/owner/display 格式时，应在模拟复制前报错，旧内容不被替换。剪贴板被其他进程持续打开时也应保守拒绝，日志指向 snapshot/open。
+- 取词过程中手动复制新内容、切换应用、按键/鼠标按键或滚轮打断：新内容优先，迟到结果不覆盖剪贴板。仅移动鼠标仍可完成取词。恢复失败仍显示恢复操作并暂停新的模拟复制；明确重试只能恢复仍匹配的序列号，退出后内存恢复内容不保留。
+- 检查三个排除格式继续随 Sotto 的恢复写入存在：CanIncludeInClipboardHistory=DWORD(0)、CanUploadToCloudClipboard=DWORD(0)、ExcludeClipboardContentFromMonitorProcessing 存在。分别观察 Windows 历史和实际使用的剪贴板管理器；目标应用响应模拟复制的临时写入不由 Sotto 控制，不能以恢复标记保证它从未进入历史。
+- 日志应能区分 UIA `empty`/`miss`、`timeout`、`slot_busy`、`breaker_open`，以及 worker 迟到返回；永久阻塞时不新增 COM 调用。剪贴板失败应包含阶段、格式 ID/名称、大小或预算、耗时，不包含正文。发生“无法安全保留”时，保存该次 source → uia → clipboard → end 的日志，区分选词应用和原剪贴板内容的来源。
+
 ## 原生截图手工验收与测量
 
 纯逻辑和 `ui.NewTester` 覆盖正反向/越界拖选、客户区边界校验与负坐标锚点、8 DIPs 临界尺寸、Esc/右键/捕获丢失取消、旧轮次与重复输入、隐藏后恢复、显示器移除和在途抓屏 HWND 的保留。Tester 不替代 Windows 实际合成和多屏验证。

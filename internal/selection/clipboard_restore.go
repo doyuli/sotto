@@ -11,7 +11,9 @@ var clipboardMu = make(chan struct{}, 1)
 func init() { clipboardMu <- struct{}{} }
 
 type clipboardFormat struct {
-	id   uint16
+	id uint16
+	// CF_PALETTE stores a LOGPALETTE description; other supported formats
+	// store the bytes of their global-memory object.
 	data []byte
 }
 
