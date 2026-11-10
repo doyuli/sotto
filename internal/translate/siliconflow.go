@@ -49,10 +49,12 @@ func (s SiliconFlow) translate(ctx context.Context, req Request, k KeyStore, cfg
 	}
 	messages := translationMessages(req, target)
 	if strings.TrimPrefix(model, "Pro/") == config.DefaultSiliconFlowModel {
-		// Hunyuan-MT publishes separate prompt templates for Chinese and other pairs.
-		prompt := fmt.Sprintf("Translate the following segment into %s, without additional explanation.\n\n%s", target, req.Text)
+		// Keep Hunyuan-MT's single-message template, but disambiguate short input.
+		prompt := fmt.Sprintf("Translate the following segment into %s, without additional explanation. "+
+			"Translate even single words and language names; do not respond conversationally or ask for more text.\n\n%s", target, req.Text)
 		if req.SourceLang == "zh-HANS" || req.TargetLang == "zh-HANS" {
-			prompt = fmt.Sprintf("把下面的文本翻译成%s，不要额外解释。\n\n%s", languages.Names[req.TargetLang], req.Text)
+			prompt = fmt.Sprintf("把下面的文本翻译成%s，不要额外解释。"+
+				"单词和语言名称也要翻译，不要对话或要求补充原文。\n\n%s", languages.Names[req.TargetLang], req.Text)
 		}
 		messages = []map[string]string{{"role": "user", "content": prompt}}
 	}
