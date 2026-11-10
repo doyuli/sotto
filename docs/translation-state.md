@@ -117,7 +117,13 @@ stateDiagram-v2
 
 恢复失败只保留一个内存快照，后续模拟复制取词暂停，避免覆盖唯一的恢复内容。UIA 成功路径、直接输入和 OCR 仍可用。用户可主动重试恢复或放弃；退出进程后快照不保留。
 
-恢复前分配全部格式，写回时使用有效 HWND。只重试失败格式，排除标记失败不写正文；手动恢复仍要比较剪贴板序列号，新的用户复制优先。32 MiB 是快照总数据限制，不是进程内存增量上限：Go 快照与预分配的原生内存会同时存在。性能优化应先测量，不删除格式以换取速度。
+恢复前分配全部格式，写回时使用有效 HWND。只重试失败格式，排除标记失败不写正文；手动恢复仍要比较剪贴板序列号，新的用户复制优先。
+
+快照保留 DIB、DIBV5 和其他可读取格式；只有实际备份至少一个 DIB/DIBV5 后，才省略可由 Windows 合成的 CF_BITMAP。两种 DIB 表示均保留，不假设透明度/颜色元数据相同。CF_PALETTE 用 GetObjectW / GetPaletteEntries 保存 LOGPALETTE，再用 CreatePalette 创建恢复句柄；未转移的调色板句柄用 DeleteObject 释放。其他未支持的 GDI/owner/display 格式以及任何未知格式读取失败仍阻断模拟复制，枚举失败也不能视为空剪贴板。[格式转换规则](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
+
+DIB/DIBV5 可以使用 128 MiB 快照总预算，其他格式合计仍限 32 MiB，小图片不会放宽私有格式限制；每次读数据前先检查剩余预算。该预算不是进程内存增量上限：Go 快照与预分配的原生内存会同时存在，最多约 256 MiB 备份载荷，另有原剪贴板、Go GC 和其他运行时开销。超限保守拒绝，不裁剪原始图片或丢弃未知格式。
+
+诊断日志区分 UIA 的 selected、empty、miss、timeout、slot_busy、breaker_open、error 与 canceled，另记录 worker 返回耗时，以识别请求超时后仍在运行的 COM 调用。UIA 800ms 请求超时、150ms 排队和原有熔断规则不变，槽位仍由实际 COM worker 归还。剪贴板日志记录枚举格式 ID/名称、读取字节数/耗时，以及 snapshot、prepare_restore、watch_input、restore 等失败阶段；不记录剪贴板或选区正文。既有 `--grab` 命令的 stdout JSON 仍按设计包含取词文本。
 
 模拟复制期间临时安装键盘和鼠标低级钩子。每次复制的 SendInput 带独立 ExtraInfo 标记，键盘钩子忽略带有本次标记的注入事件。复制前确认鼠标按键已经松开，复制期间单纯移动指针不会取消取词。其他键盘事件、鼠标按键或滚轮事件会取消本次复制事务，日志只记录首个取消原因的类别。结束后卸载钩子，安装失败则拒绝模拟复制。不能再用 GetLastInputInfo 的变化区分用户操作与本次模拟按键。
 
@@ -126,6 +132,8 @@ stateDiagram-v2
 - `session_test.go`：请求排序、服务隔离、过期关闭拒绝；没有驱动真实主线程队列和原生窗口。
 - `tests/bubble.test.ts`：监听回收、旧挂载结果隔离、卡片身份/焦点、前端请求过滤；没有验证 WebView2 中文输入法。
 - `internal/selection/clipboard_restore_test.go`：清空/格式写入故障注入及保护策略；没有调用 Windows 原生剪贴板。
+- `internal/selection/clipboard_snapshot_test.go`：位图必须有已保存 DIB、保留两种 DIB/其他格式、枚举与私有格式失败、4K 图片和预算边界；使用注入读取，不调用 Windows 剪贴板。
+- `internal/selection/clipboard_snapshot_windows_test.go`：独立 GDI 调色板句柄往返和预算/无效载荷检查；不改动系统剪贴板，需在 Windows 执行，交叉编译不代表已运行。
 - Windows 的 A08、C02、B05、D06/D07 证据仍待补齐。未测不记为通过，也不因交叉编译成功而关闭发布门禁。
 
 ## 新会话与内容尺寸更新

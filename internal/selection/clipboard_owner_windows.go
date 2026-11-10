@@ -14,7 +14,7 @@ var (
 	procDestroyWindow   = modUser32.NewProc("DestroyWindow")
 )
 
-// Immediate HGLOBAL data remains available after this short-lived owner closes.
+// Immediate clipboard data remains available after this short-lived owner closes.
 // No delayed rendering or UI work is performed on this worker thread.
 func clipboardOwner() (uintptr, func(), error) {
 	runtime.LockOSThread()
