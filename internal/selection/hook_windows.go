@@ -196,9 +196,14 @@ func runWindowHooks(ready chan<- error) {
 }
 
 func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uintptr) uintptr {
-	if event == eventSystemForeground {
-		outside, _ := watch.outside.Load().([]*windowLeaveWatch)
-		for _, w := range outside {
+	if event != eventSystemForeground || hwnd == 0 {
+		return 0
+	}
+	outside, _ := watch.outside.Load().([]*windowLeaveWatch)
+	for _, w := range outside {
+		// Avoid dispatching internal activation changes. The caller still
+		// rechecks live focus because this event may already be stale.
+		if !windowContains(w.hwnd, hwnd) {
 			go w.changed()
 		}
 	}

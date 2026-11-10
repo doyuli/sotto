@@ -5,6 +5,7 @@ package selection
 import (
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -74,11 +75,56 @@ func TestWindowContainsNativePopup(t *testing.T) {
 	}
 }
 
+func TestForegroundHookFiltersWindows(t *testing.T) {
+	window := newHookTestWindow(t)
+	const wsPopup, wsChild = 0x80000000, 0x40000000
+	host := window(0, wsPopup)
+	bubble := window(host, wsPopup)
+	child := window(bubble, wsChild)
+	popup := window(bubble, wsPopup)
+	popupChild := window(popup, wsChild)
+	sibling := window(host, wsPopup)
+	other := window(0, wsPopup)
+	for _, tt := range []struct {
+		name  string
+		event uintptr
+		hwnd  uintptr
+		want  [2]int
+	}{
+		{"bubble", eventSystemForeground, bubble, [2]int{0, 1}},
+		{"webview child", eventSystemForeground, child, [2]int{0, 1}},
+		{"select popup", eventSystemForeground, popup, [2]int{0, 1}},
+		{"select popup child", eventSystemForeground, popupChild, [2]int{0, 1}},
+		{"shared owner sibling", eventSystemForeground, sibling, [2]int{1, 1}},
+		{"other window", eventSystemForeground, other, [2]int{1, 0}},
+		{"no window", eventSystemForeground, 0, [2]int{}},
+		{"other event", eventSystemForeground + 1, other, [2]int{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				previous, _ := watch.outside.Load().([]*windowLeaveWatch)
+				defer watch.outside.Store(previous)
+				var got [2]int
+				watch.outside.Store([]*windowLeaveWatch{
+					{hwnd: bubble, changed: func() { got[0]++ }},
+					{hwnd: other, changed: func() { got[1]++ }},
+				})
+				foregroundHookProc(0, tt.event, tt.hwnd, 0, 0, 0, 0)
+				// Wait for dispatched goroutines without sleeps, including when
+				// no callback should have been scheduled for an owned window.
+				synctest.Wait()
+				if got != tt.want {
+					t.Errorf("foreground notifications = %v, want %v", got, tt.want)
+				}
+			})
+		})
+	}
+}
+
 func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
 	window := newHookTestWindow(t)
 	const wsPopup = 0x80000000
 	bubble := window(0, wsPopup)
-	popup := window(bubble, wsPopup)
 	other := window(0, wsPopup)
 	notify := modUser32.NewProc("NotifyWinEvent")
 	changes := make(chan struct{}, 1)
@@ -95,13 +141,11 @@ func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
 
 	// Hidden windows never activate, so these notifications cannot rely on a
 	// WM_ACTIVATE/blur on the bubble. Exercise the real event-hook message pump.
-	for _, hwnd := range []uintptr{popup, other, bubble} {
-		notify.Call(eventSystemForeground, hwnd, 0, 0)
-		select {
-		case <-changes:
-		case <-time.After(2 * time.Second):
-			t.Fatal("foreground change was not delivered without a bubble blur")
-		}
+	notify.Call(eventSystemForeground, other, 0, 0)
+	select {
+	case <-changes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("foreground change was not delivered without a bubble blur")
 	}
 
 	// Removing one bubble must not stop another bubble's foreground hook.
@@ -117,7 +161,7 @@ func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
 	}
 	t.Cleanup(stopSecond)
 	stop()
-	notify.Call(eventSystemForeground, other, 0, 0)
+	notify.Call(eventSystemForeground, bubble, 0, 0)
 	select {
 	case <-second:
 	case <-time.After(2 * time.Second):

@@ -44,7 +44,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # 需要桌面会话（本机
 
 需在 Windows / WebView2 桌面会话验证：
 
-`internal/selection` 的 Windows 测试用隐藏窗口和 `NotifyWinEvent` 覆盖 HWND 归属、无气泡 blur 时的前台通知及共享钩子的注销；真实 WebView2 下拉框的激活、关闭和跨应用切换仍需以下手工验收。
+`internal/selection` 的 Windows 测试用隐藏窗口和 `NotifyWinEvent` 覆盖 HWND 归属、前台通知过滤、无气泡 blur 时的前台通知及共享钩子的注销；真实 WebView2 下拉框的激活、关闭和跨应用切换仍需以下手工验收。
 
 - 屏幕四角、任务栏上方触发划词和 OCR；气泡应留出边距，右侧空间不足时向左、下方空间不足时向上展开。
 - 等待多服务结果依次返回，再折叠/展开卡片；窗口增高或变矮后仍在工作区内，向上展开时底部锚点保持稳定。
