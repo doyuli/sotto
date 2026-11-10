@@ -20,6 +20,8 @@ func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
 	return nil, ErrUnsupported
 }
 
+func WindowOwnsForeground(hwnd uintptr) bool { return false }
+
 func Prepare() func(context.Context) (Selection, error) { return grab }
 
 func RecoverClipboard(id string) error { return ErrUnsupported }

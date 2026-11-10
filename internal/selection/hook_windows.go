@@ -61,6 +61,7 @@ var (
 	procPostThreadMessageW      = modUser32.NewProc("PostThreadMessageW")
 	procWindowFromPhysicalPoint = modUser32.NewProc("WindowFromPhysicalPoint")
 	procGetAncestor             = modUser32.NewProc("GetAncestor")
+	procGetWindow               = modUser32.NewProc("GetWindow")
 )
 
 // mouseWatch shares one hook across outside-click watchers.
@@ -200,11 +201,34 @@ func dismissOutside(watches []*outsideClickWatch, x, y int32) {
 	// to its top-level window before deciding whether the click is outside.
 	point := uint64(uint32(x)) | uint64(uint32(y))<<32
 	hit, _, _ := procWindowFromPhysicalPoint.Call(uintptr(point))
-	const gaRoot = 2
-	root, _, _ := procGetAncestor.Call(hit, gaRoot)
 	for _, w := range watches {
-		if hit != w.hwnd && root != w.hwnd {
+		if !windowContains(w.hwnd, hit) {
 			w.dismiss()
 		}
 	}
+}
+
+// WindowOwnsForeground includes WebView2's native select popup, which has its
+// own HWND but belongs to the bubble. Other app windows must still dismiss it.
+func WindowOwnsForeground(hwnd uintptr) bool {
+	foreground, _, _ := procGetForegroundWindow.Call()
+	return windowContains(hwnd, foreground)
+}
+
+func windowContains(hwnd, hit uintptr) bool {
+	if hwnd == 0 || hit == 0 {
+		return false
+	}
+	if hit == hwnd {
+		return true
+	}
+	const gaRoot, gwOwner = 2, 4
+	root, _, _ := procGetAncestor.Call(hit, gaRoot)
+	for root != 0 {
+		if root == hwnd {
+			return true
+		}
+		root, _, _ = procGetWindow.Call(root, gwOwner)
+	}
+	return false
 }

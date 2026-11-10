@@ -326,6 +326,9 @@ func (m *bubbleManager) blurHandler(b *bubble) func() {
 		m.mu.Unlock()
 		go mygo.RunOnMain(func() {
 			visible, focused := b.win.IsVisible(), b.win.IsFocused()
+			if runtime.GOOS == "windows" && !focused {
+				focused = selection.WindowOwnsForeground(b.win.NativeHandle())
+			}
 			m.mu.Lock()
 			hide := b.shouldHideAfterBlur(showID, visible, focused)
 			m.mu.Unlock()
