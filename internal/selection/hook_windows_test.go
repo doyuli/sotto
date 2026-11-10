@@ -5,29 +5,31 @@ package selection
 import (
 	"runtime"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-func TestWindowContainsNativePopup(t *testing.T) {
+func newHookTestWindow(t *testing.T) func(parent, style uintptr) uintptr {
+	t.Helper()
 	// HWND ownership and destruction belong to the creating OS thread. Hidden
 	// system-class windows exercise the real owner chain without taking focus.
 	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+	t.Cleanup(runtime.UnlockOSThread)
 	create := modUser32.NewProc("CreateWindowExW")
 	destroy := modUser32.NewProc("DestroyWindow")
 	var handles []uintptr
-	defer func() {
+	t.Cleanup(func() {
 		for i := len(handles) - 1; i >= 0; i-- {
 			destroy.Call(handles[i])
 		}
-	}()
+	})
 	class, err := windows.UTF16FromString("STATIC")
 	if err != nil {
 		t.Fatal(err)
 	}
-	window := func(parent, style uintptr) uintptr {
+	return func(parent, style uintptr) uintptr {
 		t.Helper()
 		hwnd, _, err := create.Call(0, uintptr(unsafe.Pointer(&class[0])), 0, style, 0, 0, 10, 10, parent, 0, 0, 0)
 		if hwnd == 0 {
@@ -36,6 +38,10 @@ func TestWindowContainsNativePopup(t *testing.T) {
 		handles = append(handles, hwnd)
 		return hwnd
 	}
+}
+
+func TestWindowContainsNativePopup(t *testing.T) {
+	window := newHookTestWindow(t)
 	const wsPopup, wsChild = 0x80000000, 0x40000000
 	host := window(0, wsPopup)
 	bubble := window(host, wsPopup)
@@ -65,5 +71,63 @@ func TestWindowContainsNativePopup(t *testing.T) {
 	}
 	if windowContains(0, popup) {
 		t.Error("null bubble contains a popup")
+	}
+}
+
+func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
+	window := newHookTestWindow(t)
+	const wsPopup = 0x80000000
+	bubble := window(0, wsPopup)
+	popup := window(bubble, wsPopup)
+	other := window(0, wsPopup)
+	notify := modUser32.NewProc("NotifyWinEvent")
+	changes := make(chan struct{}, 1)
+	stop, err := WatchWindowLeave(bubble, func() {
+		select {
+		case changes <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+
+	// Hidden windows never activate, so these notifications cannot rely on a
+	// WM_ACTIVATE/blur on the bubble. Exercise the real event-hook message pump.
+	for _, hwnd := range []uintptr{popup, other, bubble} {
+		notify.Call(eventSystemForeground, hwnd, 0, 0)
+		select {
+		case <-changes:
+		case <-time.After(2 * time.Second):
+			t.Fatal("foreground change was not delivered without a bubble blur")
+		}
+	}
+
+	// Removing one bubble must not stop another bubble's foreground hook.
+	second := make(chan struct{}, 1)
+	stopSecond, err := WatchWindowLeave(other, func() {
+		select {
+		case second <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stopSecond)
+	stop()
+	notify.Call(eventSystemForeground, other, 0, 0)
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unregistering one bubble stopped another bubble's watcher")
+	}
+	stopSecond()
+	watch.mu.Lock()
+	stopped := watch.handle == 0 && watch.thread == 0
+	watch.mu.Unlock()
+	if !stopped {
+		t.Fatal("last watcher did not stop the hook thread")
 	}
 }

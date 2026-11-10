@@ -16,7 +16,7 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 	return Selection{}, ErrUnsupported
 }
 
-func WatchOutsideClick(hwnd uintptr, dismiss func()) (func(), error) {
+func WatchWindowLeave(hwnd uintptr, changed func()) (func(), error) {
 	return nil, ErrUnsupported
 }
 
