@@ -2,13 +2,11 @@ package translate
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
-	"sotto/internal/languages"
 )
 
 const siliconFlowEndpoint = "https://api.siliconflow.cn/v1/chat/completions"
@@ -49,12 +47,7 @@ func (s SiliconFlow) translate(ctx context.Context, req Request, k KeyStore, cfg
 	}
 	messages := translationMessages(req, target)
 	if strings.TrimPrefix(model, "Pro/") == config.DefaultSiliconFlowModel {
-		// Hunyuan-MT publishes separate prompt templates for Chinese and other pairs.
-		prompt := fmt.Sprintf("Translate the following segment into %s, without additional explanation.\n\n%s", target, req.Text)
-		if req.SourceLang == "zh-HANS" || req.TargetLang == "zh-HANS" {
-			prompt = fmt.Sprintf("把下面的文本翻译成%s，不要额外解释。\n\n%s", languages.Names[req.TargetLang], req.Text)
-		}
-		messages = []map[string]string{{"role": "user", "content": prompt}}
+		messages = []map[string]string{{"role": "user", "content": hunyuanTranslationPrompt(req, target)}}
 	}
 	payload := map[string]any{
 		"model":       model,

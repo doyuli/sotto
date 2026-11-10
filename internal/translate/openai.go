@@ -55,18 +55,9 @@ func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg conf
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	// The model detects the source language itself, so the prompt only
-	// names the target; the reply carries the translation and nothing else.
-	system := fmt.Sprintf(
-		"You are a translation engine. Translate the user's text into %s. "+
-			"Reply with the translation only: no quotes, no explanations. "+
-			"If the text is already in %s, reply with it unchanged.", target, target)
 	payload := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": req.Text},
-		},
+		"model":       model,
+		"messages":    translationMessages(req, target),
 		"temperature": 0.1,
 	}
 	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", stream, func(text string) {

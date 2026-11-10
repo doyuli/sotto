@@ -17,9 +17,9 @@ func TestSiliconFlowRequest(t *testing.T) {
 	for _, tc := range []struct {
 		source, target, prompt string
 	}{
-		{"auto", "zh-HANS", "把下面的文本翻译成中文（简体），不要额外解释。\n\nThe file is ready."},
-		{"zh-HANS", "en", "把下面的文本翻译成英语，不要额外解释。\n\nThe file is ready."},
-		{"fr", "de", "Translate the following segment into German, without additional explanation.\n\nThe file is ready."},
+		{"auto", "zh-HANS", "把下面的文本翻译成中文（简体），不要额外解释。单词和语言名称也要直接翻译，不要对话或要求补充内容。"},
+		{"zh-HANS", "en", "把下面的文本翻译成英语，不要额外解释。单词和语言名称也要直接翻译，不要对话或要求补充内容。"},
+		{"fr", "de", "Translate the following segment into German, without additional explanation. Translate single words and language names directly; do not respond conversationally or ask for more text."},
 	} {
 		t.Run(tc.source+"/"+tc.target, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func TestSiliconFlowRequest(t *testing.T) {
 					t.Error(err)
 				}
 				if input.Model != "tencent/Hunyuan-MT-7B" || input.Stream || len(input.Messages) != 1 ||
-					input.Messages[0].Role != "user" || input.Messages[0].Content != tc.prompt {
+					input.Messages[0].Role != "user" || input.Messages[0].Content != tc.prompt+"\n\nThe file is ready." {
 					t.Errorf("unexpected payload: %+v", input)
 				}
 				fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"content":" 文件已就绪。 "}}]}`)

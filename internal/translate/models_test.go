@@ -50,7 +50,9 @@ func TestConfiguredChatModels(t *testing.T) {
 						t.Errorf("model = %q, stream = %t", input.Model, input.Stream)
 					}
 					if tc.hunyuan {
-						if len(input.Messages) != 1 || input.Messages[0].Role != "user" || !strings.HasPrefix(input.Messages[0].Content, "把下面的文本翻译成中文（简体）") {
+						if len(input.Messages) != 1 || input.Messages[0].Role != "user" ||
+							!strings.HasPrefix(input.Messages[0].Content, "把下面的文本翻译成中文（简体），不要额外解释。") ||
+							!strings.HasSuffix(input.Messages[0].Content, "\n\nBonjour !") {
 							t.Errorf("lost Hunyuan template: %+v", input.Messages)
 						}
 					} else if len(input.Messages) != 2 || input.Messages[0].Role != "system" ||
