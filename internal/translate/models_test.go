@@ -51,13 +51,13 @@ func TestConfiguredChatModels(t *testing.T) {
 					}
 					if tc.hunyuan {
 						if len(input.Messages) != 1 || input.Messages[0].Role != "user" ||
-							!strings.HasPrefix(input.Messages[0].Content, "将 <source> 内的原文翻译成中文（简体）。") ||
-							!strings.HasSuffix(input.Messages[0].Content, "\n\n<source>\nBonjour !\n</source>") {
+							!strings.HasPrefix(input.Messages[0].Content, "把下面的文本翻译成中文（简体），不要额外解释。") ||
+							!strings.HasSuffix(input.Messages[0].Content, "\n\nBonjour !") {
 							t.Errorf("lost Hunyuan template: %+v", input.Messages)
 						}
 					} else if len(input.Messages) != 2 || input.Messages[0].Role != "system" ||
 						!strings.Contains(input.Messages[0].Content, "from French into Simplified Chinese") ||
-						input.Messages[1].Role != "user" || input.Messages[1].Content != "<source>\nBonjour !\n</source>" {
+						input.Messages[1].Role != "user" || input.Messages[1].Content != "Bonjour !" {
 						t.Errorf("unexpected general chat prompt: %+v", input.Messages)
 					}
 					if tc.service == "zhipu" {
