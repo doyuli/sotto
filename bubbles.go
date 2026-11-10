@@ -67,8 +67,8 @@ type bubble struct {
 	layoutID          int64
 	layoutSequence    int64
 	offBlur           func() // unregisters focus hiding; Pin calls it
-	// offOutsideClick belongs to the main thread, like the window it watches.
-	offOutsideClick func()
+	// offWindowLeave belongs to the main thread, like the window it watches.
+	offWindowLeave func()
 
 	// Placement and its reentrancy guard belong to the main thread.
 	placement       *bubblePlacement
@@ -118,7 +118,7 @@ func (m *bubbleManager) focusVisibleInput() bool {
 	}
 	b.win.Focus()
 	BubblePresented.Emit(b.win, presented)
-	m.refreshOutsideClick(b)
+	m.refreshWindowLeave(b)
 	log.Printf("bubble: focus existing input id=%d show=%d", b.id, presented.ShowID)
 	return true
 }
@@ -263,7 +263,7 @@ func (m *bubbleManager) Pin(id int64) {
 		}
 		m.pinned = append(m.pinned, b)
 		m.mu.Unlock()
-		m.refreshOutsideClick(b)
+		m.refreshWindowLeave(b)
 	})
 }
 
@@ -292,7 +292,7 @@ func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
 			b.offBlur = b.win.OnBlur(m.blurHandler(b))
 		}
 		m.mu.Unlock()
-		m.refreshOutsideClick(b)
+		m.refreshWindowLeave(b)
 	})
 }
 
@@ -325,15 +325,24 @@ func (m *bubbleManager) blurHandler(b *bubble) func() {
 		showID := b.showID
 		m.mu.Unlock()
 		go mygo.RunOnMain(func() {
-			visible, focused := b.win.IsVisible(), b.win.IsFocused()
-			m.mu.Lock()
-			hide := b.shouldHideAfterBlur(showID, visible, focused)
-			m.mu.Unlock()
-			if hide {
-				log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
-				m.hideTransientBubble(b)
-			}
+			m.hideAfterBlur(b, showID)
 		})
+	}
+}
+
+// hideAfterBlur runs on the main thread, including for foreground notifications
+// from an owned popup that does not deliver another blur to the bubble itself.
+func (m *bubbleManager) hideAfterBlur(b *bubble, showID int64) {
+	visible, focused := b.win.IsVisible(), b.win.IsFocused()
+	if runtime.GOOS == "windows" && !focused {
+		focused = selection.WindowOwnsForeground(b.win.NativeHandle())
+	}
+	m.mu.Lock()
+	hide := b.shouldHideAfterBlur(showID, visible, focused)
+	m.mu.Unlock()
+	if hide {
+		log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
+		m.hideTransientBubble(b)
 	}
 }
 
@@ -355,7 +364,7 @@ func (m *bubbleManager) setAutoHide(on bool) {
 	}
 	m.mu.Unlock()
 	for _, b := range changed {
-		m.refreshOutsideClick(b)
+		m.refreshWindowLeave(b)
 	}
 }
 
@@ -425,7 +434,7 @@ func (m *bubbleManager) showWin(b *bubble) {
 	}
 	b.win.Show()
 	log.Printf("bubble: show id=%d show=%d visible=%t focused=%t", b.id, b.showID, b.win.IsVisible(), b.win.IsFocused())
-	m.refreshOutsideClick(b)
+	m.refreshWindowLeave(b)
 }
 
 // claimShow commits each first presentation once under mu. Further content
@@ -438,47 +447,51 @@ func (b *bubble) claimShow() bool {
 	return true
 }
 
-// Windows can deny foreground activation when a bubble shows. If it never
-// acquires focus, an outside click must dismiss it without a blur event.
-func (m *bubbleManager) refreshOutsideClick(b *bubble) {
+// Keep watching while focused: an owned popup can take activation, then lose it
+// to another app without delivering a second blur to the bubble. Outside clicks
+// also dismiss bubbles that Windows never allowed to acquire foreground focus.
+func (m *bubbleManager) refreshWindowLeave(b *bubble) {
 	if runtime.GOOS != "windows" {
 		return
 	}
 	mygo.RunOnMain(func() {
-		b.stopOutsideClick()
+		b.stopWindowLeave()
 		m.mu.Lock()
 		needsWatch := b.offBlur != nil
 		sessionID, showID := b.sessionID, b.showID
 		m.mu.Unlock()
-		if !needsWatch || !b.win.IsVisible() || b.win.IsFocused() {
+		if !needsWatch || !b.win.IsVisible() {
 			return
 		}
 		active := true // accessed only on the main thread
-		stop, err := selection.WatchOutsideClick(b.win.NativeHandle(), func() {
+		notify := func() {
 			mygo.RunOnMain(func() {
 				m.mu.Lock()
 				dismiss := active && b.sessionID == sessionID && b.showID == showID && b.offBlur != nil
 				m.mu.Unlock()
 				if dismiss {
-					m.hideTransientBubble(b)
+					// A select popup may have closed before the mouse hit test
+					// ran. Recheck current focus for both kinds of notification.
+					m.hideAfterBlur(b, showID)
 				}
 			})
-		})
+		}
+		stop, err := selection.WatchWindowLeave(b.win.NativeHandle(), notify)
 		if err != nil {
-			log.Printf("bubble outside click: %v", err)
+			log.Printf("bubble window watch: %v", err)
 			return
 		}
-		b.offOutsideClick = func() {
+		b.offWindowLeave = func() {
 			active = false
 			stop()
 		}
 	})
 }
 
-func (b *bubble) stopOutsideClick() {
-	if b.offOutsideClick != nil {
-		b.offOutsideClick()
-		b.offOutsideClick = nil
+func (b *bubble) stopWindowLeave() {
+	if b.offWindowLeave != nil {
+		b.offWindowLeave()
+		b.offWindowLeave = nil
 	}
 }
 
@@ -511,8 +524,6 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	})
 	b.win.OnResize(func() { m.reflow(b, true) })
 	b.win.OnMove(func() { m.reflow(b, false) })
-	// Once the bubble has focus, the blur listener can handle dismissal.
-	b.win.OnFocus(b.stopOutsideClick)
 	b.win.OnReadyToShow(func() {
 		log.Printf("bubble: page ready id=%d", b.id)
 		m.mu.Lock()
@@ -537,7 +548,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		b.win.Hide()
 	})
 	b.win.OnClosed(func() {
-		b.stopOutsideClick()
+		b.stopWindowLeave()
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		b.stopWork()
@@ -556,7 +567,7 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 	// by Unpin — will never be shown again: recycle it once hidden. The
 	// reusable one, and pinned ones, survive their hides.
 	b.win.OnHide(func() {
-		b.stopOutsideClick()
+		b.stopWindowLeave()
 		m.mu.Lock()
 		stale := !b.pinned && m.current != b && m.input != b
 		m.mu.Unlock()

@@ -21,6 +21,8 @@ import (
 
 const whMouseLL = 14
 
+const eventSystemForeground = 0x0003
+
 const (
 	wmLButtonDown = 0x0201
 	wmRButtonDown = 0x0204
@@ -61,53 +63,57 @@ var (
 	procPostThreadMessageW      = modUser32.NewProc("PostThreadMessageW")
 	procWindowFromPhysicalPoint = modUser32.NewProc("WindowFromPhysicalPoint")
 	procGetAncestor             = modUser32.NewProc("GetAncestor")
+	procGetWindow               = modUser32.NewProc("GetWindow")
+	procSetWinEventHook         = modUser32.NewProc("SetWinEventHook")
+	procUnhookWinEvent          = modUser32.NewProc("UnhookWinEvent")
 )
 
-// mouseWatch shares one hook across outside-click watchers.
+// windowHooks shares mouse and foreground hooks across visible bubbles.
 // The hook can read the callbacks without taking startMu.
-type mouseWatch struct {
+type windowHooks struct {
 	mu      sync.Mutex
 	handle  uintptr
 	thread  uint32
-	done    chan struct{} // closed once the hook thread has unhooked
-	outside atomic.Value  // immutable []*outsideClickWatch
+	done    chan struct{} // closed once the hook thread has unhooked both hooks
+	outside atomic.Value  // immutable []*windowLeaveWatch
 }
 
-type outsideClickWatch struct {
+type windowLeaveWatch struct {
 	hwnd    uintptr
-	dismiss func()
+	changed func()
 }
 
-var watch mouseWatch
+var watch windowHooks
 
 // startMu serializes starts and stops, so two racing starts cannot
-// install two hooks; mu stays for the hook thread's state access.
+// install duplicate hooks; mu stays for the hook thread's state access.
 var startMu sync.Mutex
 
-// WatchOutsideClick calls dismiss on a goroutine when a press lands outside
-// hwnd. The caller guards any in-flight callback after unregistering.
-func WatchOutsideClick(hwnd uintptr, dismiss func()) (stop func(), err error) {
+// WatchWindowLeave calls changed on a goroutine after outside presses and
+// foreground changes. The caller rechecks current focus, including owned popups,
+// and guards any in-flight callback after unregistering.
+func WatchWindowLeave(hwnd uintptr, changed func()) (stop func(), err error) {
 	startMu.Lock()
 	defer startMu.Unlock()
-	if err := ensureMouseHook(); err != nil {
+	if err := ensureWindowHooks(); err != nil {
 		return nil, err
 	}
-	w := &outsideClickWatch{hwnd: hwnd, dismiss: dismiss}
-	current, _ := watch.outside.Load().([]*outsideClickWatch)
+	w := &windowLeaveWatch{hwnd: hwnd, changed: changed}
+	current, _ := watch.outside.Load().([]*windowLeaveWatch)
 	watch.outside.Store(append(slices.Clone(current), w))
 	return func() {
 		startMu.Lock()
 		defer startMu.Unlock()
-		current, _ := watch.outside.Load().([]*outsideClickWatch)
-		watch.outside.Store(slices.DeleteFunc(slices.Clone(current), func(candidate *outsideClickWatch) bool {
+		current, _ := watch.outside.Load().([]*windowLeaveWatch)
+		watch.outside.Store(slices.DeleteFunc(slices.Clone(current), func(candidate *windowLeaveWatch) bool {
 			return candidate == w
 		}))
-		stopMouseHookIfIdle()
+		stopWindowHooksIfIdle()
 	}, nil
 }
 
-// ensureMouseHook and stopMouseHookIfIdle run under startMu.
-func ensureMouseHook() error {
+// ensureWindowHooks and stopWindowHooksIfIdle run under startMu.
+func ensureWindowHooks() error {
 	watch.mu.Lock()
 	running := watch.handle != 0
 	watch.mu.Unlock()
@@ -115,13 +121,13 @@ func ensureMouseHook() error {
 		return nil
 	}
 	ready := make(chan error, 1)
-	go runMouseHook(ready)
+	go runWindowHooks(ready)
 	// Waiting here is safe: the hook goroutine takes only mu.
 	return <-ready
 }
 
-func stopMouseHookIfIdle() {
-	outside, _ := watch.outside.Load().([]*outsideClickWatch)
+func stopWindowHooksIfIdle() {
+	outside, _ := watch.outside.Load().([]*windowLeaveWatch)
 	if len(outside) != 0 {
 		return
 	}
@@ -139,9 +145,9 @@ func stopMouseHookIfIdle() {
 	<-done
 }
 
-// runMouseHook installs the hook and pumps its thread's messages
-// until a quit arrives, then unhooks and reports itself gone.
-func runMouseHook(ready chan<- error) {
+// runWindowHooks installs both hooks and pumps its thread's messages
+// until a quit arrives, then unhooks both and reports itself gone.
+func runWindowHooks(ready chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -151,6 +157,15 @@ func runMouseHook(ready chan<- error) {
 	h, _, err := procSetWindowsHookExW.Call(whMouseLL, callback, 0, 0)
 	if h == 0 {
 		ready <- fmt.Errorf("SetWindowsHookExW: %w", err)
+		return
+	}
+	// Out-of-context events arrive on this message-pump thread. Unhook them on
+	// the same thread; do not skip our process, since another bubble can activate.
+	const wineventOutOfContext = 0
+	foreground, _, err := procSetWinEventHook.Call(eventSystemForeground, eventSystemForeground, 0, syscall.NewCallback(foregroundHookProc), 0, 0, wineventOutOfContext)
+	if foreground == 0 {
+		procUnhookWindowsHookEx.Call(h)
+		ready <- fmt.Errorf("SetWinEventHook: %w", err)
 		return
 	}
 	// Create the message queue before the owner can post WM_QUIT.
@@ -171,12 +186,28 @@ func runMouseHook(ready chan<- error) {
 			break
 		}
 	}
+	procUnhookWinEvent.Call(foreground)
 	procUnhookWindowsHookEx.Call(h)
 	watch.mu.Lock()
 	watch.handle = 0
 	watch.thread = 0
 	watch.mu.Unlock()
 	close(done)
+}
+
+func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uintptr) uintptr {
+	if event != eventSystemForeground || hwnd == 0 {
+		return 0
+	}
+	outside, _ := watch.outside.Load().([]*windowLeaveWatch)
+	for _, w := range outside {
+		// Avoid dispatching internal activation changes. The caller still
+		// rechecks live focus because this event may already be stale.
+		if !windowContains(w.hwnd, hwnd) {
+			go w.changed()
+		}
+	}
+	return 0
 }
 
 // mouseHookProc dispatches presses for outside-click detection and
@@ -186,8 +217,8 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 		switch wparam {
 		case wmLButtonDown, wmRButtonDown, wmMButtonDown, wmXButtonDown:
 			h := (*msllHookStruct)(native(lparam))
-			if outside, _ := watch.outside.Load().([]*outsideClickWatch); len(outside) != 0 {
-				go dismissOutside(outside, h.X, h.Y)
+			if outside, _ := watch.outside.Load().([]*windowLeaveWatch); len(outside) != 0 {
+				go notifyOutside(outside, h.X, h.Y)
 			}
 		}
 	}
@@ -195,16 +226,39 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 	return r
 }
 
-func dismissOutside(watches []*outsideClickWatch, x, y int32) {
+func notifyOutside(watches []*windowLeaveWatch, x, y int32) {
 	// The hook reports physical screen pixels. Resolve the WebView child
 	// to its top-level window before deciding whether the click is outside.
 	point := uint64(uint32(x)) | uint64(uint32(y))<<32
 	hit, _, _ := procWindowFromPhysicalPoint.Call(uintptr(point))
-	const gaRoot = 2
-	root, _, _ := procGetAncestor.Call(hit, gaRoot)
 	for _, w := range watches {
-		if hit != w.hwnd && root != w.hwnd {
-			w.dismiss()
+		if !windowContains(w.hwnd, hit) {
+			w.changed()
 		}
 	}
+}
+
+// WindowOwnsForeground includes WebView2's native select popup, which has its
+// own HWND but belongs to the bubble. Other app windows must still dismiss it.
+func WindowOwnsForeground(hwnd uintptr) bool {
+	foreground, _, _ := procGetForegroundWindow.Call()
+	return windowContains(hwnd, foreground)
+}
+
+func windowContains(hwnd, hit uintptr) bool {
+	if hwnd == 0 || hit == 0 {
+		return false
+	}
+	if hit == hwnd {
+		return true
+	}
+	const gaRoot, gwOwner = 2, 4
+	root, _, _ := procGetAncestor.Call(hit, gaRoot)
+	for root != 0 {
+		if root == hwnd {
+			return true
+		}
+		root, _, _ = procGetWindow.Call(root, gwOwner)
+	}
+	return false
 }
