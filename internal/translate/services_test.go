@@ -41,7 +41,7 @@ func TestOpenAITranslate(t *testing.T) {
 		if in.Model != "m" {
 			t.Errorf("model = %q, want m", in.Model)
 		}
-		if len(in.Messages) != 2 || in.Messages[0].Role != "system" || in.Messages[1].Content != "hello" {
+		if len(in.Messages) != 2 || in.Messages[0].Role != "system" || in.Messages[1].Content != "<source>\nhello\n</source>" {
 			t.Errorf("messages = %+v", in.Messages)
 		}
 		if !strings.Contains(in.Messages[0].Content, "Simplified Chinese") {

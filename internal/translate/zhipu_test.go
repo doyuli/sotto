@@ -30,7 +30,7 @@ func TestZhipuRequest(t *testing.T) {
 		if input.Model != "glm-4.7-flash" || input.Stream || input.Thinking.Type != "disabled" ||
 			len(input.Messages) != 2 || input.Messages[0].Role != "system" ||
 			!strings.Contains(input.Messages[0].Content, "from French into Simplified Chinese") ||
-			input.Messages[1].Role != "user" || input.Messages[1].Content != "Bonjour !" {
+			input.Messages[1].Role != "user" || input.Messages[1].Content != "<source>\nBonjour !\n</source>" {
 			t.Errorf("unexpected payload: %+v", input)
 		}
 		fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"content":" 你好！ "}}]}`)
