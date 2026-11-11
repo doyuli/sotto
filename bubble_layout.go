@@ -82,7 +82,66 @@ func clampBubblePosition(work mygo.Rectangle, x, y, width, height int) (int, int
 		min(max(y, work.Y+marginY), work.Y+max(work.Height-height-marginY, 0))
 }
 
-// reflow runs on the main thread. Pinned windows retain their user position;
+// bubblePosition tracks actual geometry, not event counts: a native move
+// notification may arrive after SetPosition returned or after another move.
+type bubblePosition struct {
+	point    mygo.Point
+	displays []mygo.Display
+	known    bool
+}
+
+func (p *bubblePosition) remember(bounds mygo.Rectangle, displays []mygo.Display) {
+	p.point = mygo.Point{X: bounds.X, Y: bounds.Y}
+	p.displays = append(p.displays[:0], displays...)
+	p.known = true
+}
+
+func sameBubbleDisplays(before, after []mygo.Display) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	for _, old := range before {
+		found := false
+		for _, current := range after {
+			if old == current {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// A changed display configuration can relocate a window without user input.
+// Crossing between unchanged displays, however, is still a manual move.
+func (p *bubblePosition) moved(bounds mygo.Rectangle, displays []mygo.Display) bool {
+	moved := p.known && p.point != (mygo.Point{X: bounds.X, Y: bounds.Y}) && sameBubbleDisplays(p.displays, displays)
+	p.remember(bounds, displays)
+	return moved
+}
+
+// Native callbacks can run inside these calls; delayed callbacks instead see
+// the actual resulting position recorded before the main thread yields.
+func (b *bubble) changeGeometry(change func()) {
+	adjusting := b.adjustingLayout
+	b.adjustingLayout = true
+	defer func() { b.adjustingLayout = adjusting }()
+	change()
+	b.positionState.remember(b.win.Bounds(), mygo.Screen.Displays())
+}
+
+func (b *bubble) setPosition(x, y int) {
+	b.changeGeometry(func() { b.win.SetPosition(x, y) })
+}
+
+func (b *bubble) setContentSize(width, height int) {
+	b.changeGeometry(func() { b.win.SetContentSize(width, height) })
+}
+
+// reflow runs on the main thread. Manually moved windows retain their position;
 // only automatic content growth is kept inside the current work area.
 func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	if b.adjustingLayout {
@@ -91,13 +150,17 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	b.adjustingLayout = true
 	defer func() { b.adjustingLayout = false }()
 	bounds := b.win.Bounds()
+	displays := mygo.Screen.Displays()
+	if b.positionState.moved(bounds, displays) {
+		b.placement = nil
+	}
 	display := mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2})
 	work := display.WorkArea
 	m.mu.Lock()
 	pinned := b.pinned
 	m.mu.Unlock()
 	if !pinned && b.placement != nil {
-		b.placement.refresh(mygo.Screen.Displays(), display, bounds.Width)
+		b.placement.refresh(displays, display, bounds.Width)
 		work = b.placement.work
 	}
 	zoom := bubbleZoom(b.win)
@@ -121,7 +184,7 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 		x, y = b.placement.position(bounds.Width, bounds.Height)
 	}
 	if x != bounds.X || y != bounds.Y {
-		b.win.SetPosition(x, y)
+		b.setPosition(x, y)
 	}
 }
 
@@ -168,7 +231,7 @@ func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64
 		m.mu.Lock()
 		limit := b.maxHeight
 		m.mu.Unlock()
-		b.win.SetContentSize(480, bubbleLayoutHeight(height, limit, zoom))
+		b.setContentSize(480, bubbleLayoutHeight(height, limit, zoom))
 		m.reflow(b, true)
 		m.showWin(b)
 		applied = true

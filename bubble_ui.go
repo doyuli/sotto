@@ -79,6 +79,8 @@ var lightBubblePalette = func() bubblePalette {
 	t.TextMuted = p.muted
 	t.Accent = p.accent
 	t.AccentText = ui.Hex("#ffffff")
+	t.Scrollbar = ui.Hex("#c9c9c9")
+	t.ScrollbarWidth = 6
 	t.Danger = p.error
 	p.theme = t
 	return p
@@ -115,6 +117,8 @@ var darkBubblePalette = func() bubblePalette {
 	t.TextMuted = p.muted
 	t.Accent = p.accent
 	t.AccentText = ui.Hex("#0d1b2b")
+	t.Scrollbar = ui.Hex("#4a4c50")
+	t.ScrollbarWidth = 6
 	t.Danger = p.error
 	p.theme = t
 	return p
@@ -150,6 +154,9 @@ func bubbleServiceName(service string) string {
 }
 
 func bubbleLangName(code string) string {
+	if code == "auto" {
+		return "自动检测"
+	}
 	if name, ok := languages.Names[code]; ok {
 		return name
 	}
@@ -240,13 +247,18 @@ type bubbleView struct {
 	bodyHandle     ui.Handle
 	composerHandle ui.Handle
 	scroll         ui.ScrollState
+	composerScroll ui.ScrollState
+	bodyScrollbar  bubbleScrollbar
+	inputScrollbar bubbleScrollbar
 
-	pendingFocus     bool
-	pendingScrollTop bool
-	contentVersion   uint64
-	measuredVersion  uint64
-	measurePending   bool
-	lastMeasuredH    float64
+	pendingFocus      bool
+	pendingScrollTop  bool
+	resetScrollbars   bool
+	contentVersion    uint64
+	paintedVersion    uint64
+	measuredVersion   uint64
+	lastMeasuredH     float64
+	lastMeasuredLimit float64
 
 	actions bubbleViewActions
 }
@@ -325,6 +337,9 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 
 	v.pendingFocus = focus || st.Trigger == "input"
 	v.pendingScrollTop = true
+	v.resetScrollbars = true
+	v.composerScroll.X, v.composerScroll.Y = 0, 0
+	v.inputScrollbar.reset(&v.composerScroll)
 	v.lastMeasuredH = 0
 	v.bumpContent()
 }
@@ -548,13 +563,6 @@ func (v *bubbleView) canSwapLanguages() bool {
 	return !(v.sourceLang == "auto" && v.detected == "")
 }
 
-func (v *bubbleView) sourceLabel() string {
-	if v.sourceLang == "auto" {
-		return "自动检测"
-	}
-	return bubbleLangName(v.sourceLang)
-}
-
 func (v *bubbleView) startRun(text string, service string) {
 	trimmed := strings.TrimSpace(text)
 	if v.sessionID == "" || v.isRecognizing() {
@@ -567,6 +575,7 @@ func (v *bubbleView) startRun(text string, service string) {
 		}
 		v.reqID = ""
 		v.retryService = ""
+		v.runServices = nil
 		v.cards = make(map[string]*bubbleCard)
 		v.serviceReqIDs = make(map[string]string)
 		v.submittedText = ""
@@ -575,6 +584,10 @@ func (v *bubbleView) startRun(text string, service string) {
 		v.message = ""
 		v.bumpContent()
 		return
+	}
+	// A retry after editing is a new full run; every card must match the draft.
+	if service != "" && trimmed != strings.TrimSpace(v.submittedText) {
+		service = ""
 	}
 
 	v.revision++
@@ -733,11 +746,16 @@ func (v *bubbleView) render(c *ui.Context) {
 
 	if v.composerText != v.lastComposer {
 		v.lastComposer = v.composerText
-		v.bumpContent()
+		if strings.TrimSpace(v.composerText) == "" {
+			v.startRun("", "")
+		} else {
+			v.bumpContent()
+		}
 	}
 	if v.pendingScrollTop {
 		v.pendingScrollTop = false
 		v.scroll.Y = 0
+		v.bodyScrollbar.reset(&v.scroll)
 	}
 	if c.Shortcut(0, ui.KeyEscape) {
 		v.closeBubble()
@@ -746,36 +764,54 @@ func (v *bubbleView) render(c *ui.Context) {
 	c.Root().Background(p.panel).Padding(0).Children(func() {
 		ui.Column(c).FillHeight().Grow(1).Children(func() {
 			v.renderHeader(c, p)
-			ui.Scroll(c).TrackScroll(&v.scroll).Grow(1).Children(func() {
-				ui.Column(c).Padding(2, 12, 12, 12).Gap(8).Bind(&v.bodyHandle).Children(func() {
-					v.renderBanners(c, p)
-					v.renderComposer(c, p)
-					v.renderLanguageBar(c, p)
-					v.renderResults(c, p)
+			theme := v.bodyScrollbar.themed(c, &v.scroll, p.theme)
+			ui.Themed(c, theme).Grow(1).Children(func() {
+				ui.Scroll(c).TrackScroll(&v.scroll).KeepScrollbars(true).Grow(1).Children(func() {
+					ui.Column(c).Padding(2, 12, 12, 12).Gap(8).Bind(&v.bodyHandle).Children(func() {
+						v.renderBanners(c, p)
+						v.renderComposer(c, p)
+						v.renderLanguageBar(c, p)
+						v.renderResults(c, p)
+					})
 				})
 			})
 		})
 	})
 
-	if v.measurePending {
-		v.measurePending = false
+	// Bounds belong to the last committed frame, not the previous build pass.
+	// Paint acknowledges that this content version has actually been laid out.
+	if v.paintedVersion == v.contentVersion && v.measuredVersion != v.paintedVersion {
 		hdr := v.headerHandle.Bounds(c)
 		body := v.bodyHandle.Bounds(c)
 		if body.H > 0 {
+			v.measuredVersion = v.paintedVersion
 			total := float64(hdr.H + body.H)
-			if total != v.lastMeasuredH {
-				v.lastMeasuredH = total
+			if total != v.lastMeasuredH || v.maxHeight != v.lastMeasuredLimit {
+				v.lastMeasuredH, v.lastMeasuredLimit = total, v.maxHeight
 				if v.actions.onHeightMeasured != nil {
 					v.actions.onHeightMeasured(total)
 				}
 			}
 		}
 	}
-	if v.measuredVersion != v.contentVersion {
-		v.measuredVersion = v.contentVersion
-		v.measurePending = true
-		c.AnimationFrame()
-	}
+	version := v.contentVersion
+	services := c.Services()
+	c.Root().DrawOver(func(_ *ui.Painter, _ ui.Rect) {
+		v.paintedVersion = version
+		if v.resetScrollbars {
+			// Initial caret placement is layout, not a user scroll gesture.
+			v.resetScrollbars = false
+			v.bodyScrollbar.reset(&v.scroll)
+			v.inputScrollbar.reset(&v.composerScroll)
+		}
+		// Caret reveal can scroll the editor during layout, after the theme
+		// was chosen. Rebuild once to reveal its scrollbar without another input.
+		if v.measuredVersion != version ||
+			v.bodyScrollbar.x != v.scroll.X || v.bodyScrollbar.y != v.scroll.Y ||
+			v.inputScrollbar.x != v.composerScroll.X || v.inputScrollbar.y != v.composerScroll.Y {
+			services.Invalidate()
+		}
+	})
 }
 
 func (v *bubbleView) renderHeader(c *ui.Context, p bubblePalette) {
@@ -934,32 +970,37 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 	if v.composerHandle.Focused(c) {
 		border = p.accent
 	}
-	box := ui.Column(c).Radius(12).Background(p.composer).Border(1, border).Padding(9, 11, 5, 11).Gap(4)
+	box := ui.Column(c.Key("composer")).Radius(12).Background(p.composer).Border(1, border).Padding(9, 11, 5, 11).Gap(4)
 	box.Children(func() {
-		ui.TextAreaBase(c, &v.composerText).
-			Bind(&v.composerHandle).
-			Label("要翻译的原文").
-			Lines(1, 5).
-			Padding(2, 2, 4, 2).
-			Placeholder(placeholder).
-			PlaceholderColor(p.muted.Alpha(0.85)).
-			TextColor(p.fg).
-			CaretColor(p.accent).
-			SelectionColor(p.selection).
-			ReadOnly(v.isRecognizing()).
-			FontSize(14).
-			LineHeight(1.55).
-			OnTextKey(func(k ui.TextKey) bool {
-				if k.Key == ui.KeyEscape && k.Mods == 0 {
-					v.closeBubble()
-					return true
-				}
-				if k.Key == ui.KeyEnter && k.Mods == 0 {
-					v.submitComposer(k.Text())
-					return true
-				}
-				return false
-			})
+		theme := v.inputScrollbar.themed(c, &v.composerScroll, p.theme)
+		ui.Themed(c, theme).Background(ui.Transparent).Children(func() {
+			ui.TextAreaBase(c, &v.composerText).
+				Bind(&v.composerHandle).
+				TrackScroll(&v.composerScroll).
+				KeepScrollbars(true).
+				Label("要翻译的原文").
+				Lines(2, 5).
+				Padding(2, 2, 4, 2).
+				Placeholder(placeholder).
+				PlaceholderColor(p.muted.Alpha(0.85)).
+				TextColor(p.fg).
+				CaretColor(p.accent).
+				SelectionColor(p.selection).
+				ReadOnly(v.isRecognizing()).
+				FontSize(14.5).
+				LineHeight(1.55).
+				OnTextKey(func(k ui.TextKey) bool {
+					if k.Key == ui.KeyEscape && k.Mods == 0 {
+						v.closeBubble()
+						return true
+					}
+					if k.Key == ui.KeyEnter && k.Mods == 0 {
+						v.submitComposer(k.Text())
+						return true
+					}
+					return false
+				})
+		})
 		if v.pendingFocus {
 			v.pendingFocus = false
 			v.composerHandle.Focus(c)
@@ -1030,35 +1071,7 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 
 func (v *bubbleView) renderLanguageBar(c *ui.Context, p bubblePalette) {
 	ui.Row(c).Height(38).Padding(2, 6).Radius(12).Background(p.control).AlignItems(ui.Center).Gap(2).Children(func() {
-		srcBtn := ui.ButtonBase(c).
-			Label("源语言").
-			Disabled(v.isRecognizing()).
-			Cursor(ui.CursorPointer).
-			Grow(1).
-			FillHeight().
-			Radius(9).
-			Padding(0, 8).
-			Center().
-			Menu(func(m *ui.Menu) {
-				if m.Item("自动检测").Checked(v.sourceLang == "auto").Chosen() {
-					v.setSourceLang("auto")
-				}
-				m.Separator()
-				for _, code := range languages.List {
-					if m.Item(bubbleLangName(code)).Checked(v.sourceLang == code).Chosen() {
-						v.setSourceLang(code)
-					}
-				}
-			})
-		if !v.isRecognizing() && srcBtn.Hovered() {
-			srcBtn.Background(p.hover)
-		}
-		srcBtn.Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-				ui.Text(c, v.sourceLabel()).FontSize(13).TextColor(p.fg).SingleLine()
-				ui.Icon(c, chevronDownSVG).Size(12, 12).TextColor(p.muted)
-			})
-		})
+		v.renderLanguageSelect(c.Key("source"), p, true)
 
 		swapDisabled := v.isRecognizing() || !v.canSwapLanguages()
 		swapBtn := ui.ButtonBase(c).
@@ -1085,30 +1098,64 @@ func (v *bubbleView) renderLanguageBar(c *ui.Context, p bubblePalette) {
 			ui.Icon(c, swapSVG).Size(15, 15).TextColor(color)
 		})
 
-		tgtBtn := ui.ButtonBase(c).
-			Label("目标语言").
-			Disabled(v.isRecognizing()).
-			Cursor(ui.CursorPointer).
-			Grow(1).
-			FillHeight().
-			Radius(9).
-			Padding(0, 8).
-			Center().
-			Menu(func(m *ui.Menu) {
-				for _, code := range languages.List {
-					if m.Item(bubbleLangName(code)).Checked(v.targetLang == code).Chosen() {
-						v.setTargetLang(code)
-					}
-				}
-			})
-		if !v.isRecognizing() && tgtBtn.Hovered() {
-			tgtBtn.Background(p.hover)
+		v.renderLanguageSelect(c.Key("target"), p, false)
+	})
+}
+
+func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source bool) {
+	selected, label := &v.targetLang, "目标语言"
+	if source {
+		selected, label = &v.sourceLang, "源语言"
+	}
+	before := *selected
+	selectParts := ui.SelectBase(c, selected)
+	trigger := selectParts.Trigger.Label(label).Disabled(v.isRecognizing()).
+		Cursor(ui.CursorPointer).Grow(1).Basis(0).MinWidth(0).FillHeight().
+		Radius(9).Padding(0, 8).Center()
+	trigger.OnChange(func() {
+		// The base has already updated the bound field before this notice.
+		code := *selected
+		*selected = before
+		if source {
+			v.setSourceLang(code)
+		} else {
+			v.setTargetLang(code)
 		}
-		tgtBtn.Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-				ui.Text(c, bubbleLangName(v.targetLang)).FontSize(13).TextColor(p.fg).SingleLine()
-				ui.Icon(c, chevronDownSVG).Size(12, 12).TextColor(p.muted)
-			})
+	})
+	if !v.isRecognizing() && trigger.Hovered() {
+		trigger.Background(p.hover)
+	}
+	trigger.Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
+			ui.Text(c, bubbleLangName(*selected)).FontSize(13).TextColor(p.fg).SingleLine()
+			ui.Icon(c, chevronDownSVG).Size(12, 12).TextColor(p.muted)
+		})
+	})
+	selectParts.Popup(func(panel ui.Element) {
+		// Match the committed trigger width; the select anchors the panel's
+		// start edge and flips it above the control when space is limited.
+		panel.Label(label+"选项").Width(trigger.Bounds().W).Padding(4).
+			Margin(4, 0, 0, 0).Radius(10).Background(p.panel).
+			Border(1, p.pill).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
+		codes := languages.List
+		if source {
+			codes = append([]string{"auto"}, codes...)
+		}
+		_, windowH := c.Size()
+		bounds := trigger.Bounds()
+		room := max(bounds.Y-8, windowH-bounds.Y-bounds.H-8)
+		ui.Scroll(c).Height(min(float32(len(codes))*30, max(30, room-10))).Children(func() {
+			for _, code := range codes {
+				item := selectParts.Item(code).Height(30).Padding(0, 8).Radius(6).Cursor(ui.CursorPointer)
+				if item.Highlighted() {
+					item.Background(p.hover)
+				} else if code == *selected {
+					item.Background(p.control)
+				}
+				item.Children(func() {
+					ui.Text(c, bubbleLangName(code)).FontSize(13).TextColor(p.fg).SingleLine()
+				})
+			}
 		})
 	})
 }
@@ -1140,29 +1187,27 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 	collapsed := v.collapsed[svc]
 	title := bubbleServiceName(svc)
 	ui.Column(c).Radius(12).Clip().Background(p.cardBody).Children(func() {
-		ui.Row(c).Padding(7, 10, 7, 14).Background(p.cardHead).AlignItems(ui.Center).Gap(6).Children(func() {
+		header := ui.ButtonBase(c.Key("header")).
+			Label("折叠 "+title).
+			Expanded(!collapsed).
+			Padding(7, 10, 7, 14).
+			Background(p.cardHead).
+			AlignItems(ui.Center).
+			Gap(6).
+			Cursor(ui.CursorPointer).
+			OnClick(func() {
+				v.collapsed[svc] = !v.collapsed[svc]
+				v.bumpContent()
+			})
+		header.Children(func() {
 			ui.Text(c, title).FontSize(13).FontWeight(500).TextColor(p.fg.Alpha(0.9)).SingleLine()
 			ui.Spacer(c)
 			if card.Streaming {
 				ui.Text(c, "生成中").FontSize(12).TextColor(p.muted).SingleLine()
 			}
-			toggle := ui.ButtonBase(c).
-				Label("折叠 " + title).
-				Tooltip("折叠").
-				Cursor(ui.CursorPointer).
-				Size(24, 24).
-				Radius(6).
-				Center()
-			if toggle.Hovered() {
-				toggle.Background(p.hover)
-			}
-			if toggle.Clicked() {
-				v.collapsed[svc] = !collapsed
-				v.bumpContent()
-			}
-			toggle.Children(func() {
+			ui.Box(c).Size(24, 24).Center().Children(func() {
 				color := p.muted
-				if toggle.Hovered() {
+				if header.Hovered() {
 					color = p.fg
 				}
 				if collapsed {
@@ -1207,11 +1252,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 				ui.Text(c, errMsg).FontSize(12).TextColor(p.error)
 				ui.Row(c).Gap(12).Wrap().Children(func() {
 					v.renderLinkButton(c, p, "重试", func() {
-						text := v.submittedText
-						if text == "" {
-							text = v.composerText
-						}
-						v.startRun(text, svc)
+						v.startRun(v.composerText, svc)
 					})
 					if svc == "google" || svc == "index-translate" || strings.Contains(card.Err, "配置") {
 						v.renderLinkButton(c, p, "配置翻译服务", v.actions.openSettings)
@@ -1233,7 +1274,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 								label := naming.Labels[style]
 								tag := bubbleChipTag(style)
 								chip := ui.ButtonBase(c).
-									Tooltip(label + "：" + val).
+									Tooltip(label+"："+val).
 									Cursor(ui.CursorPointer).
 									MinWidth(24).
 									Height(24).
@@ -1267,7 +1308,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 						copyTip = "复制"
 					}
 					copyBtn := ui.ButtonBase(c).
-						Label("复制 " + title).
+						Label("复制 "+title).
 						Tooltip(copyTip).
 						Disabled(!ready).
 						Cursor(ui.CursorPointer).

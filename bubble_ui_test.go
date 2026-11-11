@@ -211,8 +211,12 @@ func TestBubbleViewLanguageMenuAndSwap(t *testing.T) {
 	}
 	tt.Press(r.X+r.W/2, r.Y+r.H/2)
 	tt.Release(r.X+r.W/2, r.Y+r.H/2)
-	if err := tt.ChooseMenuItem("英语"); err != nil {
-		t.Fatalf("ChooseMenuItem 英语: %v", err)
+	panel, ok := tt.Find("源语言选项")
+	if !ok || panel.X != r.X || panel.W != r.W {
+		t.Fatalf("source popup = %+v found=%v, want x=%v width=%v", panel, ok, r.X, r.W)
+	}
+	if err := tt.Click("英语"); err != nil {
+		t.Fatalf("Click 英语: %v", err)
 	}
 	if len(runs) != 1 || runs[0].SourceLang != "en" || runs[0].TargetLang != "zh-HANS" {
 		t.Fatalf("after choosing source=en runs=%+v", runs)
@@ -334,6 +338,255 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 	}
 	if len(pinnedCalls) != 1 || !pinnedCalls[0] {
 		t.Fatalf("pinnedCalls = %v, want [true]", pinnedCalls)
+	}
+}
+
+func TestBubbleViewComposerFocusAcrossDirtyBanner(t *testing.T) {
+	var runs []RunReq
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		run: func(req RunReq) { runs = append(runs, req) },
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "sess-focus", ShowID: 1, LayoutID: 1,
+		ReqID: "req-focus", Trigger: "selection", Text: "hello",
+		SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
+	}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "req-focus", Services: []string{"google"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: "req-focus", Service: "google", Text: "你好", DetectedLang: "en"})
+
+	tt := ui.NewTester(v.render, 480, 560)
+	const dirtyBanner = "原文已修改，按 Enter 重新翻译"
+	if got := v.statusMessage(); got != "" {
+		t.Fatalf("initial banner = %q, want none", got)
+	}
+	if err := tt.Click("要翻译的原文"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(0, ui.KeyHome)
+	tt.Key(0, ui.KeyRight)
+	tt.Type("X")
+	for range 3 {
+		tt.Frame()
+	}
+	if !tt.HasText(dirtyBanner) {
+		t.Errorf("dirty banner missing after edit, texts=%v", tt.Texts())
+	}
+	tt.Type("Y")
+	if v.composerText != "hXYello" || !tt.Focused("要翻译的原文") {
+		t.Errorf("editing across banner: text=%q focused=%v, want hXYello and true", v.composerText, tt.Focused("要翻译的原文"))
+	}
+	tt.Key(0, ui.KeyEnter)
+	for range 3 {
+		tt.Frame()
+	}
+	if len(runs) != 1 || runs[0].Text != "hXYello" || runs[0].Service != "" {
+		t.Errorf("submit after editing = %+v, want one full run for hXYello", runs)
+	}
+	if tt.HasText(dirtyBanner) {
+		t.Error("dirty banner remained after submit")
+	}
+	if !tt.Focused("要翻译的原文") {
+		t.Error("composer lost focus when submit removed the dirty banner")
+	}
+}
+
+func TestBubbleViewRetryUsesCurrentComposer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		edit    bool
+		text    string
+		service string
+	}{
+		{name: "unchanged retries one service", text: "A", service: "google"},
+		{name: "edited starts all services", edit: true, text: "B"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var runs []RunReq
+			cfg := testBubbleConfig()
+			v := newBubbleView(1, cfg, bubbleViewActions{
+				run: func(req RunReq) { runs = append(runs, req) },
+			})
+			v.applyState(BubbleState{
+				ID: 1, Generation: 1, SessionID: "sess-retry", ShowID: 1, LayoutID: 1,
+				ReqID: "req-retry", Trigger: "selection", Text: "A",
+				SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
+			}, false)
+			v.applyMeta(RunMetaMsg{ReqID: "req-retry", Services: []string{"google", "baidu"}})
+			v.applyResult(TranslationUpdateMsg{ReqID: "req-retry", Service: "google", Err: "网络连接失败"})
+			v.applyResult(TranslationUpdateMsg{ReqID: "req-retry", Service: "baidu", Text: "百度译文"})
+			tt := ui.NewTester(v.render, 480, 760)
+			if tc.edit {
+				if err := tt.Click("要翻译的原文"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Key(ui.Ctrl, ui.KeyA)
+				tt.Type("B")
+				if v.composerText != "B" {
+					t.Fatalf("composer = %q, want B before retry", v.composerText)
+				}
+			}
+			if err := tt.Click("重试"); err != nil {
+				t.Fatal(err)
+			}
+			if len(runs) != 1 {
+				t.Fatalf("retry runs = %+v, want exactly one", runs)
+			}
+			if runs[0].Text != tc.text || runs[0].Service != tc.service {
+				t.Errorf("retry = %+v, want text=%q service=%q", runs[0], tc.text, tc.service)
+			}
+			if !tc.edit && !tt.HasText("百度译文") {
+				t.Error("single-service retry removed the other service's result")
+			}
+		})
+	}
+}
+
+func TestBubbleViewKeyboardEmptyCancelsAndRejectsLateResult(t *testing.T) {
+	type cancellation struct {
+		session string
+		rev     int64
+	}
+	var canceled []cancellation
+	var runs []RunReq
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		run: func(req RunReq) { runs = append(runs, req) },
+		cancel: func(session string, rev int64) {
+			canceled = append(canceled, cancellation{session, rev})
+		},
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "sess-empty", ShowID: 1, LayoutID: 1,
+		ReqID: "req-empty", Trigger: "input", Text: "hello",
+		SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
+	}, true)
+	v.applyMeta(RunMetaMsg{ReqID: "req-empty", Services: []string{"google"}})
+	v.applyResult(TranslationUpdateMsg{
+		ReqID: "req-empty", Service: "google", Text: "old result", DetectedLang: "en", Streaming: true,
+	})
+	tt := ui.NewTester(v.render, 480, 420)
+	if !tt.HasText("old result") || v.detected != "en" {
+		t.Fatal("expected an active streaming result with detected language before clearing")
+	}
+	tt.Key(ui.Ctrl, ui.KeyA)
+	tt.Key(0, ui.KeyBackspace)
+	if v.composerText != "" {
+		t.Fatalf("keyboard clear left composer=%q", v.composerText)
+	}
+	if len(canceled) != 1 || canceled[0].session != "sess-empty" || canceled[0].rev <= 0 {
+		t.Errorf("keyboard clear cancellations = %+v, want one current-session cancellation with a new revision", canceled)
+	}
+	if v.reqID != "" || len(v.cards) != 0 || v.detected != "" {
+		t.Errorf("keyboard clear left reqID=%q cards=%v detected=%q", v.reqID, v.cards, v.detected)
+	}
+	for range 3 {
+		tt.Frame()
+	}
+	v.applyResult(TranslationUpdateMsg{
+		ReqID: "req-empty", Service: "google", Text: "late result", DetectedLang: "en",
+	})
+	tt.Frame()
+	if len(v.cards) != 0 || v.reqID != "" || v.detected != "" || tt.HasText("late result") || tt.HasText("old result") {
+		t.Errorf("stale result survived keyboard clear: reqID=%q cards=%v detected=%q texts=%v", v.reqID, v.cards, v.detected, tt.Texts())
+	}
+	if len(canceled) != 1 || len(runs) != 0 {
+		t.Errorf("clear and later frames dispatched cancellations=%+v runs=%+v, want one cancel and no run", canceled, runs)
+	}
+}
+
+func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
+	var heights []float64
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		onHeightMeasured: func(h float64) { heights = append(heights, h) },
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "sess-collapse", ShowID: 1, LayoutID: 1,
+		ReqID: "req-collapse", Trigger: "selection", Text: "hello", Settings: cfg,
+	}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "req-collapse", Services: []string{"google"}})
+	translation := strings.Repeat("translation line\n", 20)
+	v.applyResult(TranslationUpdateMsg{ReqID: "req-collapse", Service: "google", Text: translation})
+	tt := ui.NewTester(v.render, 480, 760)
+	for range 5 {
+		tt.Frame()
+	}
+	if len(heights) == 0 || !tt.HasText(translation) {
+		t.Fatalf("expanded result did not settle: heights=%v", heights)
+	}
+	expanded := heights[len(heights)-1]
+	beforeCollapse := len(heights)
+	if err := tt.Click("折叠 Google"); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		tt.Frame()
+	}
+	collapsed := heights[len(heights)-1]
+	if tt.HasText(translation) {
+		t.Error("collapsed translation remained visible")
+	}
+	if len(heights) <= beforeCollapse || collapsed >= expanded {
+		t.Errorf("collapse height callbacks = %v, want final height below %v", heights, expanded)
+	}
+	beforeExpand := len(heights)
+	if err := tt.Click("折叠 Google"); err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		tt.Frame()
+	}
+	if !tt.HasText(translation) {
+		t.Error("expanded translation did not return")
+	}
+	if len(heights) <= beforeExpand || heights[len(heights)-1] != expanded {
+		t.Errorf("expand height callbacks = %v, want final height restored to %v", heights, expanded)
+	}
+}
+
+func TestBubbleViewHeightLimitChangeReportsUnchangedContent(t *testing.T) {
+	var heights []float64
+	limit := float64(760)
+	applied := 240
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		onHeightMeasured: func(h float64) {
+			heights = append(heights, h)
+			applied = bubbleLayoutHeight(h, limit, 1)
+		},
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "sess-limit", ShowID: 1, LayoutID: 1,
+		ReqID: "req-limit", Trigger: "selection", Text: "hello", Settings: cfg,
+	}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "req-limit", Services: []string{"google"}})
+	translation := strings.Repeat("translation line\n", 80)
+	v.applyResult(TranslationUpdateMsg{ReqID: "req-limit", Service: "google", Text: translation})
+	tt := ui.NewTester(v.render, 480, 760)
+	for range 5 {
+		tt.Frame()
+	}
+	if len(heights) == 0 || heights[len(heights)-1] <= 760 || applied != 760 {
+		t.Fatalf("long translation setup: heights=%v applied=%d, want intrinsic above 760 and applied 760", heights, applied)
+	}
+	// Keep the viewport and content unchanged so only the window's height limit changes.
+	for _, nextLimit := range []float64{400, 760} {
+		before := len(heights)
+		limit = nextLimit
+		v.setMaxHeight(limit)
+		for range 5 {
+			tt.Frame()
+		}
+		if len(heights) <= before {
+			t.Errorf("limit %v did not trigger a height callback: %v", limit, heights)
+		}
+		if applied != int(limit) {
+			t.Errorf("limit %v applied height = %d, want %d", limit, applied, int(limit))
+		}
+		if !tt.HasText(translation) {
+			t.Errorf("limit %v removed the translation", limit)
+		}
 	}
 }
 

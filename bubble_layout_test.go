@@ -131,6 +131,85 @@ func TestBubblePlacementKeepsLiveAnchorDisplayDuringGrowth(t *testing.T) {
 	}
 }
 
+func TestBubblePositionDistinguishesManualMoves(t *testing.T) {
+	primary := mygo.Display{ID: 1, WorkArea: mygo.Rectangle{Width: 1920, Height: 1040}, ScaleFactor: 1}
+	secondary := mygo.Display{ID: 2, WorkArea: mygo.Rectangle{X: 1920, Width: 1280, Height: 680}, ScaleFactor: 1.5}
+	displays := []mygo.Display{primary, secondary}
+	start := mygo.Rectangle{X: 116, Y: 116, Width: 480, Height: 240}
+	for _, tt := range []struct {
+		name     string
+		bounds   mygo.Rectangle
+		displays []mygo.Display
+		want     bool
+	}{
+		{"duplicate or delayed move event", start, displays, false},
+		{"content resize only", mygo.Rectangle{X: 116, Y: 116, Width: 480, Height: 760}, displays, false},
+		{"manual move on same display", mygo.Rectangle{X: 600, Y: 300, Width: 480, Height: 240}, displays, true},
+		{"manual move across displays and DPI", mygo.Rectangle{X: 2100, Y: 200, Width: 480, Height: 240}, displays, true},
+		{"display enumeration order changes", mygo.Rectangle{X: 600, Y: 300, Width: 480, Height: 240}, []mygo.Display{secondary, primary}, true},
+		{"display removed relocates window", mygo.Rectangle{X: 600, Y: 300, Width: 480, Height: 240}, []mygo.Display{primary}, false},
+		{"work area changes relocate window", mygo.Rectangle{X: 600, Y: 300, Width: 480, Height: 240}, []mygo.Display{{ID: 1, WorkArea: mygo.Rectangle{Width: 1920, Height: 680}, ScaleFactor: 1}, secondary}, false},
+		{"DPI configuration changes relocate window", mygo.Rectangle{X: 600, Y: 300, Width: 480, Height: 240}, []mygo.Display{{ID: 1, WorkArea: primary.WorkArea, ScaleFactor: 1.25}, secondary}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var p bubblePosition
+			p.remember(start, displays)
+			if got := p.moved(tt.bounds, tt.displays); got != tt.want {
+				t.Fatalf("manual move = %t; want %t", got, tt.want)
+			}
+			if p.moved(tt.bounds, tt.displays) {
+				t.Fatal("duplicate notification was treated as another manual move")
+			}
+		})
+	}
+}
+
+func TestBubblePositionProgrammaticMovesDoNotConsumeNextDrag(t *testing.T) {
+	displays := []mygo.Display{{ID: 1, WorkArea: mygo.Rectangle{Width: 1920, Height: 1040}}}
+	var p bubblePosition
+	initial := mygo.Rectangle{X: 116, Y: 116, Width: 480, Height: 240}
+	if p.moved(initial, displays) {
+		t.Fatal("first observation was treated as a manual move")
+	}
+	// position and reflow record actual native bounds before callbacks arrive.
+	positioned := mygo.Rectangle{X: 900, Y: 500, Width: 480, Height: 240}
+	p.remember(positioned, displays)
+	if p.moved(positioned, displays) {
+		t.Fatal("delayed positioning event discarded the anchor")
+	}
+	reflowed := mygo.Rectangle{X: 900, Y: 200, Width: 480, Height: 760}
+	p.remember(reflowed, displays)
+	if p.moved(reflowed, displays) {
+		t.Fatal("delayed reflow event discarded the anchor")
+	}
+	// No event-count suppression: even if an old native event arrives first,
+	// its callback reads the current geometry and must notice the user's drag.
+	dragged := mygo.Rectangle{X: 600, Y: 100, Width: 480, Height: 760}
+	if !p.moved(dragged, displays) {
+		t.Fatal("pending programmatic event swallowed the next manual move")
+	}
+}
+
+func TestBubbleManualPositionSurvivesContentHeightChanges(t *testing.T) {
+	work := mygo.Rectangle{X: 1920, Width: 1280, Height: 680}
+	x, y := 2100, 200
+	for _, height := range []int{240, 160, 400, 160} {
+		x, y = clampBubblePosition(work, x, y, 480, height)
+		if x != 2100 || y != 200 {
+			t.Fatalf("height %d moved manual position to %d,%d", height, x, y)
+		}
+	}
+	// Growth may clamp to the current monitor, never back to the old anchor.
+	height := bubbleHeightLimit(work)
+	x, y = clampBubblePosition(work, x, y, 480, height)
+	if x != 2100 || y != bubbleMargin || height != 656 {
+		t.Fatalf("monitor-constrained position = %d,%d height %d", x, y, height)
+	}
+	if nextX, nextY := clampBubblePosition(work, x, y, 480, 160); nextX != x || nextY != y {
+		t.Fatal("folding restored an old anchor after clamped growth")
+	}
+}
+
 func TestBubbleMeasuredHeightUsesZoomAndWorkArea(t *testing.T) {
 	for _, tt := range []struct {
 		name                string

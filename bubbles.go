@@ -78,8 +78,9 @@ type bubble struct {
 	// offWindowLeave belongs to the main thread, like the window it watches.
 	offWindowLeave func()
 
-	// Placement and its reentrancy guard belong to the main thread.
+	// Placement, observed geometry and its reentrancy guard belong to the main thread.
 	placement       *bubblePlacement
+	positionState   bubblePosition
 	adjustingLayout bool
 	maxHeight       float64 // CSS pixels; guarded by the manager mutex
 }
@@ -179,7 +180,7 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		m.mu.Lock()
 		b.appliedHeight = initialH
 		m.mu.Unlock()
-		b.win.SetContentSize(480, initialH)
+		b.setContentSize(480, initialH)
 		m.position(b, trigger, anchor)
 		m.reflow(b, true)
 		m.mu.Lock()
@@ -582,7 +583,7 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 			b.appliedHeight = targetH
 			m.mu.Unlock()
 			m.reflow(b, false)
-			b.win.SetContentSize(480, targetH)
+			b.setContentSize(480, targetH)
 			m.reflow(b, true)
 		},
 	})
@@ -679,7 +680,7 @@ func (m *bubbleManager) position(b *bubble, trigger string, anchor *Anchor) {
 	placement := newBubblePlacement(display, point, trigger == "input", width)
 	b.placement = &placement
 	x, y := placement.position(width, height)
-	b.win.SetPosition(x, y)
+	b.setPosition(x, y)
 }
 
 func (m *bubbleManager) hideTransient() {
