@@ -34,7 +34,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
 - Selection via UIA with a clipboard fallback; OCR via PP-OCR with Windows.Media.Ocr fallback.
 - Screenshot selection uses a native overlay per display over the live desktop. A light translucent veil indicates selection mode; dragging adds a selection border, a light translucent blue fill and a DIP size badge. Unused overlays are reused; an overlay that has begun a selection is replaced before its next appearance to avoid flashing the previous selection. Dragging stays on one display; Esc, right-click or lost pointer capture cancels. The overlay hides before GDI captures its local DIP rectangle; selecting a region does not freeze the desktop or preload OCR.
-- Each OCR engine releases its sessions or system worker after 5 minutes idle and reloads on demand. The shared ONNX runtime stays loaded; OCR and fallback remain serialized through one admission gate.
+- PP-OCR releases its sessions after 5 minutes idle. Windows OCR stops its worker after 30 seconds idle. Both reload on demand. The shared ONNX runtime stays loaded, and OCR and fallback share one admission gate.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.
 - Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, mygo-only desktop APIs, whitelisted dependencies.
