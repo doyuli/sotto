@@ -94,7 +94,7 @@ type idleFixture struct {
 
 func newIdleFixture() *idleFixture {
 	f := &idleFixture{clock: &fakeIdleClock{now: time.Unix(100, 0)}}
-	timeouts, _ := parseIdleTimeouts("")
+	timeouts := idleTimeouts{localOCR: defaultLocalIdleTimeout, systemOCR: defaultSystemIdleTimeout}
 	f.coordinator = newIdleCoordinator(make(chan struct{}, 1), f.clock, timeouts, func(id int) (bool, error) {
 		f.closed[id]++
 		f.resources[id] = false
@@ -370,20 +370,26 @@ func TestIdleInitializationFailureAndCanceledAttempt(t *testing.T) {
 }
 
 func TestIdleTimeoutConfiguration(t *testing.T) {
-	defaults := idleTimeouts{localOCR: 5 * time.Minute, systemOCR: 30 * time.Second}
-	if got, err := parseIdleTimeouts(""); err != nil || got != defaults {
-		t.Fatalf("default timeouts: %v, %v", got, err)
-	}
-	for _, value := range []string{"0", "-1s", "bad", "1e100h"} {
-		if got, err := parseIdleTimeouts(value); err == nil || got != defaults {
-			t.Fatalf("invalid override %q: %v, %v", value, got, err)
-		}
-	}
-	for value, duration := range map[string]time.Duration{"2s": 2 * time.Second, "1m30s": 90 * time.Second} {
-		want := idleTimeouts{localOCR: duration, systemOCR: duration}
-		if got, err := parseIdleTimeouts(value); err != nil || got != want {
-			t.Fatalf("override %q: %v, %v", value, got, err)
-		}
+	for _, tc := range []struct {
+		name         string
+		local, winrt string
+		want         idleTimeouts
+	}{
+		{"defaults", "", "", idleTimeouts{5 * time.Minute, 30 * time.Second}},
+		{"local override only", "2s", "", idleTimeouts{2 * time.Second, 30 * time.Second}},
+		{"Windows override only", "", "1m30s", idleTimeouts{5 * time.Minute, 90 * time.Second}},
+		{"both overrides", "2s", "1m30s", idleTimeouts{2 * time.Second, 90 * time.Second}},
+		{"invalid local override", "bad", "1m30s", idleTimeouts{5 * time.Minute, 90 * time.Second}},
+		{"invalid Windows override", "2s", "bad", idleTimeouts{2 * time.Second, 30 * time.Second}},
+		{"nonpositive overrides", "0", "-1s", idleTimeouts{5 * time.Minute, 30 * time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SOTTO_OCR_IDLE", tc.local)
+			t.Setenv("SOTTO_OCR_WINRT_IDLE", tc.winrt)
+			if got := configuredIdleTimeouts(); got != tc.want {
+				t.Fatalf("idle timeouts = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

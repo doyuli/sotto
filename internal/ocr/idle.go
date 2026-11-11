@@ -1,7 +1,6 @@
 package ocr
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -205,25 +204,26 @@ func (c *idleCoordinator) expire(generation uint64) {
 	c.mu.Unlock()
 }
 
-func parseIdleTimeouts(value string) (idleTimeouts, error) {
-	defaults := idleTimeouts{localOCR: defaultLocalIdleTimeout, systemOCR: defaultSystemIdleTimeout}
+func configuredIdleTimeouts() idleTimeouts {
+	return idleTimeouts{
+		localOCR:  configuredIdleTimeout("SOTTO_OCR_IDLE", defaultLocalIdleTimeout),
+		systemOCR: configuredIdleTimeout("SOTTO_OCR_WINRT_IDLE", defaultSystemIdleTimeout),
+	}
+}
+
+func configuredIdleTimeout(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
 	if value == "" {
-		return defaults, nil
+		return fallback
 	}
 	d, err := time.ParseDuration(value)
 	if err != nil {
-		return defaults, fmt.Errorf("ocr: SOTTO_OCR_IDLE: %w", err)
+		log.Printf("ocr: %s: %v; using %s", name, err, fallback)
+		return fallback
 	}
 	if d <= 0 {
-		return defaults, fmt.Errorf("ocr: SOTTO_OCR_IDLE must be positive")
+		log.Printf("ocr: %s must be positive; using %s", name, fallback)
+		return fallback
 	}
-	return idleTimeouts{localOCR: d, systemOCR: d}, nil
-}
-
-func configuredIdleTimeouts() idleTimeouts {
-	timeouts, err := parseIdleTimeouts(os.Getenv("SOTTO_OCR_IDLE"))
-	if err != nil {
-		log.Printf("%v; using %s for PP-OCR and %s for Windows OCR", err, timeouts[localOCR], timeouts[systemOCR])
-	}
-	return timeouts
+	return d
 }

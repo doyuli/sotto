@@ -46,7 +46,7 @@ PP-OCR has a 5-minute idle deadline, and Windows OCR has a 30-second idle deadli
 
 When idle, Sotto closes both local model sessions, drops the recognizer and dictionary references, and terminates and waits for an idle PowerShell worker. The next request initializes the resources it needs again; failed initialization is not cached. ONNX Runtime's successful DLL, environment and shared memory-info initialization remain loaded for the process lifetime. Idle cleanup does not unload the runtime, release the screenshot/bubble WebViews, force a GC or call `FreeOSMemory`. It targets retained OCR resources, not peak inference memory or a guaranteed return to the pre-OCR baseline.
 
-`SOTTO_OCR_IDLE` applies the same positive duration to both engines. Sotto reads it once at process startup. Values such as `5s` and `1m30s` support diagnostic runs. Invalid values produce one diagnostic and restore each engine's default. Use both default deadlines for at least one acceptance run. An `init` stage on the next OCR summary indicates reconstruction after idle release.
+Set `SOTTO_OCR_IDLE` for PP-OCR or `SOTTO_OCR_WINRT_IDLE` for Windows OCR. Sotto reads both variables at startup. Each accepts positive durations such as `5s` and `1m30s`. An empty value uses that engine's default. An invalid value logs a diagnostic and uses the same default. Use both default deadlines for at least one acceptance run. An `init` stage on the next OCR summary indicates reconstruction after idle release.
 
 ## Diagnostics
 
