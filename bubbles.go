@@ -18,6 +18,7 @@ import (
 )
 
 type bubbleActions struct {
+	speak        func(text, lang string, onError func(error))
 	run          func(win *mygo.Window, req RunReq)
 	settings     func() config.Settings
 	startOCR     func()
@@ -565,6 +566,16 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 				return fmt.Errorf("复制失败: %w", err)
 			}
 			return nil
+		},
+		speakText: func(text, lang string, onError func()) {
+			if m.actions.speak == nil {
+				onError()
+				return
+			}
+			m.actions.speak(text, lang, func(err error) {
+				log.Printf("speech: %v", err)
+				b.win.Update(onError)
+			})
 		},
 		onHeightMeasured: func(height float64) {
 			m.mu.Lock()

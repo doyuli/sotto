@@ -23,6 +23,7 @@ import (
 	"sotto/internal/langdetect"
 	"sotto/internal/naming"
 	"sotto/internal/selection"
+	"sotto/internal/speech"
 	"sotto/internal/translate"
 )
 
@@ -112,8 +113,11 @@ func (a *application) ready() {
 		a.mu.Unlock()
 		a.entry.cancel()
 	})
+	speaker := speech.New()
+	mygo.App.OnQuit(speaker.Close)
 	a.bubbles = newBubbleManager(a.isQuitting)
 	a.bubbles.actions = bubbleActions{
+		speak:        speaker.Speak,
 		run:          a.runTranslation,
 		settings:     a.settings,
 		startOCR:     func() { a.startEntry("ocr") },

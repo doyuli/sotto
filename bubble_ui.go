@@ -20,6 +20,7 @@ var (
 	closeSVG       = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	swapSVG        = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m16 3 4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	copySVG        = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	speakSVG       = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`))
 	chevronDownSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	chevronLeftSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
@@ -203,6 +204,7 @@ type bubbleViewActions struct {
 	restoreClipboard func(id string) error
 	discardClipboard func(id string)
 	copyText         func(c *ui.Context, text string) error
+	speakText        func(text, lang string, onError func()) // onError runs on the UI thread
 	onHeightMeasured func(height float64)
 }
 
@@ -259,6 +261,9 @@ type bubbleView struct {
 	measuredVersion   uint64
 	lastMeasuredH     float64
 	lastMeasuredLimit float64
+
+	speechAttempt uint64
+	speechError   bool
 
 	actions bubbleViewActions
 }
@@ -740,7 +745,49 @@ func (v *bubbleView) copyAndToast(c *ui.Context, text string, toast string) {
 	c.Toast(toast)
 }
 
+func (v *bubbleView) speak(text, lang string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	v.speechAttempt++
+	v.speechError = false
+	attempt, session, show := v.speechAttempt, v.sessionID, v.showID
+	if v.actions.speakText == nil {
+		v.speechError = true
+		return
+	}
+	v.actions.speakText(text, lang, func() {
+		if v.speechAttempt == attempt && v.sessionID == session && v.showID == show {
+			v.speechError = true
+		}
+	})
+}
+
+func (v *bubbleView) renderSpeakButton(c *ui.Context, p bubblePalette, label, tip, text, lang string, ready bool, size float32) {
+	btn := ui.ButtonBase(c).Label(label).Tooltip(tip).Disabled(!ready).
+		Cursor(ui.CursorPointer).Size(24, 24).Radius(6).Center()
+	if ready && btn.Hovered() {
+		btn.Background(p.hover)
+	}
+	if btn.Clicked() {
+		v.speak(text, lang)
+	}
+	btn.Children(func() {
+		color := p.icon
+		if !ready {
+			color = p.icon.Alpha(0.45)
+		} else if btn.Hovered() {
+			color = p.iconStrong
+		}
+		ui.Icon(c, speakSVG).Size(size, size).TextColor(color)
+	})
+}
+
 func (v *bubbleView) render(c *ui.Context) {
+	if v.speechError {
+		v.speechError = false
+		c.Toast("朗读不可用")
+	}
 	p := paletteForTheme(c.Theme())
 	c.SetTheme(p.theme)
 
@@ -1011,6 +1058,11 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 		if hasText || detected != "" || (v.composerText != "" && !v.isRecognizing()) {
 			ui.Row(c).MinHeight(26).AlignItems(ui.Center).Gap(4).Children(func() {
 				if hasText {
+					lang := v.detected
+					if lang == "" {
+						lang = v.sourceLang
+					}
+					v.renderSpeakButton(c.Key("speak"), p, "朗读输入", "朗读输入", strings.TrimSpace(v.composerText), lang, true, 15)
 					copyBtn := ui.ButtonBase(c).
 						Label("复制原文").
 						Tooltip("复制原文").
@@ -1302,6 +1354,12 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 							}
 						}
 					}
+
+					speakTip := "译文完成后可朗读"
+					if ready {
+						speakTip = "朗读"
+					}
+					v.renderSpeakButton(c.Key("speak"), p, "朗读 "+title, speakTip, card.Text, v.targetLang, ready, 14)
 
 					copyTip := "译文完成后可复制"
 					if ready {
