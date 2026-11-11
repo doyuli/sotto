@@ -7,7 +7,6 @@ import (
 	"log"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
@@ -68,13 +67,9 @@ type bubble struct {
 	canShow                func() bool
 	// trigger and text of the last query, for a page that mounts late.
 	trigger, text string
-	// Showing requires both native page readiness and the current content layout.
+	// Native readiness gates first presentation; the view owns content measurement.
 	ready             bool
-	awaitingLayout    bool
 	presentationShown bool
-	layoutWaitLogged  bool
-	layoutID          int64
-	layoutSequence    int64
 	offBlur           func() // unregisters focus hiding; Pin calls it
 	// offWindowLeave belongs to the main thread, like the window it watches.
 	offWindowLeave func()
@@ -83,7 +78,7 @@ type bubble struct {
 	placement       *bubblePlacement
 	positionState   bubblePosition
 	adjustingLayout bool
-	maxHeight       float64 // CSS pixels; guarded by the manager mutex
+	maxHeight       float64 // native logical units; guarded by the manager mutex
 }
 
 // Anchor is a DIP screen point to open a bubble beside — a selection's
@@ -139,7 +134,7 @@ func (m *bubbleManager) focusVisibleInput() bool {
 // refocusInput preserves content and first-show state while revoking callbacks
 // from the previous presentation. Entry ownership is checked separately.
 func (b *bubble) refocusInput(visible bool) bool {
-	if !visible || b.trigger != "input" || b.pinned || b.closeClaimed || !b.presentationShown || b.awaitingLayout {
+	if !visible || b.trigger != "input" || b.pinned || b.closeClaimed || !b.presentationShown {
 		return false
 	}
 	b.showID++
@@ -172,7 +167,7 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		b.present()
 		b.canShow = valid
 		m.mu.Unlock()
-		// Reset and measure before presenting the reused window.
+		// Reset geometry and native view state before presenting the reused window.
 		b.win.Hide()
 		initialH := 200
 		if text != "" {
@@ -194,28 +189,8 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		}
 		shown = Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
 		m.showWin(b)
-		if view == nil {
-			m.watchLayout(b, state.SessionID, state.ShowID)
-		}
 	})
 	return shown
-}
-
-// A timeout diagnoses missing acknowledgements without exposing a reused page's
-// old DOM. The page owns bounded retries; only a current layout may release show.
-func (m *bubbleManager) watchLayout(b *bubble, session string, showID int64) {
-	time.AfterFunc(400*time.Millisecond, func() {
-		mygo.RunOnMain(func() {
-			m.mu.Lock()
-			valid := b.canShow
-			waiting := m.byID[b.id] == b && b.sessionID == session && b.showID == showID && !b.closeClaimed && !b.presentationShown && b.awaitingLayout
-			ready, layoutID, sequence := b.ready, b.layoutID, b.layoutSequence
-			m.mu.Unlock()
-			if waiting && (valid == nil || valid()) {
-				log.Printf("bubble: layout timeout id=%d show=%d layout=%d sequence=%d ready=%t", b.id, showID, layoutID, sequence, ready)
-			}
-		})
-	})
 }
 
 // stopWork is called under mu. Cancel functions never wait for UI work.
@@ -422,8 +397,6 @@ func (m *bubbleManager) applySettings(s config.Settings) {
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	return BubbleState{
 		ID:                  b.id,
-		LayoutID:            b.layoutID,
-		LayoutSequence:      b.layoutSequence,
 		MaxHeight:           b.maxHeight,
 		ShowID:              b.showID,
 		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
@@ -438,8 +411,8 @@ func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
 	}
 }
 
-// showWin runs on the UI thread. Native readiness alone says nothing about
-// whether a reused page has rendered its replacement session.
+// showWin runs on the UI thread after applying the current native view state.
+// Entry ownership is rechecked when native readiness delays first presentation.
 func (m *bubbleManager) showWin(b *bubble) {
 	m.mu.Lock()
 	valid := b.canShow
@@ -449,15 +422,7 @@ func (m *bubbleManager) showWin(b *bubble) {
 	}
 	m.mu.Lock()
 	show := b.claimShow()
-	waiting := !show && b.awaitingLayout && !b.closeClaimed && !b.presentationShown && b.showID != 0 && !b.layoutWaitLogged
-	if waiting {
-		b.layoutWaitLogged = true
-	}
-	ready, showID, layoutID, sequence := b.ready, b.showID, b.layoutID, b.layoutSequence
 	m.mu.Unlock()
-	if waiting {
-		log.Printf("bubble: show waiting for layout id=%d show=%d layout=%d sequence=%d ready=%t", b.id, showID, layoutID, sequence, ready)
-	}
 	if !show {
 		return
 	}
@@ -469,7 +434,7 @@ func (m *bubbleManager) showWin(b *bubble) {
 // claimShow commits each first presentation once under mu. Further content
 // measurements resize hidden windows without reopening a dismissed bubble.
 func (b *bubble) claimShow() bool {
-	if !b.ready || b.awaitingLayout || b.closeClaimed || b.showID == 0 || b.presentationShown {
+	if !b.ready || b.closeClaimed || b.showID == 0 || b.presentationShown {
 		return false
 	}
 	b.presentationShown = true
@@ -533,7 +498,8 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 	b.view = newBubbleView(id, cfg, bubbleViewActions{
 		run: func(req RunReq) {
 			if m.actions.run != nil && b.win != nil {
-				m.actions.run(b.win, req)
+				// Source preparation and credential lookup must not hold a UI build.
+				go m.actions.run(b.win, req)
 			}
 		},
 		cancel: func(sessionID string, revision int64) {
@@ -559,8 +525,18 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 				m.actions.openSettings()
 			}
 		},
-		restoreClipboard: recoverClipboard,
-		discardClipboard: selection.DiscardClipboardRecovery,
+		restoreClipboard: func(id string, done func(error)) {
+			go func() {
+				err := recoverClipboard(id)
+				b.win.Update(func() { done(err) })
+			}()
+		},
+		discardClipboard: func(id string, done func()) {
+			go func() {
+				selection.DiscardClipboardRecovery(id)
+				b.win.Update(done)
+			}()
+		},
 		copyText: func(_ *ui.Context, text string) error {
 			if err := mygo.Clipboard.Write(transfer.TextData(text)); err != nil {
 				return fmt.Errorf("复制失败: %w", err)
@@ -586,7 +562,7 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 			if closed {
 				return
 			}
-			targetH := bubbleLayoutHeight(height, limit, 1)
+			targetH := bubbleLayoutHeight(height, limit)
 			if targetH == prevH {
 				return
 			}

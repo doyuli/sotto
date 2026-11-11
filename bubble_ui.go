@@ -195,14 +195,15 @@ func bubbleChipTag(style string) string {
 // bubbleViewActions wires native bubble UI events back into the manager and OS
 // integration hooks. Keeping callbacks explicit allows headless ui.NewTester tests.
 type bubbleViewActions struct {
-	run              func(req RunReq)
-	cancel           func(sessionID string, revision int64)
-	setPinned        func(sessionID string, showID int64, pinned bool) bool
-	close            func(sessionID string, showID, revision int64) bool
-	startOCR         func()
-	openSettings     func()
-	restoreClipboard func(id string) error
-	discardClipboard func(id string)
+	run          func(req RunReq)
+	cancel       func(sessionID string, revision int64)
+	setPinned    func(sessionID string, showID int64, pinned bool) bool
+	close        func(sessionID string, showID, revision int64) bool
+	startOCR     func()
+	openSettings func()
+	// Completion callbacks run on the UI thread after background clipboard work.
+	restoreClipboard func(id string, done func(error))
+	discardClipboard func(id string, done func())
 	copyText         func(c *ui.Context, text string) error
 	speakText        func(text, lang string, onError func()) // onError runs on the UI thread
 	onHeightMeasured func(height float64)
@@ -221,7 +222,6 @@ type bubbleView struct {
 	generation          int64
 	sessionID           string
 	showID              int64
-	layoutID            int64
 	stateRevision       int64
 	revision            int64
 	reqID               string
@@ -262,8 +262,11 @@ type bubbleView struct {
 	lastMeasuredH     float64
 	lastMeasuredLimit float64
 
-	speechAttempt uint64
-	speechError   bool
+	speechAttempt    uint64
+	speechError      bool
+	clipboardAttempt uint64
+	clipboardBusy    bool
+	clipboardToast   string
 
 	actions bubbleViewActions
 }
@@ -284,13 +287,18 @@ func newBubbleView(id int64, cfg config.Settings, actions bubbleViewActions) *bu
 
 func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	if v.sessionID != "" && (st.Generation < v.generation ||
-		(st.SessionID == v.sessionID && (st.Revision < v.stateRevision || st.ShowID < v.showID || st.LayoutID < v.layoutID))) {
+		(st.SessionID == v.sessionID && (st.Revision < v.stateRevision || st.ShowID < v.showID))) {
 		return
 	}
+	if st.SessionID != v.sessionID || st.ShowID != v.showID {
+		v.collapsed = make(map[string]bool)
+	}
+	v.clipboardBusy = false
+	v.clipboardToast = ""
+	v.clipboardAttempt++
 	v.generation = st.Generation
 	v.sessionID = st.SessionID
 	v.showID = st.ShowID
-	v.layoutID = st.LayoutID
 	v.stateRevision = st.Revision
 	if st.MaxHeight > 0 {
 		v.maxHeight = st.MaxHeight
@@ -353,7 +361,14 @@ func (v *bubbleView) onPresented(msg BubblePresentedMsg) {
 	if msg.SessionID != v.sessionID || msg.ShowID < v.showID {
 		return
 	}
-	v.clipboardRecoveryID = msg.ClipboardRecoveryID
+	if msg.ShowID != v.showID {
+		v.collapsed = make(map[string]bool)
+	}
+	// Refocusing preserves the current session's operation, including when the
+	// worker cleared global recovery before its completion reached the UI.
+	if !v.clipboardBusy {
+		v.clipboardRecoveryID = msg.ClipboardRecoveryID
+	}
 	v.showID = msg.ShowID
 	if msg.Revision > v.revision {
 		v.stopRenderedRun(msg.Revision)
@@ -368,6 +383,9 @@ func (v *bubbleView) onStopped(msg RunStoppedMsg) {
 	if msg.SessionID != v.sessionID {
 		return
 	}
+	v.clipboardAttempt++
+	v.clipboardBusy = false
+	v.clipboardToast = ""
 	if msg.ShowID > v.showID {
 		v.showID = msg.ShowID
 	}
@@ -574,20 +592,7 @@ func (v *bubbleView) startRun(text string, service string) {
 		return
 	}
 	if trimmed == "" {
-		if v.actions.cancel != nil {
-			v.revision++
-			v.actions.cancel(v.sessionID, v.revision)
-		}
-		v.reqID = ""
-		v.retryService = ""
-		v.runServices = nil
-		v.cards = make(map[string]*bubbleCard)
-		v.serviceReqIDs = make(map[string]string)
-		v.submittedText = ""
-		v.detected = ""
-		v.phase = ""
-		v.message = ""
-		v.bumpContent()
+		v.clearRun()
 		return
 	}
 	// A retry after editing is a new full run; every card must match the draft.
@@ -605,6 +610,7 @@ func (v *bubbleView) startRun(text string, service string) {
 	if service == "" {
 		v.retryService = ""
 		v.submittedText = text
+		v.pendingScrollTop = true
 		v.runServices = nil
 		v.detected = ""
 		v.cards = make(map[string]*bubbleCard)
@@ -647,19 +653,28 @@ func (v *bubbleView) submitComposer(text string) {
 func (v *bubbleView) clearComposer(c *ui.Context) {
 	v.composerText = ""
 	v.lastComposer = ""
-	if v.actions.cancel != nil && v.sessionID != "" {
+	v.clearRun()
+	v.composerHandle.Focus(c)
+}
+
+func (v *bubbleView) clearRun() {
+	if v.sessionID != "" {
 		v.revision++
-		v.actions.cancel(v.sessionID, v.revision)
+		v.stateRevision = v.revision
+		if v.actions.cancel != nil {
+			v.actions.cancel(v.sessionID, v.revision)
+		}
 	}
 	v.reqID = ""
 	v.retryService = ""
+	v.runServices = nil
 	v.cards = make(map[string]*bubbleCard)
 	v.serviceReqIDs = make(map[string]string)
 	v.submittedText = ""
 	v.detected = ""
 	v.phase = ""
 	v.message = ""
-	v.composerHandle.Focus(c)
+	v.pendingScrollTop = true
 	v.bumpContent()
 }
 
@@ -783,7 +798,44 @@ func (v *bubbleView) renderSpeakButton(c *ui.Context, p bubblePalette, label, ti
 	})
 }
 
+// resolveClipboard starts OS work through the adapter; completion is marshaled
+// back to the UI thread. Refocusing keeps ownership; resets and closure revoke it.
+func (v *bubbleView) resolveClipboard(discard bool) {
+	if v.clipboardBusy || v.clipboardRecoveryID == "" ||
+		(discard && v.actions.discardClipboard == nil) || (!discard && v.actions.restoreClipboard == nil) {
+		return
+	}
+	v.clipboardBusy = true
+	v.clipboardAttempt++
+	attempt, session, id := v.clipboardAttempt, v.sessionID, v.clipboardRecoveryID
+	done := func(err error) {
+		if v.clipboardAttempt != attempt || v.sessionID != session || v.clipboardRecoveryID != id {
+			return
+		}
+		v.clipboardBusy = false
+		if err != nil {
+			v.clipboardToast = err.Error()
+		} else {
+			v.clipboardRecoveryID = ""
+			if !discard {
+				v.clipboardToast = "已恢复剪贴板内容"
+			}
+		}
+		v.bumpContent()
+	}
+	if discard {
+		v.actions.discardClipboard(id, func() { done(nil) })
+	} else {
+		v.actions.restoreClipboard(id, done)
+	}
+	v.bumpContent()
+}
+
 func (v *bubbleView) render(c *ui.Context) {
+	if v.clipboardToast != "" {
+		c.Toast(v.clipboardToast)
+		v.clipboardToast = ""
+	}
 	if v.speechError {
 		v.speechError = false
 		c.Toast("朗读不可用")
@@ -978,30 +1030,16 @@ func (v *bubbleView) renderBanners(c *ui.Context, p bubblePalette) {
 			}
 
 			if v.clipboardRecoveryID != "" {
-				id := v.clipboardRecoveryID
 				ui.Column(c).Padding(8, 10).Radius(10).Background(p.control).Gap(6).Children(func() {
 					ui.Text(c, "之前复制的内容尚未恢复，可重试或放弃后继续取词。").FontSize(12).TextColor(p.muted)
-					ui.Row(c).Gap(12).Children(func() {
-						v.renderLinkButton(c, p, "重试恢复剪贴板", func() {
-							if v.actions.restoreClipboard == nil {
-								return
-							}
-							if err := v.actions.restoreClipboard(id); err != nil {
-								c.Toast(err.Error())
-							} else {
-								v.clipboardRecoveryID = ""
-								v.bumpContent()
-								c.Toast("已恢复剪贴板内容")
-							}
+					if v.clipboardBusy {
+						ui.Text(c, "正在处理剪贴板…").FontSize(12).TextColor(p.muted)
+					} else {
+						ui.Row(c).Gap(12).Children(func() {
+							v.renderLinkButton(c, p, "重试恢复剪贴板", func() { v.resolveClipboard(false) })
+							v.renderLinkButton(c, p, "放弃恢复，继续取词", func() { v.resolveClipboard(true) })
 						})
-						v.renderLinkButton(c, p, "放弃恢复，继续取词", func() {
-							if v.actions.discardClipboard != nil {
-								v.actions.discardClipboard(id)
-							}
-							v.clipboardRecoveryID = ""
-							v.bumpContent()
-						})
-					})
+					}
 				})
 			}
 		})
@@ -1027,6 +1065,7 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 				KeepScrollbars(true).
 				Label("要翻译的原文").
 				Lines(2, 5).
+				MaxHeight(float32(min(112, v.maxHeight*0.18))).
 				Padding(2, 2, 4, 2).
 				Placeholder(placeholder).
 				PlaceholderColor(p.muted.Alpha(0.85)).

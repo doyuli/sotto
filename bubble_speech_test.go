@@ -10,7 +10,7 @@ func TestBubbleSpeechMatchesFormerActions(t *testing.T) {
 	cfg := testBubbleConfig()
 	var spoken [][2]string
 	v := newBubbleView(1, cfg, bubbleViewActions{speakText: func(text, lang string, _ func()) { spoken = append(spoken, [2]string{text, lang}) }})
-	v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "speech", ShowID: 1, LayoutID: 1, ReqID: "req", Trigger: "selection", Text: " hello ", SourceLang: "en", TargetLang: "zh-HANS", Settings: cfg}, false)
+	v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "speech", ShowID: 1, ReqID: "req", Trigger: "selection", Text: " hello ", SourceLang: "en", TargetLang: "zh-HANS", Settings: cfg}, false)
 	tt := ui.NewTester(v.render, 480, 700)
 	for i := 0; i < 2; i++ {
 		if err := tt.Click("朗读输入"); err != nil {

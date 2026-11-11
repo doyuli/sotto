@@ -16,7 +16,7 @@ func newBubbleScrollTester(t *testing.T, dark bool) (*bubbleView, *ui.Tester) {
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "scroll-test", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "scroll-test", ShowID: 1,
 		ReqID: "scroll-request", Trigger: "selection",
 		Text: strings.Repeat("source line\n", 40), Settings: cfg,
 	}, false)
@@ -127,7 +127,7 @@ func TestBubbleScrollInitialLongComposerNoHoverInk(t *testing.T) {
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "initial-scroll", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "initial-scroll", ShowID: 1,
 		Trigger: "selection", Text: strings.Repeat("source line\n", 40), Settings: cfg,
 	}, false)
 	tt := ui.NewTester(v.render, 480, 360)

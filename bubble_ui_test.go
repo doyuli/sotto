@@ -34,7 +34,6 @@ func TestBubbleViewComposerSubmitAndClear(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-1",
 		ShowID:     1,
-		LayoutID:   1,
 		Revision:   0,
 		Trigger:    "input",
 		SourceLang: "auto",
@@ -88,7 +87,6 @@ func TestBubbleViewStreamingErrorRetryAndNamingChips(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-1",
 		ShowID:     1,
-		LayoutID:   1,
 		Revision:   0,
 		ReqID:      "req-1",
 		Trigger:    "selection",
@@ -187,7 +185,6 @@ func TestBubbleViewLanguageMenuAndSwap(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-1",
 		ShowID:     1,
-		LayoutID:   1,
 		Revision:   0,
 		ReqID:      "req-1",
 		Trigger:    "selection",
@@ -241,8 +238,8 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 	v := newBubbleView(1, cfg, bubbleViewActions{
 		setPinned:        func(_ string, _ int64, pinned bool) bool { pinnedCalls = append(pinnedCalls, pinned); return true },
 		startOCR:         func() { startOCRCalled++ },
-		discardClipboard: func(id string) { discarded = append(discarded, id) },
-		restoreClipboard: func(string) error { return restoreErr },
+		discardClipboard: func(id string, done func()) { discarded = append(discarded, id); done() },
+		restoreClipboard: func(_ string, done func(error)) { done(restoreErr) },
 		close:            func(_ string, _, _ int64) bool { closed = true; return true },
 	})
 	v.applyState(BubbleState{
@@ -250,7 +247,6 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-ocr",
 		ShowID:     1,
-		LayoutID:   1,
 		Revision:   -1,
 		Trigger:    "ocr",
 		Phase:      "recognizing",
@@ -274,13 +270,12 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 		t.Fatal("cancel OCR did not close bubble")
 	}
 
-	// Simulate fresh OCR entry (Revision -1) transitioning to completeCapture (Revision -1, LayoutID 2).
+	// OCR completion replaces progress within the same presentation.
 	v.applyState(BubbleState{
 		ID:         1,
 		Generation: 2,
 		SessionID:  "sess-ocr-2",
 		ShowID:     2,
-		LayoutID:   1,
 		Revision:   -1,
 		Trigger:    "ocr",
 		Phase:      "recognizing",
@@ -291,7 +286,6 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 		Generation:          2,
 		SessionID:           "sess-ocr-2",
 		ShowID:              2,
-		LayoutID:            2,
 		Revision:            -1,
 		Trigger:             "ocr",
 		Text:                "recognized",
@@ -348,7 +342,7 @@ func TestBubbleViewComposerFocusAcrossDirtyBanner(t *testing.T) {
 		run: func(req RunReq) { runs = append(runs, req) },
 	})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "sess-focus", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "sess-focus", ShowID: 1,
 		ReqID: "req-focus", Trigger: "selection", Text: "hello",
 		SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
 	}, false)
@@ -408,7 +402,7 @@ func TestBubbleViewRetryUsesCurrentComposer(t *testing.T) {
 				run: func(req RunReq) { runs = append(runs, req) },
 			})
 			v.applyState(BubbleState{
-				ID: 1, Generation: 1, SessionID: "sess-retry", ShowID: 1, LayoutID: 1,
+				ID: 1, Generation: 1, SessionID: "sess-retry", ShowID: 1,
 				ReqID: "req-retry", Trigger: "selection", Text: "A",
 				SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
 			}, false)
@@ -457,7 +451,7 @@ func TestBubbleViewKeyboardEmptyCancelsAndRejectsLateResult(t *testing.T) {
 		},
 	})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "sess-empty", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "sess-empty", ShowID: 1,
 		ReqID: "req-empty", Trigger: "input", Text: "hello",
 		SourceLang: "auto", TargetLang: "zh-HANS", Settings: cfg,
 	}, true)
@@ -502,7 +496,7 @@ func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
 		onHeightMeasured: func(h float64) { heights = append(heights, h) },
 	})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "sess-collapse", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "sess-collapse", ShowID: 1,
 		ReqID: "req-collapse", Trigger: "selection", Text: "hello", Settings: cfg,
 	}, false)
 	v.applyMeta(RunMetaMsg{ReqID: "req-collapse", Services: []string{"google"}})
@@ -553,11 +547,11 @@ func TestBubbleViewHeightLimitChangeReportsUnchangedContent(t *testing.T) {
 	v := newBubbleView(1, cfg, bubbleViewActions{
 		onHeightMeasured: func(h float64) {
 			heights = append(heights, h)
-			applied = bubbleLayoutHeight(h, limit, 1)
+			applied = bubbleLayoutHeight(h, limit)
 		},
 	})
 	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "sess-limit", ShowID: 1, LayoutID: 1,
+		ID: 1, Generation: 1, SessionID: "sess-limit", ShowID: 1,
 		ReqID: "req-limit", Trigger: "selection", Text: "hello", Settings: cfg,
 	}, false)
 	v.applyMeta(RunMetaMsg{ReqID: "req-limit", Services: []string{"google"}})
@@ -601,7 +595,6 @@ func TestBubbleViewHeightMeasurementSettled(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-h",
 		ShowID:     1,
-		LayoutID:   1,
 		ReqID:      "req-h",
 		Trigger:    "selection",
 		Text:       strings.Repeat("word ", 20),
@@ -628,7 +621,6 @@ func TestBubbleViewLightDarkThemeFollow(t *testing.T) {
 		Generation: 1,
 		SessionID:  "sess-theme",
 		ShowID:     1,
-		LayoutID:   1,
 		Trigger:    "input",
 		Settings:   cfg,
 	}, true)

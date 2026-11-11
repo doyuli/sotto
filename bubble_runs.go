@@ -14,9 +14,6 @@ import (
 func (b *bubble) replaceContent(cfg config.Settings, trigger, text, phase, message string, cancel context.CancelFunc) {
 	b.stopWork()
 	b.generation++
-	b.layoutID++
-	b.layoutSequence = 0
-	b.awaitingLayout = b.view == nil
 	b.sessionID = newRequestID()
 	b.reqID = b.sessionID
 	b.revision = -1
@@ -165,7 +162,6 @@ func (m *bubbleManager) completeCapture(cfg config.Settings, shown Shown, text, 
 	for _, b := range m.byID {
 		if b.win == shown.Win && !b.closeClaimed && b.sessionID == shown.ReqID && b.revision == -1 {
 			b.cancelCapture = nil
-			b.advanceCaptureLayout()
 			b.text, b.message, b.phase = text, message, ""
 			if message != "" {
 				b.phase = "error"
@@ -236,7 +232,6 @@ func (b *bubble) dismiss() bool {
 func (b *bubble) present() {
 	b.showID++
 	b.presentationShown = false
-	b.layoutWaitLogged = false
 	b.closeClaimed = false
 }
 
@@ -252,13 +247,4 @@ func (b *bubble) claimClose(session string, showID, revision int64) bool {
 
 func (b *bubble) shouldHideAfterBlur(showID int64, visible, focused bool) bool {
 	return b.showID == showID && !b.pinned && b.offBlur != nil && visible && !focused
-}
-
-// A recognition layout accepted before native readiness is still hidden. If
-// OCR finishes then, require its replacement layout before the first show.
-func (b *bubble) advanceCaptureLayout() {
-	b.layoutID++
-	if b.view == nil && !b.presentationShown {
-		b.awaitingLayout = true
-	}
 }

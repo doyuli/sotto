@@ -10,7 +10,7 @@ func TestBubbleCardWholeHeaderTogglesOnce(t *testing.T) {
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{})
 	v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "header", ShowID: 1,
-		LayoutID: 1, ReqID: "header-req", Trigger: "selection", Text: "hello", Settings: cfg}, false)
+		ReqID: "header-req", Trigger: "selection", Text: "hello", Settings: cfg}, false)
 	v.applyMeta(RunMetaMsg{ReqID: "header-req", Services: []string{"google"}})
 	v.applyResult(TranslationUpdateMsg{ReqID: "header-req", Service: "google", Text: "你好"})
 	tt := ui.NewTester(v.render, 480, 560)
@@ -40,7 +40,7 @@ func TestBubbleComposerMinimumTwoLines(t *testing.T) {
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{})
 	v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "two-lines", ShowID: 1,
-		LayoutID: 1, Trigger: "input", Settings: cfg}, true)
+		Trigger: "input", Settings: cfg}, true)
 	tt := ui.NewTester(v.render, 480, 360)
 	empty, ok := tt.Find("要翻译的原文")
 	if !ok || empty.H < 2*14*1.55 {
@@ -65,7 +65,7 @@ func TestBubbleLanguageSelectWidthKeyboardAndDismissal(t *testing.T) {
 			close: func(string, int64, int64) bool { closes++; return true },
 		})
 		v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "language", ShowID: 1,
-			LayoutID: 1, Trigger: "selection", Text: "hello", Settings: cfg}, false)
+			Trigger: "selection", Text: "hello", Settings: cfg}, false)
 		tt := ui.NewTester(v.render, 480, height)
 		for _, label := range []string{"源语言", "目标语言"} {
 			trigger, ok := tt.Find(label)
