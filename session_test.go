@@ -32,7 +32,7 @@ func TestVisibleInputReusePreservesSessionAndWork(t *testing.T) {
 	m := newBubbleManager(nil)
 	w := &mygo.Window{}
 	b := &bubble{win: w, canShow: entry.valid}
-	m.byID[1], m.input = b, b
+	m.byID[1], m.transient = b, b
 	b.replaceContent(config.Default(), "input", "submitted text", "", "", nil)
 	b.present()
 	b.ready = true
@@ -89,6 +89,43 @@ func TestInputFocusRequiresVisibleReusablePresentation(t *testing.T) {
 	}
 }
 
+func TestPinReclaimsTransientSlotAndRevokesDisplacedWork(t *testing.T) {
+	m := newBubbleManager(nil)
+	cfg := config.Default()
+	input := &bubble{id: 1, win: &mygo.Window{}, sessionID: "input", showID: 2, presentationShown: true}
+	m.byID[input.id], m.transient = input, input
+	if b, _ := m.changePin(cfg, input.win, input.id, "old input", 2, true); b != nil {
+		t.Fatal("a prior session pinned the reused window")
+	}
+	if b, _ := m.changePin(cfg, input.win, input.id, "input", 1, true); b != nil {
+		t.Fatal("a prior presentation pinned the refocused window")
+	}
+	if b, _ := m.changePin(cfg, &mygo.Window{}, input.id, "input", 2, true); b != nil {
+		t.Fatal("a different window pinned the input")
+	}
+	inputRun, ok := m.startRun(input.win, RunReq{SessionID: "input", ReqID: "draft", Revision: 1})
+	if !ok {
+		t.Fatal("could not start input translation")
+	}
+	if b, displaced := m.changePin(cfg, input.win, input.id, "input", 2, true); b != input || displaced != nil || m.transient != nil || !input.pinned {
+		t.Fatal("pinning did not free the slot and preserve the input window")
+	}
+
+	ocrCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ocr := &bubble{id: 2, win: &mygo.Window{}, sessionID: "ocr", showID: 1, phase: "recognizing", revision: -1, cancelCapture: cancel}
+	m.byID[ocr.id], m.transient = ocr, ocr
+	if b, displaced := m.changePin(cfg, input.win, input.id, "input", 2, false); b != input || displaced != ocr || m.transient != input || input.pinned {
+		t.Fatal("unpinning did not reclaim the slot and identify the displaced window for destruction")
+	}
+	if ocrCtx.Err() != context.Canceled || m.completeCapture(cfg, Shown{Win: ocr.win, ReqID: "ocr"}, "late OCR", "") {
+		t.Fatal("displaced OCR work survived slot replacement")
+	}
+	if inputRun.Err() != nil || input.sessionID != "input" {
+		t.Fatal("pinning or unpinning changed the input session or stopped its translation")
+	}
+}
+
 func TestRunOrderingAndIsolation(t *testing.T) {
 	m := newBubbleManager(nil)
 	w1, w2 := &mygo.Window{}, &mygo.Window{}
@@ -124,12 +161,12 @@ func TestRunOrderingAndIsolation(t *testing.T) {
 	}
 }
 
-func TestNewSelectionCancelsPendingTranslationBeforeReplacementStarts(t *testing.T) {
+func TestSelectionReplacesInputSessionOnSameWindow(t *testing.T) {
 	m := newBubbleManager(nil)
 	w := &mygo.Window{}
 	b := &bubble{win: w}
-	m.byID[1] = b
-	b.replaceContent(config.Default(), "selection", "first", "", "", nil)
+	m.byID[1], m.transient = b, b
+	b.replaceContent(config.Default(), "input", "first", "", "", nil)
 	oldSession := b.sessionID
 	old, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "first", Revision: 0, Text: "first"})
 	if !ok || !m.recordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google"}}, "") {
@@ -145,7 +182,7 @@ func TestNewSelectionCancelsPendingTranslationBeforeReplacementStarts(t *testing
 	if old.Err() != context.Canceled || retry.Err() != context.Canceled {
 		t.Fatal("replacement did not cancel all old requests before starting the new one")
 	}
-	if b.sessionID == oldSession || b.generation != 2 || b.text != "second" {
+	if b.sessionID == oldSession || b.generation != 2 || b.text != "second" || b.trigger != "selection" {
 		t.Fatal("replacement failed to claim new content")
 	}
 	if _, ok := m.startRun(w, RunReq{SessionID: oldSession, ReqID: "late IPC", Revision: 99}); ok {

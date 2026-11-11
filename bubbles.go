@@ -14,23 +14,18 @@ import (
 	"sotto/internal/selection"
 )
 
-// bubbleManager keeps separate reusable input and capture windows.
-// Pinning detaches either window from reuse; pinned windows remain independent.
+// bubbleManager keeps one reusable window for all entries. Pinning detaches
+// it from reuse; pinned windows remain independent.
 //
-// ShowTask enters from a worker and holds showMu while marshaling presentation
-// to the UI thread. Never call ShowTask itself from the UI thread: another
-// worker may hold showMu while waiting for that thread. Presentation and Close
-// commit on the UI thread; m.mu guards state shared with translation workers.
+// Window creation, presentation, pin changes and Close commit on the UI thread.
+// m.mu guards state shared with translation workers.
 // Release m.mu before native window calls. See docs/translation-state.md for
 // the identities and ordering rules used by backend state and frontend events.
 type bubbleManager struct {
-	showMu  sync.Mutex
-	mu      sync.Mutex
-	nextID  int64
-	input   *bubble
-	current *bubble   // the reusable unpinned bubble
-	pinned  []*bubble // pinned bubbles, oldest first
-	byID    map[int64]*bubble
+	mu        sync.Mutex
+	nextID    int64
+	transient *bubble
+	byID      map[int64]*bubble
 	// isQuitting reports a quit under way: the close handlers then let
 	// windows close instead of hiding, or the quit sequence would abort.
 	isQuitting func() bool
@@ -96,7 +91,7 @@ func newBubbleManager(isQuitting func() bool) *bubbleManager {
 // A pending selection can leave input visible, so visibility alone is not reuse.
 func (m *bubbleManager) focusVisibleInput() bool {
 	m.mu.Lock()
-	b := m.input
+	b := m.transient
 	var valid func() bool
 	if b != nil {
 		valid = b.canShow
@@ -107,7 +102,7 @@ func (m *bubbleManager) focusVisibleInput() bool {
 	}
 	visible := b.win.IsVisible()
 	m.mu.Lock()
-	reuse := m.input == b && m.byID[b.id] == b && b.refocusInput(visible)
+	reuse := m.transient == b && m.byID[b.id] == b && b.refocusInput(visible)
 	var presented BubblePresentedMsg
 	if reuse {
 		presented = BubblePresentedMsg{ClipboardRecoveryID: selection.PendingClipboardRecovery(), SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision, Focus: true}
@@ -133,56 +128,28 @@ func (b *bubble) refocusInput(visible bool) bool {
 	return true
 }
 
-// ShowTask starts a fresh session in the input or capture window.
+// ShowTask starts a fresh session in the shared transient window.
 // valid is checked again on the UI thread, including a delayed first show.
 // Call from a worker only, and check Shown.Win before starting follow-up work.
 func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anchor *Anchor, phase, message string, valid func() bool, cancel context.CancelFunc) Shown {
-	m.showMu.Lock()
-	defer m.showMu.Unlock()
-	if valid != nil && !valid() {
-		return Shown{}
-	}
-	m.mu.Lock()
-	b, other := m.current, m.input
-	if trigger == "input" {
-		b, other = m.input, m.current
-	}
-	m.mu.Unlock()
-	created := b == nil
-	if created {
-		b = m.create(cfg)
-	}
-	if valid != nil && !valid() {
-		if created {
-			b.win.Destroy()
-		}
-		return Shown{}
-	}
 	var shown Shown
 	// Presentation and close commit on the same UI thread. A delayed close
 	// cannot pass validation and then race a new presentation before Hide.
 	mygo.RunOnMain(func() {
 		if valid != nil && !valid() {
-			if created {
-				b.win.Destroy()
-			}
 			return
 		}
-		if other != nil {
-			m.hideTransientBubble(other)
-		}
 		m.mu.Lock()
-		pinned := b.pinned
+		b := m.transient
 		m.mu.Unlock()
-		if pinned {
-			b = m.create(cfg)
+		if b == nil {
+			b = m.createTransient(cfg)
+			if valid != nil && !valid() {
+				b.win.Destroy()
+				return
+			}
 		}
 		m.mu.Lock()
-		if trigger == "input" {
-			m.input = b
-		} else {
-			m.current = b
-		}
 		b.replaceContent(cfg, trigger, text, phase, message, cancel)
 		b.present()
 		b.canShow = valid
@@ -239,61 +206,50 @@ func (b *bubble) stopWork() {
 	}
 }
 
-// Pin makes the bubble stay when it loses focus; the manager forgets it
-// as the reusable one, so the next query opens a new window.
-func (m *bubbleManager) Pin(id int64) {
+// SetPinned moves a live presentation out of or back into the reuse slot.
+func (m *bubbleManager) SetPinned(ctx context.Context, cfg config.Settings, win *mygo.Window, id int64, session string, showID int64, pinned bool) bool {
+	accepted := false
 	mygo.RunOnMain(func() {
-		m.mu.Lock()
-		b, ok := m.byID[id]
-		if !ok || b.pinned {
-			m.mu.Unlock()
+		if ctx.Err() != nil || win == nil {
 			return
 		}
-		b.pinned = true
-		b.placement = nil // User-dragged windows keep their position after unpinning.
-		if b.offBlur != nil {
-			b.offBlur()
-			b.offBlur = nil
+		b, displaced := m.changePin(cfg, win, id, session, showID, pinned)
+		if b == nil {
+			return
 		}
-		if m.current == b {
-			m.current = nil
+		// OnHide cannot reclaim a window that was already hidden when Unpin
+		// displaced it. Destroy it directly after invalidating its work.
+		if displaced != nil {
+			displaced.win.Destroy()
 		}
-		if m.input == b {
-			m.input = nil
-		}
-		m.pinned = append(m.pinned, b)
-		m.mu.Unlock()
 		m.refreshWindowLeave(b)
+		accepted = true
 	})
+	return accepted
 }
 
-// Unpin returns a pinned bubble to the transient life: it hides on blur
-// again and becomes the bubble the next query reuses. The bubble it
-// displaces is no longer the reusable one, and such leftovers destroy
-// themselves once hidden (see the OnHide handler in create).
-func (m *bubbleManager) Unpin(cfg config.Settings, id int64) {
-	mygo.RunOnMain(func() {
-		m.mu.Lock()
-		b, ok := m.byID[id]
-		if !ok || !b.pinned {
-			m.mu.Unlock()
-			return
+// changePin commits ownership before any displaced native window is destroyed.
+// It runs on the main thread and holds mu while revoking the old session.
+func (m *bubbleManager) changePin(cfg config.Settings, win *mygo.Window, id int64, session string, showID int64, pinned bool) (b, displaced *bubble) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b = m.byID[id]
+	if b == nil || b.win != win || b.sessionID != session || b.showID != showID || b.closeClaimed || !b.presentationShown || b.pinned == pinned {
+		return nil, nil
+	}
+	b.pinned = pinned
+	if pinned {
+		m.transient = nil
+		b.placement = nil // User-dragged windows keep their position after unpinning.
+	} else {
+		displaced = m.transient
+		m.transient = b
+		if displaced != nil {
+			displaced.dismiss()
 		}
-		b.pinned = false
-		if i := indexOfBubble(m.pinned, b); i >= 0 {
-			m.pinned = append(m.pinned[:i], m.pinned[i+1:]...)
-		}
-		if b.trigger == "input" {
-			m.input = b
-		} else {
-			m.current = b
-		}
-		if cfg.Bubble.AutoHide && b.offBlur == nil {
-			b.offBlur = b.win.OnBlur(m.blurHandler(b))
-		}
-		m.mu.Unlock()
-		m.refreshWindowLeave(b)
-	})
+	}
+	m.setBlurLocked(b, cfg.Bubble.AutoHide && !pinned)
+	return b, displaced
 }
 
 // Close hides an unpinned bubble and closes a pinned one for good.
@@ -346,25 +302,26 @@ func (m *bubbleManager) hideAfterBlur(b *bubble, showID int64) {
 	}
 }
 
-// setAutoHide also updates visible bubbles displaced by Unpin.
 func (m *bubbleManager) setAutoHide(on bool) {
 	m.mu.Lock()
-	var changed []*bubble
-	for _, b := range m.byID {
-		if b.pinned || (b.offBlur != nil) == on {
-			continue
-		}
-		if on {
-			b.offBlur = b.win.OnBlur(m.blurHandler(b))
-		} else {
-			b.offBlur()
-			b.offBlur = nil
-		}
-		changed = append(changed, b)
+	b := m.transient
+	changed := b != nil && (b.offBlur != nil) != on
+	if changed {
+		m.setBlurLocked(b, on)
 	}
 	m.mu.Unlock()
-	for _, b := range changed {
+	if changed {
 		m.refreshWindowLeave(b)
+	}
+}
+
+// Blur listener registration does not call the native window or run callbacks.
+func (m *bubbleManager) setBlurLocked(b *bubble, on bool) {
+	if on && b.offBlur == nil {
+		b.offBlur = b.win.OnBlur(m.blurHandler(b))
+	} else if !on && b.offBlur != nil {
+		b.offBlur()
+		b.offBlur = nil
 	}
 }
 
@@ -495,10 +452,9 @@ func (b *bubble) stopWindowLeave() {
 	}
 }
 
-// create makes a hidden bubble window. It runs outside m.mu — creating
-// a window waits for the main thread — before hotkeys are registered or
-// under showMu, so no two bubbles are ever created at once.
-func (m *bubbleManager) create(cfg config.Settings) *bubble {
+// createTransient fills the empty reuse slot on the main thread. The native
+// window is created outside mu; its WebView loads while the window is hidden.
+func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 	id := m.nextID
 	m.nextID++
 	b := &bubble{id: id, maxHeight: bubbleMaxHeight}
@@ -553,33 +509,15 @@ func (m *bubbleManager) create(cfg config.Settings) *bubble {
 		defer m.mu.Unlock()
 		b.stopWork()
 		delete(m.byID, b.id)
-		if m.input == b {
-			m.input = nil
-		}
-		if m.current == b {
-			m.current = nil
-		}
-		if i := indexOfBubble(m.pinned, b); i >= 0 {
-			m.pinned = append(m.pinned[:i], m.pinned[i+1:]...)
+		if m.transient == b {
+			m.transient = nil
 		}
 	})
-	// An unpinned bubble that is no longer the reusable one — displaced
-	// by Unpin — will never be shown again: recycle it once hidden. The
-	// reusable one, and pinned ones, survive their hides.
-	b.win.OnHide(func() {
-		b.stopWindowLeave()
-		m.mu.Lock()
-		stale := !b.pinned && m.current != b && m.input != b
-		m.mu.Unlock()
-		if stale {
-			b.win.Destroy()
-		}
-	})
-	if cfg.Bubble.AutoHide {
-		b.offBlur = b.win.OnBlur(m.blurHandler(b))
-	}
+	b.win.OnHide(b.stopWindowLeave)
 	m.mu.Lock()
+	m.setBlurLocked(b, cfg.Bubble.AutoHide)
 	m.byID[id] = b
+	m.transient = b
 	m.mu.Unlock()
 	return b
 }
@@ -600,24 +538,12 @@ func (m *bubbleManager) position(b *bubble, trigger string, anchor *Anchor) {
 	b.win.SetPosition(x, y)
 }
 
-func indexOfBubble(bs []*bubble, b *bubble) int {
-	for i, x := range bs {
-		if x == b {
-			return i
-		}
-	}
-	return -1
-}
-
 func (m *bubbleManager) hideTransient() {
 	m.mu.Lock()
-	input, current := m.input, m.current
+	b := m.transient
 	m.mu.Unlock()
-	if input != nil {
-		m.hideTransientBubble(input)
-	}
-	if current != nil {
-		m.hideTransientBubble(current)
+	if b != nil {
+		m.hideTransientBubble(b)
 	}
 }
 

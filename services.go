@@ -186,11 +186,10 @@ func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, sho
 	return s.app.bubbles.Rendered(ctx, mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, sequence, height)
 }
 
-// Pin keeps the bubble on screen when it loses focus.
-func (s BubbleSvc) Pin(id int64) { s.app.bubbles.Pin(id) }
-
-// Unpin returns a pinned bubble to hiding on blur.
-func (s BubbleSvc) Unpin(id int64) { s.app.bubbles.Unpin(s.app.settings(), id) }
+// SetPinned changes pin state only for the caller's current presentation.
+func (s BubbleSvc) SetPinned(ctx context.Context, id int64, sessionID string, showID int64, pinned bool) bool {
+	return s.app.bubbles.SetPinned(ctx, s.app.settings(), mygo.CallerWindow(ctx), id, sessionID, showID, pinned)
+}
 
 // Close reports whether this presentation's close was accepted.
 func (s BubbleSvc) Close(id int64, sessionID string, showID, revision int64) bool {

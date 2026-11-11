@@ -4,9 +4,11 @@ package e2e
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -39,6 +41,10 @@ var (
 	procDestroyWindow                 = modUser32.NewProc("DestroyWindow")
 	procDefWindowProcW                = modUser32.NewProc("DefWindowProcW")
 	procRegisterClassExW              = modUser32.NewProc("RegisterClassExW")
+	procUnregisterClassW              = modUser32.NewProc("UnregisterClassW")
+	procPeekMessageW                  = modUser32.NewProc("PeekMessageW")
+	procTranslateMessage              = modUser32.NewProc("TranslateMessage")
+	procDispatchMessageW              = modUser32.NewProc("DispatchMessageW")
 	procAllowSetForegroundWindow      = modUser32.NewProc("AllowSetForegroundWindow")
 
 	procGetModuleHandleW      = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetModuleHandleW")
@@ -51,6 +57,8 @@ const (
 	gwlExStyle              = uintptr(0xFFFFFFEC) // -20 as an index
 	wsExLayered             = 0x00080000
 	wsExNoRedirectionBitmap = 0x00200000
+	wsVisible               = 0x10000000
+	pmRemove                = 0x0001
 	lwaAlpha                = 2
 	dpiPerMonitorAwareV2    = ^uintptr(0) - 3 // -4 as an opaque DPI context
 )
@@ -159,10 +167,54 @@ func allowForeground(pid uint32) {
 	procAllowSetForegroundWindow.Call(uintptr(pid))
 }
 
-// activateOwnWindow creates a bare top-level window and puts it in the
-// foreground, so the app under test loses the focus. It returns a close
-// function.
-func activateOwnWindow() (close func(), err error) {
+// activateOwnWindow keeps a responsive foreground target for the selection
+// hotkey. Its owning thread also activates and destroys it.
+func activateOwnWindow() (func(), error) {
+	ready := make(chan error, 1)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		cleanup, err := createForegroundWindow()
+		ready <- err
+		if err != nil {
+			return
+		}
+		defer cleanup()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		var msg windowMessage
+		msgPtr := unsafe.Pointer(&msg)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				for {
+					ok, _, _ := procPeekMessageW.Call(uintptr(msgPtr), 0, 0, 0, pmRemove)
+					if ok == 0 {
+						break
+					}
+					procTranslateMessage.Call(uintptr(msgPtr))
+					procDispatchMessageW.Call(uintptr(msgPtr))
+				}
+			}
+		}
+	}()
+	if err := <-ready; err != nil {
+		<-done
+		return nil, err
+	}
+	return sync.OnceFunc(func() {
+		close(stop)
+		<-done
+	}), nil
+}
+
+func createForegroundWindow() (func(), error) {
 	className, err := syscallUTF16("sotto-e2e-dummy")
 	if err != nil {
 		return nil, err
@@ -170,23 +222,44 @@ func activateOwnWindow() (close func(), err error) {
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	var wc wndClassEx
 	wc.CbSize = uint32(unsafe.Sizeof(wc))
-	wc.LpfnWndProc = defaultWndProc()
+	wc.LpfnWndProc = defaultWndProc
 	wc.HInstance = hInstance
 	wc.LpszClassName = uintptr(unsafe.Pointer(&className[0]))
 	atom, _, _ := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
 	if atom == 0 {
 		return nil, fmtLastError("RegisterClassExW")
 	}
+	unregister := func() { procUnregisterClassW.Call(uintptr(unsafe.Pointer(&className[0])), hInstance) }
 	name, _ := syscallUTF16("sotto-e2e")
 	hwnd, _, _ := procCreateWindowExW.Call(0,
 		uintptr(unsafe.Pointer(&className[0])), uintptr(unsafe.Pointer(&name[0])),
-		0, // overlapped window
+		wsVisible, // visible overlapped window
 		0, 0, 160, 90, 0, 0, hInstance, 0)
 	if hwnd == 0 {
+		unregister()
 		return nil, fmtLastError("CreateWindowExW")
 	}
+	cleanup := func() {
+		procDestroyWindow.Call(hwnd)
+		unregister()
+	}
 	procSetForegroundWindow.Call(hwnd)
-	return func() { procDestroyWindow.Call(hwnd) }, nil
+	if foreground, _, _ := procGetForegroundWindow.Call(); foreground != hwnd {
+		cleanup()
+		return nil, fmt.Errorf("e2e: dummy window did not get foreground focus")
+	}
+	return cleanup, nil
+}
+
+// windowMessage mirrors Win32 MSG.
+type windowMessage struct {
+	hwnd    uintptr
+	message uint32
+	wParam  uintptr
+	lParam  uintptr
+	time    uint32
+	x, y    int32
+	private uint32
 }
 
 // wndClassEx mirrors WNDCLASSEXW on amd64.
@@ -205,14 +278,10 @@ type wndClassEx struct {
 	HIconSm       uintptr
 }
 
-// defaultWndProc returns a callback that just passes through to
-// DefWindowProcW.
-func defaultWndProc() uintptr {
-	return syscall.NewCallback(func(hwnd, msg, w, l uintptr) uintptr {
-		r, _, _ := procDefWindowProcW.Call(hwnd, msg, w, l)
-		return r
-	})
-}
+var defaultWndProc = syscall.NewCallback(func(hwnd, msg, w, l uintptr) uintptr {
+	r, _, _ := procDefWindowProcW.Call(hwnd, msg, w, l)
+	return r
+})
 
 // syscallUTF16 encodes s, NUL-terminated.
 func syscallUTF16(s string) ([]uint16, error) {
