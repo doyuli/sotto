@@ -112,10 +112,9 @@ func hotkeysInForce(line string) map[string]string {
 	return out
 }
 
-// TestPanelBubbleFocusAndBlur covers the input bubble's life: the panel
-// hotkey shows it with the focus, and the focus going elsewhere hides it
-// — the "click anywhere else and it goes away" behavior.
-func TestPanelBubbleFocusAndBlur(t *testing.T) {
+// TestPanelAndSelectionShareBubble covers focus and blur, then checks that a
+// different entry brings back the very same window.
+func TestPanelAndSelectionShareBubble(t *testing.T) {
 	pid, stop := start(t)
 	defer stop()
 
@@ -156,13 +155,27 @@ func TestPanelBubbleFocusAndBlur(t *testing.T) {
 	}
 	defer closeDummy()
 	deadline = time.Now().Add(5 * time.Second)
-	for {
-		count := len(visibleHandles(pid))
-		if count == 0 {
-			return // gone, as a click elsewhere should leave it
-		}
+	for len(visibleHandles(pid)) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("bubble still visible after losing focus")
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	// The dummy window has no selection. The selection hotkey still opens
+	// the editable fallback, which must use the hidden panel's HWND.
+	allowForeground(pid)
+	tapAccel(hotkeys["selection"])
+	deadline = time.Now().Add(8 * time.Second)
+	for {
+		if current := visibleHandles(pid); len(current) != 0 {
+			if !slices.Equal(current, handles) {
+				t.Fatalf("selection did not reuse the input bubble: got %v, want %v", current, handles)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no bubble after the selection hotkey with nothing selected")
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
@@ -257,28 +270,6 @@ func TestSnipOverlay(t *testing.T) {
 	}
 	tapAccel("Escape")
 	waitHidden()
-}
-
-// TestSelectionBubbleShows covers the selection hotkey end to end as far
-// as a test can reach without a real selection: the grab finds nothing in
-// the foreground and falls back to the input panel, which shows and takes
-// the focus like the panel bubble does.
-func TestSelectionBubbleShows(t *testing.T) {
-	pid, stop := start(t)
-	defer stop()
-
-	tapAccel(hotkeys["selection"])
-	deadline := time.Now().Add(8 * time.Second)
-	for {
-		count := len(visibleHandles(pid))
-		if count >= 1 {
-			return // the fallback panel came up
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no bubble after the selection hotkey with nothing selected")
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
 }
 
 // Use the app's DPI context so window rectangles and synthesized drags share

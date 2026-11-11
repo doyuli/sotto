@@ -35,11 +35,16 @@ export function createToasts() {
     }, 1600);
   }
 
-  onDestroy(() => {
-    disposed = true;
+  function clear(): void {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
+    messages.length = 0;
+  }
+
+  onDestroy(() => {
+    disposed = true;
+    clear();
   });
 
-  return { messages, show };
+  return { messages, show, clear };
 }

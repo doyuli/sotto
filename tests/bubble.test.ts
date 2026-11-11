@@ -87,6 +87,39 @@ test("retry requests only the failed service and retains the successful card", a
   expect(page.target.querySelector(".card-ok")).toBe(card);
 });
 
+test("pin state follows the backend and an old reply cannot pin replacement content", async () => {
+  await openBubble();
+  const pin = button("钉住");
+  const first = deferred<boolean>();
+  page.backend.override("BubbleSvc.SetPinned", () => first.promise);
+  pin.click();
+  pin.click();
+  expect(pin.getAttribute("aria-pressed")).toBe("false");
+  expect(page.backend.calls("BubbleSvc.SetPinned")).toEqual([[1, "test-session", 1, true]]);
+
+  page.backend.emit("bubble-reset", {
+    ...page.backend.bubble, sessionID: "next-input", generation: 2, showID: 2, trigger: "input", text: "",
+  });
+  first.resolve(true);
+  await settle();
+  expect(pin.getAttribute("aria-pressed")).toBe("false");
+
+  page.backend.override("BubbleSvc.SetPinned", (_id, _session, _show, pinned) => pinned);
+  pin.click();
+  await settle();
+  expect(pin.getAttribute("aria-pressed")).toBe("true");
+  pin.click();
+  await settle();
+  expect(page.backend.calls("BubbleSvc.SetPinned").slice(1)).toEqual([
+    [1, "next-input", 2, true], [1, "next-input", 2, false],
+  ]);
+  expect(pin.getAttribute("aria-pressed")).toBe("true");
+  page.backend.override("BubbleSvc.SetPinned", () => true);
+  pin.click();
+  await settle();
+  expect(pin.getAttribute("aria-pressed")).toBe("false");
+});
+
 test("language changes use the new selection and deleting the last character cancels", async () => {
   await openBubble();
   for (const [selector, property, language, label] of [
@@ -268,6 +301,29 @@ test("copy waits for IPC and reports clipboard failures", async () => {
   await settle();
   expect(toasts.textContent).toContain("复制失败");
   expect(toasts.textContent).not.toContain("已复制");
+});
+
+test.each(["success", "failure"])("an old copy %s does not show in the next session", async (outcome) => {
+  page.backend.bubble.trigger = "input";
+  await openBubble();
+  const toasts = page.target.querySelector(".toast-host")!;
+  button("复制输入").click();
+  await settle();
+  expect(toasts.textContent).toBe("已复制");
+
+  const copy = deferred<void>();
+  page.backend.override("BubbleSvc.Copy", () => copy.promise);
+  button("复制输入").click();
+  page.backend.emit("bubble-reset", {
+    ...page.backend.bubble, trigger: "ocr", sessionID: "next-ocr", generation: 2, showID: 2, text: "Recognized text",
+  });
+  await settle();
+  expect(toasts.textContent).toBe("");
+
+  if (outcome === "success") copy.resolve();
+  else copy.reject(new Error("复制失败"));
+  await settle();
+  expect(toasts.textContent).toBe("");
 });
 
 test("focusing the same presentation retains draft, languages, cards and the active request", async () => {

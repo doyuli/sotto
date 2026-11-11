@@ -226,10 +226,6 @@ export const BubbleSvc = {
   openTranslationSettings(): Promise<void> {
     return call("BubbleSvc.OpenTranslationSettings");
   },
-  /** Pin keeps the bubble on screen when it loses focus. */
-  pin(id: number): Promise<void> {
-    return call("BubbleSvc.Pin", id);
-  },
   /**
    * Ready returns the bubble's state. Its page asks on mounting, because
    * events sent before its DOM is ready are held only in small numbers.
@@ -245,9 +241,9 @@ export const BubbleSvc = {
   restoreClipboard(id: string): Promise<void> {
     return call("BubbleSvc.RestoreClipboard", id);
   },
-  /** Unpin returns a pinned bubble to hiding on blur. */
-  unpin(id: number): Promise<void> {
-    return call("BubbleSvc.Unpin", id);
+  /** SetPinned changes pin state only for the caller's current presentation. */
+  setPinned(id: number, sessionID: string, showID: number, pinned: boolean): Promise<boolean> {
+    return call("BubbleSvc.SetPinned", id, sessionID, showID, pinned);
   },
 } as const;
 

@@ -119,9 +119,9 @@ func (a *application) ready() {
 	a.snip.done = a.snipDone
 	mygo.Screen.OnDisplaysChanged(a.snip.refreshDisplays)
 	if runtime.GOOS == "windows" {
-		// Start WebView2 initialization while the app is launching, before
-		// the first selection needs a window. The page stays hidden until used.
-		a.bubbles.current = a.bubbles.create(cfg)
+		// Start WebView2 initialization before the first translation entry.
+		// All three entries reuse this page, which stays hidden until used.
+		a.bubbles.createTransient(cfg)
 	}
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
@@ -204,8 +204,7 @@ func (a *application) broadcastSettings(s config.Settings) {
 
 // onHotkey is what a registered accelerator runs, on the main thread.
 // The actions continue on goroutines, where slow work — a selection
-// grab — and the window marshalling that follows it are safe: ShowTask
-// serializes worker callers before dispatching the presentation to the UI thread.
+// grab — stays off that thread. ShowTask commits presentation on the UI thread.
 func (a *application) onHotkey(action string) func() {
 	return func() { a.startEntry(action) }
 }

@@ -24,7 +24,7 @@
   import TranslationCard, { type CardState } from "./TranslationCard.svelte";
   import ToastStack from "./ToastStack.svelte";
 
-  const { messages, show: toast } = createToasts();
+  const { messages, show: toast, clear: clearToasts } = createToasts();
 
   let { id: propID }: { id?: number } = $props();
 
@@ -40,6 +40,7 @@
   let retryService: string = $state("");
   let readyFailed = $state(false);
   let pendingRecovery = $state("");
+  let pinPendingSession: string | undefined;
 
   let inputText: string = $state("");
   let textareaElem: HTMLTextAreaElement | undefined = $state();
@@ -104,7 +105,9 @@
     ) {
       return;
     }
-    if (st.sessionID !== bubbleState?.sessionID || st.showID !== bubbleState?.showID || st.layoutID !== bubbleState?.layoutID) {
+    const newSession = st.sessionID !== bubbleState?.sessionID;
+    if (newSession) clearToasts();
+    if (newSession || st.showID !== bubbleState?.showID || st.layoutID !== bubbleState?.layoutID) {
       cancelLayout();
     }
     layoutSequence = Math.max(layoutSequence, st.layoutSequence);
@@ -238,11 +241,12 @@
 
   function cancelCurrent(): void {
     if (!bubbleState) return;
+    const session = bubbleState.sessionID;
     revision++;
     bubbleState.revision = revision;
     reqID = "";
     cardRequests.clear();
-    void TranslateSvc.cancel(bubbleState.sessionID, revision).catch((err) => toast(String(err)));
+    void TranslateSvc.cancel(session, revision).catch((err) => toastForSession(session, String(err)));
   }
 
   function stopRenderedRun(stoppedRevision: number): void {
@@ -273,17 +277,21 @@
           stopRenderedRun(closingRevision);
         }
       })
-      .catch((err) => toast(String(err)));
+      .catch((err) => toastForSession(session, String(err)));
   }
 
-  function togglePin(): void {
-    if (!bubbleState) return;
-    if (bubbleState.pinned) {
-      bubbleState.pinned = false;
-      void BubbleSvc.unpin(bubbleID);
-    } else {
-      bubbleState.pinned = true;
-      void BubbleSvc.pin(bubbleID);
+  async function togglePin(): Promise<void> {
+    if (!bubbleState || pinPendingSession === bubbleState.sessionID) return;
+    const { sessionID, showID } = bubbleState;
+    const pinned = !bubbleState.pinned;
+    pinPendingSession = sessionID;
+    try {
+      const accepted = await BubbleSvc.setPinned(bubbleID, sessionID, showID, pinned);
+      if (accepted && bubbleState?.sessionID === sessionID) bubbleState.pinned = pinned;
+    } catch (err) {
+      toastForSession(sessionID, String(err));
+    } finally {
+      if (pinPendingSession === sessionID) pinPendingSession = undefined;
     }
   }
 
@@ -339,13 +347,18 @@
     });
   }
 
+  function toastForSession(session: string | undefined, text: string): void {
+    if (bubbleState && bubbleState.sessionID === session) toast(text);
+  }
+
   async function copyText(text: string, successMessage = "已复制"): Promise<void> {
-    if (!text.trim()) return;
+    if (!bubbleState || !text.trim()) return;
+    const session = bubbleState.sessionID;
     try {
       await BubbleSvc.copy(text);
-      toast(successMessage);
+      toastForSession(session, successMessage);
     } catch (err) {
-      toast(String(err));
+      toastForSession(session, String(err));
     }
   }
 
@@ -367,11 +380,13 @@
   }
 
   function openTranslationSettings(): void {
-    void BubbleSvc.openTranslationSettings().catch((err) => toast(String(err)));
+    const session = bubbleState?.sessionID;
+    void BubbleSvc.openTranslationSettings().catch((err) => toastForSession(session, String(err)));
   }
 
   async function recoverClipboard(id: string, restore: boolean): Promise<void> {
     if (pendingRecovery) return;
+    const session = bubbleState?.sessionID;
     pendingRecovery = id;
     try {
       if (restore) await BubbleSvc.restoreClipboard(id);
@@ -383,9 +398,9 @@
           ? "剪贴板已恢复，可继续翻译。"
           : "已放弃恢复之前的内容，当前剪贴板没有改变，可继续取词。";
       }
-      if (restore) toast("剪贴板已恢复");
+      if (restore) toastForSession(session, "剪贴板已恢复");
     } catch (err) {
-      toast(String(err));
+      toastForSession(session, String(err));
     } finally {
       pendingRecovery = "";
     }
@@ -589,7 +604,10 @@
             <button
               type="button"
               class="text-btn"
-              onclick={() => void SnipSvc.start().catch((err) => toast(String(err)))}
+              onclick={() => {
+                const session = bubbleState?.sessionID;
+                void SnipSvc.start().catch((err) => toastForSession(session, String(err)));
+              }}
             >
               {bubbleState?.trigger === "ocr" ? "重新框选" : "截图翻译"}
             </button>
