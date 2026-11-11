@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime"
@@ -9,10 +10,19 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
+	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
 	"sotto/internal/selection"
 )
+
+type bubbleActions struct {
+	run          func(win *mygo.Window, req RunReq)
+	settings     func() config.Settings
+	startOCR     func()
+	openSettings func()
+}
 
 // bubbleManager keeps one reusable window for all entries. Pinning detaches
 // it from reuse; pinned windows remain independent.
@@ -26,6 +36,7 @@ type bubbleManager struct {
 	nextID    int64
 	transient *bubble
 	byID      map[int64]*bubble
+	actions   bubbleActions
 	// isQuitting reports a quit under way: the close handlers then let
 	// windows close instead of hiding, or the quit sequence would abort.
 	isQuitting func() bool
@@ -34,6 +45,8 @@ type bubbleManager struct {
 type bubble struct {
 	id                     int64
 	win                    *mygo.Window
+	view                   *bubbleView
+	appliedHeight          int
 	pinned                 bool
 	reqID                  string // the request its page last showed
 	generation             int64
@@ -112,7 +125,10 @@ func (m *bubbleManager) focusVisibleInput() bool {
 		return false
 	}
 	b.win.Focus()
-	BubblePresented.Emit(b.win, presented)
+	if b.view != nil {
+		b.view.onPresented(presented)
+		b.win.Invalidate()
+	}
 	m.refreshWindowLeave(b)
 	log.Printf("bubble: focus existing input id=%d show=%d", b.id, presented.ShowID)
 	return true
@@ -154,18 +170,31 @@ func (m *bubbleManager) ShowTask(cfg config.Settings, trigger, text string, anch
 		b.present()
 		b.canShow = valid
 		m.mu.Unlock()
-		// Reset and measure while hidden: the reused window still has its old size.
+		// Reset and measure before presenting the reused window.
 		b.win.Hide()
+		initialH := 200
+		if text != "" {
+			initialH = 240
+		}
+		m.mu.Lock()
+		b.appliedHeight = initialH
+		m.mu.Unlock()
+		b.win.SetContentSize(480, initialH)
 		m.position(b, trigger, anchor)
 		m.reflow(b, true)
 		m.mu.Lock()
 		state := m.state(b, cfg)
+		view := b.view
 		m.mu.Unlock()
-		BubbleReset.Emit(b.win, state)
-		BubblePresented.Emit(b.win, BubblePresentedMsg{ClipboardRecoveryID: state.ClipboardRecoveryID, SessionID: state.SessionID, ShowID: state.ShowID, Revision: state.Revision, Focus: trigger == "input"})
+		if view != nil {
+			view.applyState(state, trigger == "input")
+			b.win.Invalidate()
+		}
 		shown = Shown{Win: b.win, ReqID: state.ReqID, Text: state.Text}
 		m.showWin(b)
-		m.watchLayout(b, state.SessionID, state.ShowID)
+		if view == nil {
+			m.watchLayout(b, state.SessionID, state.ShowID)
+		}
 	})
 	return shown
 }
@@ -336,15 +365,56 @@ func (m *bubbleManager) State(cfg config.Settings, id int64) (BubbleState, bool)
 	return m.state(b, cfg), true
 }
 
-// windows lists every open bubble window, for broadcasting settings.
-func (m *bubbleManager) windows() []*mygo.Window {
+// pushMeta delivers resolved request metadata to the bubble's native UI.
+func (m *bubbleManager) pushMeta(win *mygo.Window, meta RunMetaMsg) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	var out []*mygo.Window
+	var view *bubbleView
 	for _, b := range m.byID {
-		out = append(out, b.win)
+		if b.win == win {
+			view = b.view
+			break
+		}
 	}
-	return out
+	m.mu.Unlock()
+	if view != nil {
+		win.Update(func() { view.applyMeta(meta) })
+	}
+}
+
+// pushResult delivers one translation chunk/result to the bubble's native UI.
+func (m *bubbleManager) pushResult(win *mygo.Window, msg TranslationUpdateMsg) {
+	m.mu.Lock()
+	var view *bubbleView
+	for _, b := range m.byID {
+		if b.win == win {
+			view = b.view
+			break
+		}
+	}
+	m.mu.Unlock()
+	if view != nil {
+		win.Update(func() { view.applyResult(msg) })
+	}
+}
+
+// applySettings updates every open bubble view with new settings.
+func (m *bubbleManager) applySettings(s config.Settings) {
+	m.mu.Lock()
+	type target struct {
+		win  *mygo.Window
+		view *bubbleView
+	}
+	var list []target
+	for _, b := range m.byID {
+		if b.win != nil && b.view != nil {
+			list = append(list, target{win: b.win, view: b.view})
+		}
+	}
+	m.mu.Unlock()
+	for _, item := range list {
+		v := item.view
+		item.win.Update(func() { v.applySettings(s) })
+	}
 }
 
 func (m *bubbleManager) state(b *bubble, cfg config.Settings) BubbleState {
@@ -452,36 +522,91 @@ func (b *bubble) stopWindowLeave() {
 	}
 }
 
-// createTransient fills the empty reuse slot on the main thread. The native
-// window is created outside mu; its WebView loads while the window is hidden.
+// createTransient fills the empty reuse slot on the main thread with a native
+// ui.View bubble window, avoiding WebView2 startup and per-bubble memory cost.
 func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 	id := m.nextID
 	m.nextID++
-	b := &bubble{id: id, maxHeight: bubbleMaxHeight}
+	b := &bubble{id: id, maxHeight: bubbleMaxHeight, appliedHeight: 240}
+	b.view = newBubbleView(id, cfg, bubbleViewActions{
+		run: func(req RunReq) {
+			if m.actions.run != nil && b.win != nil {
+				m.actions.run(b.win, req)
+			}
+		},
+		cancel: func(sessionID string, revision int64) {
+			m.Cancel(b.win, sessionID, revision)
+		},
+		setPinned: func(sessionID string, showID int64, pinned bool) bool {
+			currentCfg := cfg
+			if m.actions.settings != nil {
+				currentCfg = m.actions.settings()
+			}
+			return m.SetPinned(context.Background(), currentCfg, b.win, b.id, sessionID, showID, pinned)
+		},
+		close: func(sessionID string, showID, revision int64) bool {
+			return m.Close(b.id, sessionID, showID, revision)
+		},
+		startOCR: func() {
+			if m.actions.startOCR != nil {
+				m.actions.startOCR()
+			}
+		},
+		openSettings: func() {
+			if m.actions.openSettings != nil {
+				m.actions.openSettings()
+			}
+		},
+		restoreClipboard: recoverClipboard,
+		discardClipboard: selection.DiscardClipboardRecovery,
+		copyText: func(_ *ui.Context, text string) error {
+			if err := mygo.Clipboard.Write(transfer.TextData(text)); err != nil {
+				return fmt.Errorf("复制失败: %w", err)
+			}
+			return nil
+		},
+		onHeightMeasured: func(height float64) {
+			m.mu.Lock()
+			limit := b.maxHeight
+			prevH := b.appliedHeight
+			closed := b.closeClaimed
+			m.mu.Unlock()
+			if closed {
+				return
+			}
+			targetH := bubbleLayoutHeight(height, limit, 1)
+			if targetH == prevH {
+				return
+			}
+			m.mu.Lock()
+			b.appliedHeight = targetH
+			m.mu.Unlock()
+			m.reflow(b, false)
+			b.win.SetContentSize(480, targetH)
+			m.reflow(b, true)
+		},
+	})
 	b.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto",
-		URL:             fmt.Sprintf("/bubble.html?b=%d", id),
+		Content:         ui.View(b.view.render),
 		Width:           480,
 		Height:          240,
 		MinWidth:        480,
 		MaxWidth:        480,
 		MinHeight:       160,
 		MaxHeight:       760,
-		DisableResize:   true,  // the bubble has a fixed width
-		FitContent:      false, // only ordered app measurements may resize the bubble
-		Hidden:          true,  // shown once placed and ready
+		DisableResize:   true, // the bubble has a fixed width
+		Hidden:          true, // shown once placed and ready
 		Frameless:       true,
 		Panel:           true, // floats over every app, out of the taskbar
 		SkipTaskbar:     true,
-		Transparent:     true, // the page draws its rounded card
 		CornerRadius:    14,
 		BackgroundColor: "light-dark(#ffffff, #222325)",
-		Page:            mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 	})
 	b.win.OnResize(func() { m.reflow(b, true) })
 	b.win.OnMove(func() { m.reflow(b, false) })
 	b.win.OnReadyToShow(func() {
-		log.Printf("bubble: page ready id=%d", b.id)
+		log.Printf("bubble: view ready id=%d", b.id)
 		m.mu.Lock()
 		b.ready = true
 		m.mu.Unlock()
@@ -495,8 +620,12 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 		m.mu.Lock()
 		pinned := b.pinned
 		stopped := b.stopPresentation()
+		view := b.view
 		m.mu.Unlock()
-		RunStopped.Emit(b.win, stopped)
+		if view != nil {
+			view.onStopped(stopped)
+			b.win.Invalidate()
+		}
 		if quitting || pinned {
 			return // close it for real
 		}
@@ -520,6 +649,21 @@ func (m *bubbleManager) createTransient(cfg config.Settings) *bubble {
 	m.transient = b
 	m.mu.Unlock()
 	return b
+}
+
+func recoverClipboard(id string) error {
+	err := selection.RecoverClipboard(id)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, selection.ErrSourceChanged):
+		return errors.New("你已复制了新内容，本次没有覆盖它。可放弃恢复之前的内容，然后继续取词。")
+	case errors.Is(err, selection.ErrClipboardRecoveryGone):
+		return errors.New("之前的剪贴板内容已恢复或已放弃恢复，请重新打开面板。")
+	default:
+		log.Printf("clipboard recovery: %v", err)
+		return errors.New("暂时无法恢复剪贴板，之前的内容仍在，可稍后重试。")
+	}
 }
 
 // position puts the bubble near where the user is: beside an anchor
@@ -554,9 +698,13 @@ func (m *bubbleManager) hideTransientBubble(b *bubble) {
 		m.mu.Lock()
 		dismissed := m.byID[b.id] == b && b.dismiss()
 		stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
+		view := b.view
 		m.mu.Unlock()
 		if dismissed {
-			RunStopped.Emit(b.win, stopped)
+			if view != nil {
+				view.onStopped(stopped)
+				b.win.Invalidate()
+			}
 			b.win.Hide()
 		}
 	})

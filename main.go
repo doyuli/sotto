@@ -45,10 +45,7 @@ func main() {
 	app := newApplication()
 	mygo.Bind(
 		ConfigSvc{app},
-		TranslateSvc{app},
-		BubbleSvc{app},
 		HotkeySvc{},
-		SnipSvc{app},
 	)
 	mygo.App.WhenReady(app.ready)
 	if err := mygo.App.Run(); err != nil {

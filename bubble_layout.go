@@ -100,17 +100,16 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 		b.placement.refresh(mygo.Screen.Displays(), display, bounds.Width)
 		work = b.placement.work
 	}
-	zoom := b.win.Page().ZoomFactor()
-	if zoom <= 0 {
-		zoom = 1
-	}
+	zoom := bubbleZoom(b.win)
 	limit := float64(bubbleHeightLimit(work)) / zoom
 	m.mu.Lock()
 	changed := b.maxHeight != limit
 	b.maxHeight = limit
+	view := b.view
 	m.mu.Unlock()
-	if changed {
-		BubbleLayoutChanged.Emit(b.win, limit)
+	if changed && view != nil {
+		view.setMaxHeight(limit)
+		b.win.Invalidate()
 	}
 	if !resize {
 		return
@@ -165,7 +164,7 @@ func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64
 		// A pinned bubble still resizes after a new entry invalidates canShow.
 		// Entry ownership gates first presentation, not ongoing content layout.
 		m.reflow(b, false)
-		zoom := b.win.Page().ZoomFactor()
+		zoom := bubbleZoom(b.win)
 		m.mu.Lock()
 		limit := b.maxHeight
 		m.mu.Unlock()
@@ -195,4 +194,18 @@ func bubbleLayoutHeight(height, limit, zoom float64) int {
 	// Clamp before conversion and round fractional CSS sizes as mygo does.
 	h := int(math.Ceil(min(min(height, limit)*zoom, bubbleMaxHeight) - 1.0/128))
 	return max(160, h)
+}
+
+func bubbleZoom(win *mygo.Window) float64 {
+	if win == nil {
+		return 1
+	}
+	p := win.Page()
+	if p == nil {
+		return 1
+	}
+	if z := p.ZoomFactor(); z > 0 {
+		return z
+	}
+	return 1
 }

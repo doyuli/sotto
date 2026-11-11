@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -114,15 +113,16 @@ func (a *application) ready() {
 		a.entry.cancel()
 	})
 	a.bubbles = newBubbleManager(a.isQuitting)
+	a.bubbles.actions = bubbleActions{
+		run:          a.runTranslation,
+		settings:     a.settings,
+		startOCR:     func() { a.startEntry("ocr") },
+		openSettings: func() { a.showSettings(true) },
+	}
 	mygo.Screen.OnDisplaysChanged(a.bubbles.refreshDisplays)
 	a.snip.isQuitting = a.isQuitting
 	a.snip.done = a.snipDone
 	mygo.Screen.OnDisplaysChanged(a.snip.refreshDisplays)
-	if runtime.GOOS == "windows" {
-		// Start WebView2 initialization before the first translation entry.
-		// All three entries reuse this page, which stays hidden until used.
-		a.bubbles.createTransient(cfg)
-	}
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
 	}
@@ -189,11 +189,9 @@ func (a *application) applySettings(s config.Settings) {
 	a.broadcastSettings(a.settings())
 }
 
-// broadcastSettings tells every open page the new settings.
+// broadcastSettings tells open native bubbles and the settings page the new settings.
 func (a *application) broadcastSettings(s config.Settings) {
-	for _, w := range a.bubbles.windows() {
-		SettingsChanged.Emit(w, s)
-	}
+	a.bubbles.applySettings(s)
 	a.mu.Lock()
 	settingsWin := a.settingsWin
 	a.mu.Unlock()
@@ -571,11 +569,11 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 		a.bubbles.finishRun(win, req.ReqID)
 		return
 	}
-	RunMeta.Emit(win, meta)
+	a.bubbles.pushMeta(win, meta)
 	if req.Service != "" && !slices.Contains(services, req.Service) {
 		msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Err: "该服务当前不可用，请检查设置"}
 		if a.bubbles.recordResult(win, msg) {
-			TranslationUpdate.Emit(win, msg)
+			a.bubbles.pushResult(win, msg)
 		}
 		a.bubbles.finishRun(win, req.ReqID)
 		return
@@ -588,7 +586,7 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 			}
 			msg := TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err, Streaming: res.Streaming}
 			if a.bubbles.recordResult(win, msg) {
-				TranslationUpdate.Emit(win, msg)
+				a.bubbles.pushResult(win, msg)
 			}
 		}
 		if text == "" {

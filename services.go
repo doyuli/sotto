@@ -4,18 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/transfer"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
-	"sotto/internal/naming"
-	"sotto/internal/selection"
 	"sotto/internal/translate"
 )
 
@@ -123,92 +119,6 @@ func (ConfigSvc) DeeplUsage() (DeeplUsage, error) {
 	return DeeplUsage{Used: used, Limit: limit}, err
 }
 
-// TranslateSvc runs translations for the pages.
-type TranslateSvc struct{ app *application }
-
-// Run translates req and pushes the results to the calling window as
-// translation-update events, including cumulative text while a service streams.
-func (s TranslateSvc) Run(ctx context.Context, req RunReq) error {
-	win := mygo.CallerWindow(ctx)
-	if win == nil {
-		return errors.New("no calling window")
-	}
-	if req.Text == "" {
-		return nil
-	}
-	s.app.runTranslation(win, req)
-	return nil
-}
-
-// Cancel stops a run; the next one cancels the last on its own, so this
-// is for the pages' explicit stop.
-func (s TranslateSvc) Cancel(ctx context.Context, sessionID string, revision int64) {
-	s.app.bubbles.Cancel(mygo.CallerWindow(ctx), sessionID, revision)
-}
-
-// FormatOption is one naming style of a translation, ready to copy.
-type FormatOption struct {
-	Style string `json:"style"`
-	Label string `json:"label"`
-	Value string `json:"value"`
-}
-
-// Formats turns an English translation into the configured naming
-// styles, for the bubble's copy chips.
-func (s TranslateSvc) Formats(text string) []FormatOption {
-	words := naming.SplitWords(text)
-	var out []FormatOption
-	for _, style := range s.app.settings().CopyFormats {
-		out = append(out, FormatOption{
-			Style: style,
-			Label: naming.Labels[style],
-			Value: naming.Format(words, style),
-		})
-	}
-	return out
-}
-
-// BubbleSvc serves the bubble pages.
-type BubbleSvc struct{ app *application }
-
-// Ready returns the bubble's state. Its page asks on mounting, because
-// events sent before its DOM is ready are held only in small numbers.
-func (s BubbleSvc) Ready(id int64) (BubbleState, error) {
-	state, ok := s.app.bubbles.State(s.app.settings(), id)
-	if !ok {
-		return BubbleState{}, errors.New("no such bubble")
-	}
-	return state, nil
-}
-
-// Rendered reports whether the UI thread accepted and applied the measurement.
-func (s BubbleSvc) Rendered(ctx context.Context, id int64, sessionID string, showID, layoutID, sequence int64, height float64) bool {
-	return s.app.bubbles.Rendered(ctx, mygo.CallerWindow(ctx), id, sessionID, showID, layoutID, sequence, height)
-}
-
-// SetPinned changes pin state only for the caller's current presentation.
-func (s BubbleSvc) SetPinned(ctx context.Context, id int64, sessionID string, showID int64, pinned bool) bool {
-	return s.app.bubbles.SetPinned(ctx, s.app.settings(), mygo.CallerWindow(ctx), id, sessionID, showID, pinned)
-}
-
-// Close reports whether this presentation's close was accepted.
-func (s BubbleSvc) Close(id int64, sessionID string, showID, revision int64) bool {
-	return s.app.bubbles.Close(id, sessionID, showID, revision)
-}
-
-// OpenTranslationSettings opens the services tab from the bubble.
-func (s BubbleSvc) OpenTranslationSettings() {
-	mygo.RunOnMain(func() { s.app.showSettings(true) })
-}
-
-// Copy puts text on the clipboard.
-func (BubbleSvc) Copy(text string) error {
-	if err := mygo.Clipboard.Write(transfer.TextData(text)); err != nil {
-		return fmt.Errorf("复制失败: %w", err)
-	}
-	return nil
-}
-
 // HotkeySvc checks whether a global shortcut is available.
 type HotkeySvc struct{}
 
@@ -216,27 +126,3 @@ type HotkeySvc struct{}
 func (HotkeySvc) Busy(accel string) bool {
 	return mygo.GlobalShortcut.IsRegistered(accel)
 }
-
-// SnipSvc starts native screenshot selection from the bubble's recovery action.
-type SnipSvc struct{ app *application }
-
-// Start opens a new screenshot session from a recovery action.
-func (s SnipSvc) Start() { mygo.RunOnMain(func() { s.app.startEntry("ocr") }) }
-
-// RestoreClipboard retries a retained snapshot without replacing a newer copy.
-func (BubbleSvc) RestoreClipboard(id string) error {
-	err := selection.RecoverClipboard(id)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, selection.ErrSourceChanged):
-		return errors.New("你已复制了新内容，本次没有覆盖它。可放弃恢复之前的内容，然后继续取词。")
-	case errors.Is(err, selection.ErrClipboardRecoveryGone):
-		return errors.New("之前的剪贴板内容已恢复或已放弃恢复，请重新打开面板。")
-	default:
-		log.Printf("clipboard recovery: %v", err)
-		return errors.New("暂时无法恢复剪贴板，之前的内容仍在，可稍后重试。")
-	}
-}
-
-func (BubbleSvc) DiscardClipboardRecovery(id string) { selection.DiscardClipboardRecovery(id) }

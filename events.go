@@ -69,17 +69,7 @@ type RunStoppedMsg struct {
 }
 
 var (
-	// BubbleLayoutChanged updates the reading budget after a display or zoom change.
-	BubbleLayoutChanged = mygo.NewEvent[float64]("bubble-layout-changed")
-	RunStopped          = mygo.NewEvent[RunStoppedMsg]("run-stopped")
-	BubblePresented     = mygo.NewEvent[BubblePresentedMsg]("bubble-presented")
-	// BubbleReset re-initializes a reused bubble's page.
-	BubbleReset = mygo.NewEvent[BubbleState]("bubble-reset")
-	// TranslationUpdate reports one service result as it arrives.
-	TranslationUpdate = mygo.NewEvent[TranslationUpdateMsg]("translation-update")
-	// RunMeta reports a request's resolved languages before its results.
-	RunMeta = mygo.NewEvent[RunMetaMsg]("run-meta")
-	// SettingsChanged tells every page the new settings.
+	// SettingsChanged tells the settings page the new settings.
 	SettingsChanged = mygo.NewEvent[config.Settings]("settings-changed")
 	// OpenTranslationSettings selects the services tab in an existing window.
 	OpenTranslationSettings = mygo.NewEvent[bool]("open-translation-settings")

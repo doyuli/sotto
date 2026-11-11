@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, vi } from "vitest";
 import { tick, unmount, type mount } from "svelte";
-import type { BubbleState, Settings } from "../../src/mygo";
+import type { Settings } from "../../src/mygo";
 
 class MockBackend {
   settings: Settings = {
@@ -18,33 +18,6 @@ class MockBackend {
     identifier: { autoSplit: true, stripCodeComments: false, flattenNewlines: false, stripMarkdown: false },
     copyFormats: ["lowerCamel", "snake"],
     hotkeys: { panel: "Ctrl+Alt+A", selection: "Ctrl+Alt+D", ocr: "Ctrl+Alt+S" },
-  };
-
-  bubble: BubbleState = {
-    id: 1,
-    maxHeight: 760,
-    layoutID: 1,
-    layoutSequence: 0,
-    showID: 1,
-    sessionID: "test-session",
-    generation: 1,
-    revision: 1,
-    reqID: "initial",
-    serviceRequests: {},
-    text: "Hello world",
-    sourceLang: "en",
-    targetLang: "zh-HANS",
-    trigger: "selection",
-    phase: "",
-    message: "",
-    pinned: false,
-    clipboardRecoveryID: "",
-    meta: null,
-    results: [],
-    settings: {
-      ...structuredClone(this.settings),
-      services: { ...this.settings.services, enabled: ["google", "baidu"], order: ["google", "baidu"] },
-    },
   };
 
   secrets = new Map([["baidu-appid", "app"], ["baidu-key", "secret"]]);
@@ -90,13 +63,6 @@ class MockBackend {
         return false;
       case "ConfigSvc.TestService":
         return "";
-      case "BubbleSvc.Ready":
-        return structuredClone(this.bubble);
-      case "BubbleSvc.Rendered":
-      case "BubbleSvc.Close":
-        return true;
-      case "TranslateSvc.Formats":
-        return [{ style: "lowerCamel", label: "小驼峰", value: "userName" }];
       default:
         return null;
     }

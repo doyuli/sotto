@@ -16,7 +16,7 @@ func (b *bubble) replaceContent(cfg config.Settings, trigger, text, phase, messa
 	b.generation++
 	b.layoutID++
 	b.layoutSequence = 0
-	b.awaitingLayout = true
+	b.awaitingLayout = b.view == nil
 	b.sessionID = newRequestID()
 	b.reqID = b.sessionID
 	b.revision = -1
@@ -160,6 +160,7 @@ func (m *bubbleManager) Cancel(win *mygo.Window, session string, revision int64)
 func (m *bubbleManager) completeCapture(cfg config.Settings, shown Shown, text, message string) bool {
 	m.mu.Lock()
 	var state BubbleState
+	var view *bubbleView
 	found := false
 	for _, b := range m.byID {
 		if b.win == shown.Win && !b.closeClaimed && b.sessionID == shown.ReqID && b.revision == -1 {
@@ -170,13 +171,16 @@ func (m *bubbleManager) completeCapture(cfg config.Settings, shown Shown, text, 
 				b.phase = "error"
 			}
 			state = m.state(b, cfg)
+			view = b.view
 			found = true
 			break
 		}
 	}
 	m.mu.Unlock()
-	if found {
-		BubbleReset.Emit(shown.Win, state)
+	if found && view != nil {
+		shown.Win.Update(func() {
+			view.applyState(state, false)
+		})
 	}
 	return found
 }
@@ -254,7 +258,7 @@ func (b *bubble) shouldHideAfterBlur(showID int64, visible, focused bool) bool {
 // OCR finishes then, require its replacement layout before the first show.
 func (b *bubble) advanceCaptureLayout() {
 	b.layoutID++
-	if !b.presentationShown {
+	if b.view == nil && !b.presentationShown {
 		b.awaitingLayout = true
 	}
 }
