@@ -63,7 +63,7 @@ func TestWinRTIdleReleaseAndRestart(t *testing.T) {
 		f.warm(systemOCR)
 		// A worker held by another operation must survive TryLock failure.
 		w.mu.Lock()
-		f.clock.advance(defaultIdleTimeout)
+		f.clock.advance(defaultSystemIdleTimeout)
 		if w.cmd != cmd || f.clock.active() != 1 {
 			t.Fatal("busy worker was killed or lost its retry")
 		}
@@ -124,7 +124,7 @@ func TestWinRTRequestCannotBeReapedWhileWaitingForResponse(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("worker never received the request")
 	}
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultSystemIdleTimeout)
 	if cmd.ProcessState != nil {
 		t.Fatal("in-flight request was killed at the idle deadline")
 	}

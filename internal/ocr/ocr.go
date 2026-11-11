@@ -49,7 +49,7 @@ type EngineTimings struct {
 }
 
 var admission = make(chan struct{}, 1)
-var idle = newIdleCoordinator(admission, wallIdleClock{}, configuredIdleTimeout(), releaseIdleResource)
+var idle = newIdleCoordinator(admission, wallIdleClock{}, configuredIdleTimeouts(), releaseIdleResource)
 
 func Recognize(ctx context.Context, img image.Image) (Text, error) {
 	return RecognizeWith(ctx, img, "")

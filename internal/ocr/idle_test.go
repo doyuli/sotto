@@ -94,7 +94,8 @@ type idleFixture struct {
 
 func newIdleFixture() *idleFixture {
 	f := &idleFixture{clock: &fakeIdleClock{now: time.Unix(100, 0)}}
-	f.coordinator = newIdleCoordinator(make(chan struct{}, 1), f.clock, defaultIdleTimeout, func(id int) (bool, error) {
+	timeouts := idleTimeouts{localOCR: defaultLocalIdleTimeout, systemOCR: defaultSystemIdleTimeout}
+	f.coordinator = newIdleCoordinator(make(chan struct{}, 1), f.clock, timeouts, func(id int) (bool, error) {
 		f.closed[id]++
 		f.resources[id] = false
 		return true, nil
@@ -117,7 +118,7 @@ func TestIdleNoResourcesAndDeadline(t *testing.T) {
 		t.Fatal("unused OCR created a timer")
 	}
 	f.warm(localOCR)
-	f.clock.advance(defaultIdleTimeout - time.Nanosecond)
+	f.clock.advance(defaultLocalIdleTimeout - time.Nanosecond)
 	if f.closed[localOCR] != 0 {
 		t.Fatal("released before the deadline")
 	}
@@ -140,7 +141,7 @@ func TestIdleStaleCallbackCannotReplaceNewTimer(t *testing.T) {
 	if !current.active || f.clock.active() != 1 || f.closed[0] != 0 {
 		t.Fatal("stale callback changed the current timer or resource")
 	}
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultLocalIdleTimeout)
 	if f.closed[0] != 1 {
 		t.Fatal("new deadline was lost")
 	}
@@ -148,16 +149,21 @@ func TestIdleStaleCallbackCannotReplaceNewTimer(t *testing.T) {
 
 func TestIdleEngineDeadlinesAreIndependent(t *testing.T) {
 	f := newIdleFixture()
+	f.warm(localOCR, systemOCR)
+	interval := defaultSystemIdleTimeout / 2
+	f.clock.advance(interval)
 	f.warm(localOCR)
-	f.clock.advance(2 * time.Minute)
-	f.warm(systemOCR)
-	f.clock.advance(3 * time.Minute)
-	if f.closed != ([engineCount]int{1, 0}) || f.clock.active() != 1 {
-		t.Fatalf("using system OCR renewed local OCR: %v", f.closed)
+	f.clock.advance(interval - time.Nanosecond)
+	if f.closed != ([engineCount]int{}) {
+		t.Fatalf("released before the system deadline: %v", f.closed)
 	}
-	f.clock.advance(2 * time.Minute)
+	f.clock.advance(time.Nanosecond)
+	if f.closed != ([engineCount]int{0, 1}) || f.clock.active() != 1 {
+		t.Fatalf("using local OCR changed the system deadline: %v", f.closed)
+	}
+	f.clock.advance(defaultLocalIdleTimeout - interval)
 	if f.closed != ([engineCount]int{1, 1}) || f.clock.active() != 0 {
-		t.Fatalf("system deadline was lost: %v", f.closed)
+		t.Fatalf("local deadline was lost: %v", f.closed)
 	}
 }
 
@@ -168,7 +174,7 @@ func TestIdleExpiredEngineIsNotStarvedByOtherRequests(t *testing.T) {
 		active := 1 - expired
 		f.warm(expired)
 		lastUsed := f.coordinator.engines[expired].lastUsed
-		f.clock.advance(defaultIdleTimeout - 100*time.Millisecond)
+		f.clock.advance(f.coordinator.timeouts[expired] - 100*time.Millisecond)
 		request := f.coordinator.begin()
 		f.coordinator.admission <- struct{}{}
 		request.used[active], f.resources[active] = true, true
@@ -204,7 +210,7 @@ func TestIdleContentionRetryKeepsItsAbsoluteDeadline(t *testing.T) {
 					return false, nil
 				}
 			}
-			f.clock.advance(defaultIdleTimeout)
+			f.clock.advance(f.coordinator.timeouts[expired])
 			retry := f.clock.latest().at
 			if busyGate {
 				<-f.coordinator.admission
@@ -237,7 +243,7 @@ func TestIdleBusyAdmissionAndWorkerAreRetried(t *testing.T) {
 				return false, nil // The worker's TryLock failed.
 			}
 		}
-		f.clock.advance(defaultIdleTimeout)
+		f.clock.advance(defaultSystemIdleTimeout)
 		if f.closed[systemOCR] != 0 || f.clock.active() != 1 {
 			t.Fatal("busy resource was released or lost its retry")
 		}
@@ -258,7 +264,7 @@ func TestIdleQueuedRequestsProtectResourcesAndRestoreTimer(t *testing.T) {
 	running := f.coordinator.begin()
 	f.coordinator.admission <- struct{}{}
 	queued := f.coordinator.begin()
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultLocalIdleTimeout)
 	old.f()
 	queued.done(nil)
 	if f.closed[0] != 0 || f.clock.active() != 0 {
@@ -266,7 +272,7 @@ func TestIdleQueuedRequestsProtectResourcesAndRestoreTimer(t *testing.T) {
 	}
 	running.used[localOCR] = true
 	running.done(&f.resources)
-	f.clock.advance(defaultIdleTimeout - time.Nanosecond)
+	f.clock.advance(defaultLocalIdleTimeout - time.Nanosecond)
 	if f.closed[0] != 0 {
 		t.Fatal("idle time started before inference actually returned")
 	}
@@ -279,7 +285,8 @@ func TestIdleQueuedRequestsProtectResourcesAndRestoreTimer(t *testing.T) {
 func TestIdleCommittedReleaseSurvivesNewCanceledRequest(t *testing.T) {
 	f := newIdleFixture()
 	f.warm(localOCR)
-	f.clock.advance(2 * time.Minute)
+	interval := defaultSystemIdleTimeout / 2
+	f.clock.advance(defaultLocalIdleTimeout - interval)
 	f.warm(systemOCR)
 	started, resume, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	release := f.coordinator.release
@@ -288,7 +295,7 @@ func TestIdleCommittedReleaseSurvivesNewCanceledRequest(t *testing.T) {
 		<-resume
 		return release(id)
 	}
-	go func() { f.clock.advance(3 * time.Minute); close(finished) }()
+	go func() { f.clock.advance(interval); close(finished) }()
 	<-started
 	queued := f.coordinator.begin()
 	queued.done(nil)
@@ -298,7 +305,7 @@ func TestIdleCommittedReleaseSurvivesNewCanceledRequest(t *testing.T) {
 	if f.coordinator.releasing || f.coordinator.requests != 0 || len(f.coordinator.admission) != 0 || f.closed != ([engineCount]int{1, 0}) || f.clock.active() != 1 {
 		t.Fatalf("committed release lost cleanup: %+v, %v", f.coordinator, f.closed)
 	}
-	f.clock.advance(2 * time.Minute)
+	f.clock.advance(interval)
 	if f.closed[systemOCR] != 1 {
 		t.Fatal("remaining resource lost its deadline")
 	}
@@ -315,7 +322,7 @@ func TestIdleCloseErrorLeavesCacheTerminalAndCanReload(t *testing.T) {
 		}
 		return gone, nil
 	}
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultLocalIdleTimeout)
 	f.clock.advance(time.Hour)
 	if f.closed != ([engineCount]int{1, 1}) || f.clock.active() != 0 || f.coordinator.engines[0].loaded {
 		t.Fatal("close error left a ghost cache or recurring retry")
@@ -327,7 +334,7 @@ func TestIdleCloseErrorLeavesCacheTerminalAndCanReload(t *testing.T) {
 		if f.clock.active() != 1 {
 			t.Fatal("repeated warm use created multiple timers")
 		}
-		f.clock.advance(defaultIdleTimeout)
+		f.clock.advance(defaultLocalIdleTimeout)
 		if f.clock.active() != 0 || f.coordinator.releasing || len(f.coordinator.admission) != 0 {
 			t.Fatal("release cycle leaked a timer or gate")
 		}
@@ -351,27 +358,38 @@ func TestIdleInitializationFailureAndCanceledAttempt(t *testing.T) {
 	r = f.coordinator.begin()
 	f.coordinator.admission <- struct{}{}
 	r.used[localOCR] = true
-	f.clock.advance(defaultIdleTimeout) // Canceled native work has not returned.
+	f.clock.advance(defaultLocalIdleTimeout) // Canceled native work has not returned.
 	if f.closed[0] != 0 {
 		t.Fatal("cancellation released native work prematurely")
 	}
 	r.done(&f.resources)
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultLocalIdleTimeout)
 	if f.closed[0] != 1 {
 		t.Fatal("failed/canceled attempt did not renew its cached resource")
 	}
 }
 
 func TestIdleTimeoutConfiguration(t *testing.T) {
-	for _, value := range []string{"0", "-1s", "bad", "1e100h"} {
-		if got, err := idleTimeout(value); err == nil || got != defaultIdleTimeout {
-			t.Fatalf("invalid override %q: %v, %v", value, got, err)
-		}
-	}
-	for value, want := range map[string]time.Duration{"": defaultIdleTimeout, "2s": 2 * time.Second, "1m30s": 90 * time.Second} {
-		if got, err := idleTimeout(value); err != nil || got != want {
-			t.Fatalf("override %q: %v, %v", value, got, err)
-		}
+	for _, tc := range []struct {
+		name         string
+		local, winrt string
+		want         idleTimeouts
+	}{
+		{"defaults", "", "", idleTimeouts{5 * time.Minute, 30 * time.Second}},
+		{"local override only", "2s", "", idleTimeouts{2 * time.Second, 30 * time.Second}},
+		{"Windows override only", "", "1m30s", idleTimeouts{5 * time.Minute, 90 * time.Second}},
+		{"both overrides", "2s", "1m30s", idleTimeouts{2 * time.Second, 90 * time.Second}},
+		{"invalid local override", "bad", "1m30s", idleTimeouts{5 * time.Minute, 90 * time.Second}},
+		{"invalid Windows override", "2s", "bad", idleTimeouts{2 * time.Second, 30 * time.Second}},
+		{"nonpositive overrides", "0", "-1s", idleTimeouts{5 * time.Minute, 30 * time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SOTTO_OCR_IDLE", tc.local)
+			t.Setenv("SOTTO_OCR_WINRT_IDLE", tc.winrt)
+			if got := configuredIdleTimeouts(); got != tc.want {
+				t.Fatalf("idle timeouts = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -383,7 +401,7 @@ func TestRequestEarlyReturnsRestoreExistingDeadlines(t *testing.T) {
 			last := f.coordinator.engines[0].lastUsed
 			// The timer is due but its callback has not been dispatched yet.
 			f.clock.mu.Lock()
-			f.clock.now = f.clock.now.Add(defaultIdleTimeout)
+			f.clock.now = f.clock.now.Add(defaultLocalIdleTimeout)
 			f.clock.mu.Unlock()
 			base, cancel := context.WithCancel(context.Background())
 			var ctx context.Context = base
@@ -434,7 +452,7 @@ func TestRequestFallbackSharesAdmissionAndRenewal(t *testing.T) {
 		func(ctx context.Context, img image.Image, lang string, request *idleRequest) (Text, error) {
 			local := func(context.Context, image.Image, string) (Text, error) {
 				request.used[localOCR] = true
-				f.clock.advance(defaultIdleTimeout)
+				f.clock.advance(defaultLocalIdleTimeout)
 				return Text{}, errors.New("local unavailable")
 			}
 			system := func(context.Context, image.Image, string) (Text, error) {
@@ -456,7 +474,11 @@ func TestRequestFallbackSharesAdmissionAndRenewal(t *testing.T) {
 	if err != nil || f.clock.active() != 1 || f.coordinator.requests != 0 {
 		t.Fatalf("fallback completion: %v, timers=%d", err, f.clock.active())
 	}
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultSystemIdleTimeout)
+	if f.closed != ([engineCount]int{0, 1}) {
+		t.Fatalf("fallback must release the worker first: %v", f.closed)
+	}
+	f.clock.advance(defaultLocalIdleTimeout - defaultSystemIdleTimeout)
 	if f.closed != ([engineCount]int{1, 1}) {
 		t.Fatalf("both attempts must renew from completion: %v", f.closed)
 	}
@@ -482,7 +504,7 @@ func TestCanceledNativeRequestKeepsAdmissionUntilActualReturn(t *testing.T) {
 	}()
 	<-started
 	cancel()
-	f.clock.advance(defaultIdleTimeout)
+	f.clock.advance(defaultLocalIdleTimeout)
 	old.f()
 	select {
 	case <-done:
@@ -499,7 +521,7 @@ func TestCanceledNativeRequestKeepsAdmissionUntilActualReturn(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	f.clock.advance(defaultIdleTimeout - time.Nanosecond)
+	f.clock.advance(defaultLocalIdleTimeout - time.Nanosecond)
 	if f.closed[localOCR] != 0 {
 		t.Fatal("idle deadline started before native completion")
 	}

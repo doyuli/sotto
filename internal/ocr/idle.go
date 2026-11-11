@@ -1,7 +1,6 @@
 package ocr
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -9,14 +8,16 @@ import (
 )
 
 const (
-	defaultIdleTimeout = 5 * time.Minute
-	idleRetryDelay     = time.Second
-	localOCR           = 0
-	systemOCR          = 1
-	engineCount        = 2
+	defaultLocalIdleTimeout  = 5 * time.Minute
+	defaultSystemIdleTimeout = 30 * time.Second
+	idleRetryDelay           = time.Second
+	localOCR                 = 0
+	systemOCR                = 1
+	engineCount              = 2
 )
 
 type engineResources [engineCount]bool
+type idleTimeouts [engineCount]time.Duration
 
 type idleTimer interface{ Stop() bool }
 type idleClock interface {
@@ -51,7 +52,7 @@ type idleCoordinator struct {
 	mu         sync.Mutex
 	admission  chan struct{}
 	clock      idleClock
-	timeout    time.Duration
+	timeouts   idleTimeouts
 	release    func(int) (bool, error)
 	engines    [engineCount]idleEngine
 	requests   int
@@ -60,8 +61,8 @@ type idleCoordinator struct {
 	timer      idleTimer
 }
 
-func newIdleCoordinator(gate chan struct{}, clock idleClock, timeout time.Duration, release func(int) (bool, error)) *idleCoordinator {
-	return &idleCoordinator{admission: gate, clock: clock, timeout: timeout, release: release}
+func newIdleCoordinator(gate chan struct{}, clock idleClock, timeouts idleTimeouts, release func(int) (bool, error)) *idleCoordinator {
+	return &idleCoordinator{admission: gate, clock: clock, timeouts: timeouts, release: release}
 }
 
 type idleRequest struct {
@@ -120,8 +121,8 @@ func (c *idleCoordinator) scheduleLocked() {
 		return
 	}
 	var next time.Time
-	for _, e := range c.engines {
-		if deadline := e.deadline(c.timeout); e.loaded && (next.IsZero() || deadline.Before(next)) {
+	for i, e := range c.engines {
+		if deadline := e.deadline(c.timeouts[i]); e.loaded && (next.IsZero() || deadline.Before(next)) {
 			next = deadline
 		}
 	}
@@ -151,7 +152,7 @@ func (c *idleCoordinator) expire(generation uint64) {
 		if c.generation == claim {
 			now := c.clock.Now()
 			for i, e := range c.engines {
-				if e.loaded && !now.Before(e.deadline(c.timeout)) {
+				if e.loaded && !now.Before(e.deadline(c.timeouts[i])) {
 					c.engines[i].retryAt = now.Add(idleRetryDelay)
 				}
 			}
@@ -167,7 +168,7 @@ func (c *idleCoordinator) expire(generation uint64) {
 	}
 	var due engineResources
 	for i, e := range c.engines {
-		due[i] = e.loaded && !c.clock.Now().Before(e.deadline(c.timeout))
+		due[i] = e.loaded && !c.clock.Now().Before(e.deadline(c.timeouts[i]))
 	}
 	if due == (engineResources{}) {
 		c.scheduleLocked()
@@ -203,24 +204,26 @@ func (c *idleCoordinator) expire(generation uint64) {
 	c.mu.Unlock()
 }
 
-func idleTimeout(value string) (time.Duration, error) {
+func configuredIdleTimeouts() idleTimeouts {
+	return idleTimeouts{
+		localOCR:  configuredIdleTimeout("SOTTO_OCR_IDLE", defaultLocalIdleTimeout),
+		systemOCR: configuredIdleTimeout("SOTTO_OCR_WINRT_IDLE", defaultSystemIdleTimeout),
+	}
+}
+
+func configuredIdleTimeout(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
 	if value == "" {
-		return defaultIdleTimeout, nil
+		return fallback
 	}
 	d, err := time.ParseDuration(value)
 	if err != nil {
-		return defaultIdleTimeout, fmt.Errorf("ocr: SOTTO_OCR_IDLE: %w", err)
+		log.Printf("ocr: %s: %v; using %s", name, err, fallback)
+		return fallback
 	}
 	if d <= 0 {
-		return defaultIdleTimeout, fmt.Errorf("ocr: SOTTO_OCR_IDLE must be positive")
-	}
-	return d, nil
-}
-
-func configuredIdleTimeout() time.Duration {
-	d, err := idleTimeout(os.Getenv("SOTTO_OCR_IDLE"))
-	if err != nil {
-		log.Printf("%v; using %s", err, d)
+		log.Printf("ocr: %s must be positive; using %s", name, fallback)
+		return fallback
 	}
 	return d
 }
