@@ -249,9 +249,7 @@ func TestSettingsViewServicesTab(t *testing.T) {
 	}
 	tt.Type("sec-456")
 	tt.Frame()
-	if err := tt.Click("保存凭证"); err != nil {
-		t.Fatalf("Click 保存凭证: %v", err)
-	}
+	settingsScrollClick(t, tt, "保存凭证", 780, 600)
 	waitForCondition(t, time.Second, func() bool {
 		tt.Frame()
 		mu.Lock()
@@ -650,6 +648,25 @@ func settingsClick(t *testing.T, tt *ui.Tester, label string) {
 	}
 }
 
+func settingsScrollClick(t *testing.T, tt *ui.Tester, label string, width, height int) {
+	t.Helper()
+	// Font metrics differ across platforms; scroll the real viewport instead of
+	// assuming every expanded drawer fits inside the test window.
+	for range 8 {
+		bounds, ok := tt.Find(label)
+		if !ok {
+			t.Fatalf("missing control %q", label)
+		}
+		if bounds.Y >= 8 && bounds.Y+bounds.H <= float32(height)-8 {
+			settingsClick(t, tt, label)
+			return
+		}
+		dy := bounds.Y + bounds.H/2 - float32(height)/2
+		tt.Scroll(float32(width)-24, float32(height)/2, 0, dy)
+	}
+	t.Fatalf("control %q is still outside the viewport after scrolling", label)
+}
+
 func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
 	for _, svc := range []string{"openai", "siliconflow", "zhipu"} {
 		t.Run(svc, func(t *testing.T) {
@@ -668,11 +685,12 @@ func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
 			})
 			defer v.dispose()
 			waitSettingsIdle(t, v)
-			tt := ui.NewTester(v.render, 780, 900)
-			settingsClick(t, tt, "配置"+bubbleServiceName(svc))
-			settingsClick(t, tt, "编辑API Key")
+			tt := ui.NewTester(v.render, 780, 500)
+			click := func(label string) { settingsScrollClick(t, tt, label, 780, 500) }
+			click("配置" + bubbleServiceName(svc))
+			click("编辑API Key")
 			tt.Type("unfinished-secret")
-			settingsClick(t, tt, "编辑模型")
+			click("编辑模型")
 			tt.Key(ui.Cmd, ui.KeyA)
 			tt.Type(" custom-model ")
 			tt.Key(0, ui.KeyEnter)
@@ -690,7 +708,7 @@ func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
 			if current.Services.OpenAI != want.Services.OpenAI || current.Services.SiliconFlow != want.Services.SiliconFlow || current.Services.Zhipu != want.Services.Zhipu {
 				t.Fatalf("model edit leaked to other services: %+v", current.Services)
 			}
-			settingsClick(t, tt, "编辑模型")
+			click("编辑模型")
 			tt.Key(ui.Cmd, ui.KeyA)
 			tt.Key(0, ui.KeyBackspace)
 			tt.Key(0, ui.KeyEnter)
@@ -714,7 +732,7 @@ func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
 			if len(saved) != 2 {
 				t.Fatalf("saved %d snapshots, want 2", len(saved))
 			}
-			settingsClick(t, tt, "保存凭证")
+			click("保存凭证")
 			waitSettingsIdle(t, v)
 			key := serviceCredentialFields[svc][0].name
 			if written[key] != "unfinished-secret" || written[keys.DeeplKey] != "existing-deepl-key" || len(written) != 2 {
