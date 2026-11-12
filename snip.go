@@ -222,7 +222,7 @@ func (a *application) snipDone(win *mygo.Window, sessionID int64, rect *snipRect
 		}
 		phase, message := "recognizing", "正在识别文字…"
 		if err != nil {
-			phase, message = "error", "截屏失败，请重新框选。"
+			phase, message = "error", capture.UserMessage(err)
 			log.Printf("capture: %v", err)
 		}
 		shown := a.bubbles.ShowTask(a.settings(), "ocr", "", anchor, phase, message, task.valid, task.cancel)

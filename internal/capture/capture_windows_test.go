@@ -1,11 +1,21 @@
 package capture
 
 import (
+	"errors"
 	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestBitBltRejectsOversizedInput(t *testing.T) {
+	for _, size := range [][2]int{{7680, 4320}, {16385, 1}} {
+		img, err := bitBlt(0, 0, size[0], size[1])
+		if img != nil || !errors.Is(err, ErrLimit) {
+			t.Fatalf("oversized capture reached GDI: image=%v err=%v", img, err)
+		}
+	}
+}
 
 // TestGrabSmoke captures a small region of the real screen and keeps it
 // as a PNG when GO_CAPTURE_OUT is set, for the manual checklist: run

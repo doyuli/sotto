@@ -75,18 +75,25 @@ func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, er
 	if err != nil {
 		return result, fmt.Errorf("ocr detection preprocessing: %w", err)
 	}
-	stage = time.Now()
-	out, err := run(ctx, r.det, input)
-	result.Timings.DetectionInferenceUS = time.Since(stage).Microseconds()
+	var boxes []detection
+	var postErr error
+	inference, err := run(ctx, r.det, input, func(out Tensor) error {
+		stage := time.Now()
+		var stats Diagnostics
+		boxes, stats, postErr = detect(ctx, out, tr, r.config)
+		result.Timings.DetectionPostprocessUS = time.Since(stage).Microseconds()
+		result.Diagnostics = stats
+		if postErr != nil {
+			postErr = fmt.Errorf("ocr detection postprocessing: %w", postErr)
+		}
+		return postErr
+	})
+	result.Timings.DetectionInferenceUS = inference.Microseconds()
+	if postErr != nil {
+		return result, postErr
+	}
 	if err != nil {
 		return result, fmt.Errorf("ocr detection inference: %w", err)
-	}
-	stage = time.Now()
-	boxes, stats, err := detect(ctx, out, tr, r.config)
-	result.Timings.DetectionPostprocessUS = time.Since(stage).Microseconds()
-	result.Diagnostics = stats
-	if err != nil {
-		return result, fmt.Errorf("ocr detection postprocessing: %w", err)
 	}
 	lines := make([]Line, 0, len(boxes))
 	for i, box := range boxes {
@@ -105,23 +112,29 @@ func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, er
 		if err != nil {
 			return result, fmt.Errorf("ocr recognition preprocessing %d: %w", i, err)
 		}
-		stage = time.Now()
 		result.Diagnostics.RecognitionCalls++
-		out, err := run(ctx, r.rec, input)
-		result.Timings.RecognitionInferenceUS += time.Since(stage).Microseconds()
+		var decodedLines []decoded
+		inference, err := run(ctx, r.rec, input, func(out Tensor) error {
+			if len(out.Shape) != 3 || out.Shape[0] != 1 {
+				postErr = fmt.Errorf("ocr recognition expected [1,T,C], got %v", out.Shape)
+				return postErr
+			}
+			stage := time.Now()
+			decodedLines, postErr = decode(ctx, out, r.labels, r.config.MaxTensorElements)
+			result.Timings.DecodeUS += time.Since(stage).Microseconds()
+			if postErr != nil {
+				postErr = fmt.Errorf("ocr CTC %d: %w", i, postErr)
+			}
+			return postErr
+		})
+		result.Timings.RecognitionInferenceUS += inference.Microseconds()
+		if postErr != nil {
+			return result, postErr
+		}
 		if err != nil {
 			return result, fmt.Errorf("ocr recognition inference %d: %w", i, err)
 		}
-		if len(out.Shape) != 3 || out.Shape[0] != 1 {
-			return result, fmt.Errorf("ocr recognition expected [1,T,C], got %v", out.Shape)
-		}
-		stage = time.Now()
-		decoded, err := decode(ctx, out, r.labels, r.config.MaxTensorElements)
-		result.Timings.DecodeUS += time.Since(stage).Microseconds()
-		if err != nil {
-			return result, fmt.Errorf("ocr CTC %d: %w", i, err)
-		}
-		d := decoded[0]
+		d := decodedLines[0]
 		if d.text == "" {
 			result.Diagnostics.EmptyLines++
 		}
@@ -134,13 +147,23 @@ func (r *Recognizer) Recognize(ctx context.Context, img image.Image) (Result, er
 	return result, nil
 }
 
-func run(ctx context.Context, r Runner, input Tensor) (Tensor, error) {
+func run(ctx context.Context, r Runner, input Tensor, consume func(Tensor) error) (time.Duration, error) {
 	if err := ctx.Err(); err != nil {
-		return Tensor{}, err
+		return 0, err
 	}
-	out, err := r.Run(ctx, input)
+	start := time.Now()
+	var consuming time.Duration
+	err := r.Run(ctx, input, func(out Tensor) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		start := time.Now()
+		defer func() { consuming += time.Since(start) }()
+		return consume(out)
+	})
+	inference := time.Since(start) - consuming
 	if cancel := ctx.Err(); cancel != nil {
-		return Tensor{}, cancel
+		return inference, cancel
 	}
-	return out, err
+	return inference, err
 }

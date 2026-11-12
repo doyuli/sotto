@@ -257,122 +257,134 @@ func (s *ortSession) Close() error {
 	return nil
 }
 
-func (s *ortSession) Run(ctx context.Context, input pipeline.Tensor) (pipeline.Tensor, error) {
+// Run lends the first native output to consume while holding the session lock.
+// The consumer must not retain tensor storage or reenter this session.
+func (s *ortSession) Run(ctx context.Context, inputTensor pipeline.Tensor, consume func(pipeline.Tensor) error) error {
 	if err := ctx.Err(); err != nil {
-		return pipeline.Tensor{}, err
+		return err
 	}
-	data, shape, err := s.run(input.Data, input.Shape)
-	if canceled := ctx.Err(); canceled != nil {
-		return pipeline.Tensor{}, canceled
-	}
-	return pipeline.Tensor{Data: data, Shape: shape}, err
-}
-
-// run feeds one float32 tensor and returns the first output tensor.
-func (s *ortSession) run(input []float32, shape []int64) ([]float32, []int64, error) {
+	// A native output may alias caller-supplied input storage. Keep it alive
+	// until the consumer and ReleaseValue have both finished.
+	defer func() { runtime.KeepAlive(inputTensor) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.ptr == 0 {
-		return nil, nil, fmt.Errorf("ocr: session closed")
+		return fmt.Errorf("ocr: session closed")
 	}
-	n, err := tensorElements(shape)
+	out, err := s.infer(inputTensor.Data, inputTensor.Shape)
+	if out != 0 {
+		defer s.rt.call(ortSlotReleaseValue, out)
+	}
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	if len(input) != n {
-		return nil, nil, fmt.Errorf("ocr: input shape/data mismatch")
-	}
-	// The DLL borrows these buffers until Run returns; uintptr arguments
-	// alone do not keep their backing storage reachable to the GC.
-	defer func() { runtime.KeepAlive(input); runtime.KeepAlive(shape) }()
-
-	var in uintptr
-	if err := s.rt.check(s.rt.call(ortSlotCreateTensorWithDataAsOrtValue, s.rt.memInfo,
-		uintptr(unsafe.Pointer(&input[0])), uintptr(len(input)*4),
-		uintptr(unsafe.Pointer(&shape[0])), uintptr(len(shape)), ortTensorFloat,
-		uintptr(unsafe.Pointer(&in))), "CreateTensor"); err != nil {
-		return nil, nil, err
-	}
-	defer s.rt.call(ortSlotReleaseValue, in)
-
-	inName, err := syscall.BytePtrFromString(s.inputName)
-	if err != nil {
-		return nil, nil, err
-	}
-	outName, err := syscall.BytePtrFromString(s.outputName)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { runtime.KeepAlive(inName); runtime.KeepAlive(outName) }()
-	inNames := []uintptr{uintptr(unsafe.Pointer(inName))}
-	inputs := []uintptr{in}
-	outNames := []uintptr{uintptr(unsafe.Pointer(outName))}
-	outputs := make([]uintptr, 1)
-	if err := s.rt.check(s.rt.call(ortSlotRun, s.ptr, 0,
-		uintptr(unsafe.Pointer(&inNames[0])), uintptr(unsafe.Pointer(&inputs[0])), 1,
-		uintptr(unsafe.Pointer(&outNames[0])), 1,
-		uintptr(unsafe.Pointer(&outputs[0]))), "Run"); err != nil {
-		return nil, nil, err
-	}
-	out := outputs[0]
 	if out == 0 {
-		return nil, nil, fmt.Errorf("ocr: missing output tensor")
+		return fmt.Errorf("ocr: missing output tensor")
 	}
-	defer s.rt.call(ortSlotReleaseValue, out)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	var info uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetTensorTypeAndShape, out,
 		uintptr(unsafe.Pointer(&info))), "GetTensorTypeAndShape"); err != nil {
-		return nil, nil, err
+		return err
 	}
 	defer s.rt.call(ortSlotReleaseTensorTypeAndShape, info)
 	var elementType int32
 	if err := s.rt.check(s.rt.call(ortSlotGetTensorElementType, info,
 		uintptr(unsafe.Pointer(&elementType))), "GetTensorElementType"); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if elementType != ortTensorFloat {
-		return nil, nil, fmt.Errorf("ocr: output is not float32")
+		return fmt.Errorf("ocr: output is not float32")
 	}
 
 	var dimCount uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetDimensionsCount, info,
 		uintptr(unsafe.Pointer(&dimCount))), "GetDimensionsCount"); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if dimCount == 0 || dimCount > 4 {
-		return nil, nil, fmt.Errorf("ocr: invalid output rank %d", dimCount)
+		return fmt.Errorf("ocr: invalid output rank %d", dimCount)
 	}
 	dims := make([]int64, dimCount)
 	if dimCount > 0 {
 		if err := s.rt.check(s.rt.call(ortSlotGetDimensions, info,
 			uintptr(unsafe.Pointer(&dims[0])), dimCount), "GetDimensions"); err != nil {
-			return nil, nil, err
+			return err
 		}
 	}
 	var count uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetTensorShapeElementCount, info,
 		uintptr(unsafe.Pointer(&count))), "GetTensorShapeElementCount"); err != nil {
-		return nil, nil, err
+		return err
 	}
 	expected, err := tensorElements(dims)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	if count != uintptr(expected) {
-		return nil, nil, fmt.Errorf("ocr: output shape/count mismatch")
+		return fmt.Errorf("ocr: output shape/count mismatch")
 	}
 	var dataPtr uintptr
 	if err := s.rt.check(s.rt.call(ortSlotGetTensorMutableData, out,
 		uintptr(unsafe.Pointer(&dataPtr))), "GetTensorMutableData"); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if dataPtr == 0 || dataPtr%4 != 0 {
-		return nil, nil, fmt.Errorf("ocr: invalid output data pointer")
+		return fmt.Errorf("ocr: invalid output data pointer")
 	}
-	result := make([]float32, expected)
-	copy(result, unsafe.Slice((*float32)(native(dataPtr)), expected))
-	return result, dims, nil
+	// The consumer finishes before ReleaseValue and before Close can acquire mu.
+	data := unsafe.Slice((*float32)(native(dataPtr)), expected)
+	err = consume(pipeline.Tensor{Data: data, Shape: dims})
+	if canceled := ctx.Err(); canceled != nil {
+		return canceled
+	}
+	return err
+}
+
+// infer releases the input OrtValue before output processing. Run keeps the
+// underlying Go storage alive in case the native output aliases the input.
+// The caller holds mu and owns any returned output, including on Run failure.
+func (s *ortSession) infer(input []float32, shape []int64) (uintptr, error) {
+	n, err := tensorElements(shape)
+	if err != nil {
+		return 0, err
+	}
+	if len(input) != n {
+		return 0, fmt.Errorf("ocr: input shape/data mismatch")
+	}
+	var in uintptr
+	if err := s.rt.check(s.rt.call(ortSlotCreateTensorWithDataAsOrtValue, s.rt.memInfo,
+		uintptr(unsafe.Pointer(&input[0])), uintptr(len(input)*4),
+		uintptr(unsafe.Pointer(&shape[0])), uintptr(len(shape)), ortTensorFloat,
+		uintptr(unsafe.Pointer(&in))), "CreateTensor"); err != nil {
+		return 0, err
+	}
+	defer s.rt.call(ortSlotReleaseValue, in)
+
+	inName, err := syscall.BytePtrFromString(s.inputName)
+	if err != nil {
+		return 0, err
+	}
+	outName, err := syscall.BytePtrFromString(s.outputName)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { runtime.KeepAlive(inName); runtime.KeepAlive(outName) }()
+	inNames := []uintptr{uintptr(unsafe.Pointer(inName))}
+	inputs := []uintptr{in}
+	outNames := []uintptr{uintptr(unsafe.Pointer(outName))}
+	outputs := [1]uintptr{}
+	err = s.rt.check(s.rt.call(ortSlotRun, s.ptr, 0,
+		uintptr(unsafe.Pointer(&inNames[0])), uintptr(unsafe.Pointer(&inputs[0])), 1,
+		uintptr(unsafe.Pointer(&outNames[0])), 1,
+		uintptr(unsafe.Pointer(&outputs[0]))), "Run")
+	return outputs[0], err
 }
 
 // cString reads a NUL-terminated byte string owned by the DLL.

@@ -12,7 +12,13 @@ import (
 
 type runnerFunc func(context.Context, Tensor) (Tensor, error)
 
-func (f runnerFunc) Run(ctx context.Context, in Tensor) (Tensor, error) { return f(ctx, in) }
+func (f runnerFunc) Run(ctx context.Context, in Tensor, consume func(Tensor) error) error {
+	out, err := f(ctx, in)
+	if err != nil {
+		return err
+	}
+	return consume(out)
+}
 
 type closingRunner struct {
 	runnerFunc
