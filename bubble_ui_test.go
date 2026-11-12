@@ -414,7 +414,7 @@ func TestBubbleViewRetryUsesCurrentComposer(t *testing.T) {
 				if err := tt.Click("要翻译的原文"); err != nil {
 					t.Fatal(err)
 				}
-				tt.Key(ui.Ctrl, ui.KeyA)
+				tt.Key(ui.Cmd, ui.KeyA)
 				tt.Type("B")
 				if v.composerText != "B" {
 					t.Fatalf("composer = %q, want B before retry", v.composerText)
@@ -463,7 +463,7 @@ func TestBubbleViewKeyboardEmptyCancelsAndRejectsLateResult(t *testing.T) {
 	if !tt.HasText("old result") || v.detected != "en" {
 		t.Fatal("expected an active streaming result with detected language before clearing")
 	}
-	tt.Key(ui.Ctrl, ui.KeyA)
+	tt.Key(ui.Cmd, ui.KeyA)
 	tt.Key(0, ui.KeyBackspace)
 	if v.composerText != "" {
 		t.Fatalf("keyboard clear left composer=%q", v.composerText)
