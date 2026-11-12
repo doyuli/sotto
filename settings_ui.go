@@ -770,10 +770,8 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 		// Link to console
 		ui.Row(c).Children(func() {
 			link := ui.ButtonBase(c).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
-			if link.Clicked() && v.actions.openKeyPage != nil {
-				if err := v.actions.openKeyPage(svc); err != nil {
-					c.Toast(err.Error())
-				}
+			if link.Clicked() {
+				v.openKeyPageAsync(svc)
 			}
 			link.Children(func() {
 				txt := ui.Text(c, "前往控制台获取凭证 →").FontSize(12).TextColor(p.accentText)

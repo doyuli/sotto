@@ -290,6 +290,31 @@ func (v *settingsView) refreshCredentialsAsync() {
 	})
 }
 
+func (v *settingsView) openKeyPageAsync(service string) {
+	v.mu.Lock()
+	if v.disposed || v.actions.openKeyPage == nil {
+		v.mu.Unlock()
+		return
+	}
+	generation := v.windowGeneration
+	v.mu.Unlock()
+
+	// Shell startup may block; keep it independent of the UI and settings writer.
+	go func() {
+		if err := v.actions.openKeyPage(service); err != nil {
+			v.mu.Lock()
+			stale := v.disposed || generation != v.windowGeneration
+			if !stale {
+				v.pendingToast = err.Error()
+			}
+			v.mu.Unlock()
+			if !stale {
+				v.invalidate()
+			}
+		}
+	}()
+}
+
 func (v *settingsView) loadDeeplUsageAsync() {
 	if v.actions.deeplUsage == nil {
 		return

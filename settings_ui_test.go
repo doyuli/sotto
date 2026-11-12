@@ -211,12 +211,11 @@ func TestSettingsViewServicesTab(t *testing.T) {
 	if err := tt.Click("前往控制台获取凭证"); err != nil {
 		t.Fatalf("Click console link: %v", err)
 	}
-	mu.Lock()
-	gotPage := openedPage
-	mu.Unlock()
-	if gotPage != "deepl" {
-		t.Fatalf("openedPage = %q, want deepl", gotPage)
-	}
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return openedPage == "deepl"
+	}, "expected DeepL console page to open")
 
 	if err := tt.Click("测试连接"); err != nil {
 		t.Fatalf("Click 测试连接: %v", err)
@@ -259,6 +258,109 @@ func TestSettingsViewServicesTab(t *testing.T) {
 		defer mu.Unlock()
 		return slices.Contains(configured, "baidu") && slices.Contains(stored, keys.BaiduAppID) && slices.Contains(stored, keys.BaiduKey)
 	}, "expected credential saved status")
+}
+
+func TestSettingsConsolePageDoesNotBlockUIOrSettingsWrites(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	// Release a synchronous regression so it fails instead of hanging the suite.
+	deadline := time.AfterFunc(time.Second, unblock)
+	defer deadline.Stop()
+	opened := make(chan string, 1)
+	current := testSettingsConfig()
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings:  func() config.Settings { return current },
+		saveSettings: func(s config.Settings) error { current = s; return nil },
+		credentials:  func() (CredentialStatus, error) { return CredentialStatus{}, nil },
+		openKeyPage: func(service string) error {
+			opened <- service
+			<-release
+			return errors.New("打开控制台失败")
+		},
+	})
+	defer v.dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.render, 780, 900)
+	settingsClick(t, tt, "配置OpenAI")
+	settingsClick(t, tt, "前往控制台获取凭证")
+	select {
+	case service := <-opened:
+		if service != "openai" {
+			t.Fatalf("opened service = %q, want openai", service)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("console page was not opened")
+	}
+
+	// A stalled shell must allow both further UI input and persistent writes.
+	settingsClick(t, tt, "命名转换")
+	settingsClick(t, tt, "切换自动拆分标识符")
+	waitSettingsIdle(t, v)
+	if current.Identifier.AutoSplit {
+		t.Fatal("settings write was blocked by browser startup")
+	}
+	select {
+	case <-release:
+		t.Fatal("UI or settings writes waited for browser startup")
+	default:
+	}
+	deadline.Stop()
+	unblock()
+	waitForCondition(t, time.Second, func() bool {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return v.pendingToast == "打开控制台失败"
+	}, "browser failure was not published")
+	tt.Frame()
+	if !tt.HasText("打开控制台失败") {
+		t.Fatal("browser failure toast was not rendered")
+	}
+}
+
+func TestSettingsConsolePageResultsRespectWindowLifetime(t *testing.T) {
+	for _, outcome := range []string{"success", "error", "detach", "dispose"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				release := make(chan struct{})
+				invalidations := 0
+				v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+					openKeyPage: func(string) error {
+						<-release
+						if outcome == "success" {
+							return nil
+						}
+						return errors.New("打开控制台失败")
+					},
+					invalidate: func() { invalidations++ },
+				})
+				defer v.dispose()
+				v.openKeyPageAsync("openai")
+				synctest.Wait()
+				switch outcome {
+				case "detach":
+					v.detachWindow()
+					v.setActiveTab(tabServices)
+				case "dispose":
+					v.dispose()
+				}
+				before := invalidations
+				close(release)
+				synctest.Wait()
+				v.mu.Lock()
+				toast := v.pendingToast
+				v.mu.Unlock()
+				if outcome == "error" {
+					if toast != "打开控制台失败" || invalidations != before+1 {
+						t.Fatalf("error not published: toast=%q invalidations=%d", toast, invalidations-before)
+					}
+				} else if toast != "" || invalidations != before {
+					t.Fatalf("unexpected UI update: toast=%q invalidations=%d", toast, invalidations-before)
+				}
+			})
+		})
+	}
 }
 
 func TestSettingsViewHotkeysTab(t *testing.T) {
