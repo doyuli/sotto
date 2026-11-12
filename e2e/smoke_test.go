@@ -135,7 +135,7 @@ func TestPanelAndSelectionShareBubble(t *testing.T) {
 	}
 
 	// Reopening a visible input panel keeps its native window and focus. Draft
-	// and in-flight request preservation are covered by the page/state tests.
+	// and in-flight request preservation are covered by the native UI/state tests.
 	handles := visibleHandles(pid)
 	for range 3 {
 		tapAccel(hotkeys["panel"])

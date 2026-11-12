@@ -1,0 +1,907 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+
+	"sotto/internal/config"
+	"sotto/internal/keys"
+)
+
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+func testSettingsConfig() config.Settings {
+	cfg := config.Default()
+	cfg.TargetLanguage = "zh-HANS"
+	cfg.Services.Enabled = []string{"google", "openai"}
+	cfg.Services.Order = []string{"google", "openai", "deepl", "baidu", "index-translate"}
+	return cfg
+}
+
+func TestSettingsViewGeneralTab(t *testing.T) {
+	var mu sync.Mutex
+	saved := []config.Settings{}
+	current := testSettingsConfig()
+
+	v := newSettingsView(tabGeneral, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			saved = append(saved, s)
+			return nil
+		},
+		credentials: func() (CredentialStatus, error) {
+			return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
+		},
+	})
+	defer v.dispose()
+
+	tt := ui.NewTester(v.render, 780, 600)
+	tt.Frame()
+
+	if !tt.HasText("通用") || !tt.HasText("Windows 凭据保护") {
+		t.Fatalf("missing general tab content: %v", tt.Texts())
+	}
+
+	if err := tt.Click("切换开机自启"); err != nil {
+		t.Fatalf("Click 切换开机自启: %v", err)
+	}
+	if err := tt.Click("切换失焦自动隐藏"); err != nil {
+		t.Fatalf("Click 切换失焦自动隐藏: %v", err)
+	}
+	if err := tt.Click("切换自动更新"); err != nil {
+		t.Fatalf("Click 切换自动更新: %v", err)
+	}
+
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(saved) == 3
+	}, "expected 3 saved snapshots for general switches")
+
+	mu.Lock()
+	last := saved[len(saved)-1]
+	mu.Unlock()
+	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate {
+		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v", last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate)
+	}
+}
+
+func TestSettingsViewServicesTab(t *testing.T) {
+	var mu sync.Mutex
+	current := testSettingsConfig()
+	stored := []string{keys.OpenAIKey, keys.DeeplKey}
+	configured := []string{"openai", "deepl"}
+	credFails := true
+	var openedPage string
+	var testedSvc string
+
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			return nil
+		},
+		credentials: func() (CredentialStatus, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if credFails {
+				return CredentialStatus{}, errors.New("keyring locked")
+			}
+			return CredentialStatus{
+				Stored:     slices.Clone(stored),
+				Configured: slices.Clone(configured),
+			}, nil
+		},
+		setSecret: func(name, value string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if value == "" {
+				stored = slices.DeleteFunc(stored, func(s string) bool { return s == name })
+				if name == keys.OpenAIKey {
+					configured = slices.DeleteFunc(configured, func(s string) bool { return s == "openai" })
+				}
+			} else {
+				if !slices.Contains(stored, name) {
+					stored = append(stored, name)
+				}
+				if name == keys.BaiduAppID || name == keys.BaiduKey {
+					if slices.Contains(stored, keys.BaiduAppID) && slices.Contains(stored, keys.BaiduKey) && !slices.Contains(configured, "baidu") {
+						configured = append(configured, "baidu")
+					}
+				}
+			}
+			return nil
+		},
+		testService: func(_ context.Context, name string) string {
+			mu.Lock()
+			testedSvc = name
+			mu.Unlock()
+			return ""
+		},
+		openKeyPage: func(svc string) error {
+			mu.Lock()
+			openedPage = svc
+			mu.Unlock()
+			return nil
+		},
+		deeplUsage: func() (DeeplUsage, error) {
+			return DeeplUsage{Used: 1200, Limit: 500000}, nil
+		},
+	})
+	defer v.dispose()
+
+	tt := ui.NewTester(v.render, 780, 600)
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		return tt.HasText("重试")
+	}, "expected initial credential error retry button")
+
+	mu.Lock()
+	credFails = false
+	mu.Unlock()
+	if err := tt.Click("重试"); err != nil {
+		t.Fatalf("Click 重试: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		return tt.HasText("已启用")
+	}, "expected services list after credential retry")
+
+	// Move OpenAI up above Google.
+	if err := tt.Click("上移OpenAI"); err != nil {
+		t.Fatalf("Click 上移OpenAI: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(current.Services.Order) >= 2 && current.Services.Order[0] == "openai"
+	}, "expected OpenAI moved to first position")
+
+	// Expand DeepL drawer and check usage.
+	if err := tt.Click("配置DeepL"); err != nil {
+		t.Fatalf("Click 配置DeepL: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		return tt.HasText("本月已用 1200 / 500000 字符")
+	}, "expected DeepL usage text")
+
+	if err := tt.Click("前往控制台获取凭证"); err != nil {
+		t.Fatalf("Click console link: %v", err)
+	}
+	mu.Lock()
+	gotPage := openedPage
+	mu.Unlock()
+	if gotPage != "deepl" {
+		t.Fatalf("openedPage = %q, want deepl", gotPage)
+	}
+
+	if err := tt.Click("测试连接"); err != nil {
+		t.Fatalf("Click 测试连接: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		return tt.HasText("连接成功")
+	}, "expected connection test success")
+	mu.Lock()
+	gotTested := testedSvc
+	mu.Unlock()
+	if gotTested != "deepl" {
+		t.Fatalf("testedSvc = %q, want deepl", gotTested)
+	}
+
+	if err := tt.Click("收起DeepL"); err != nil {
+		t.Fatalf("Click 收起DeepL: %v", err)
+	}
+
+	// Expand Baidu, enter both credentials, save, and verify configured status updates.
+	if err := tt.Click("配置百度翻译"); err != nil {
+		t.Fatalf("Click 配置百度翻译: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("编辑APP ID"); err != nil {
+		t.Fatalf("focus APP ID: %v", err)
+	}
+	tt.Type("app-123")
+	if err := tt.Click("编辑密钥"); err != nil {
+		t.Fatalf("focus 密钥: %v", err)
+	}
+	tt.Type("sec-456")
+	tt.Frame()
+	if err := tt.Click("保存凭证"); err != nil {
+		t.Fatalf("Click 保存凭证: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Contains(configured, "baidu") && slices.Contains(stored, keys.BaiduAppID) && slices.Contains(stored, keys.BaiduKey)
+	}, "expected credential saved status")
+}
+
+func TestSettingsViewHotkeysTab(t *testing.T) {
+	var mu sync.Mutex
+	current := testSettingsConfig()
+
+	v := newSettingsView(tabHotkeys, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			return nil
+		},
+		hotkeyBusy: func(accel string) bool {
+			return accel == "Ctrl+Alt+B"
+		},
+	})
+	defer v.dispose()
+
+	tt := ui.NewTester(v.render, 780, 600)
+	tt.Frame()
+
+	if err := tt.Click("翻译面板快捷键"); err != nil {
+		t.Fatalf("Click 翻译面板快捷键: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("按下组合键…") {
+		t.Fatal("expected listening label 按下组合键…")
+	}
+
+	// Escape cancels listening.
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if tt.HasText("按下组合键…") {
+		t.Fatal("Escape did not cancel listening")
+	}
+
+	// Immediate Escape right after clicking (no extra tt.Frame() in between) cancels listening.
+	if err := tt.Click("划词翻译快捷键"); err != nil {
+		t.Fatalf("Click 划词翻译快捷键: %v", err)
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if tt.HasText("按下组合键…") {
+		t.Fatal("immediate Escape did not cancel listening")
+	}
+
+	// Switching tabs cancels listening.
+	if err := tt.Click("划词翻译快捷键"); err != nil {
+		t.Fatalf("Click 划词翻译快捷键: %v", err)
+	}
+	if err := tt.Click("通用"); err != nil {
+		t.Fatalf("Click 通用 tab: %v", err)
+	}
+	if err := tt.Click("快捷键"); err != nil {
+		t.Fatalf("Click 快捷键 tab: %v", err)
+	}
+	if tt.HasText("按下组合键…") {
+		t.Fatal("tab switch did not cancel listening")
+	}
+
+	// Busy key reports conflict.
+	if err := tt.Click("翻译面板快捷键"); err != nil {
+		t.Fatalf("Click 翻译面板快捷键: %v", err)
+	}
+	tt.Frame()
+	tt.Key(ui.Ctrl|ui.Alt, ui.KeyB)
+	tt.Frame()
+	if !tt.HasText("该组合键已被其他应用占用") {
+		t.Fatalf("expected hotkey conflict text, texts=%v", tt.Texts())
+	}
+
+	// Valid key updates and saves.
+	if err := tt.Click("翻译面板快捷键"); err != nil {
+		t.Fatalf("Click 翻译面板快捷键: %v", err)
+	}
+	tt.Frame()
+	tt.Key(ui.Ctrl|ui.Shift, ui.KeyK)
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return current.Hotkeys.Panel == "Ctrl+Shift+K"
+	}, "expected panel hotkey saved as Ctrl+Shift+K")
+}
+
+func TestSettingsViewNamingTabAndThemeFollow(t *testing.T) {
+	var mu sync.Mutex
+	current := testSettingsConfig()
+	current.CopyFormats = []string{"lowerCamel", "snake"}
+
+	v := newSettingsView(tabNaming, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			return nil
+		},
+	})
+	defer v.dispose()
+
+	tt := ui.NewTester(v.render, 780, 600)
+	tt.Frame()
+
+	// Disable snake; lowerCamel remains as last one and becomes disabled.
+	if err := tt.Click("切换下划线"); err != nil {
+		t.Fatalf("Click 切换下划线: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Equal(current.CopyFormats, []string{"lowerCamel"})
+	}, "expected CopyFormats to contain only lowerCamel")
+
+	// Clicking the last remaining format must not remove it.
+	_ = tt.Click("切换小驼峰")
+	tt.Frame()
+	mu.Lock()
+	formats := slices.Clone(current.CopyFormats)
+	mu.Unlock()
+	if !slices.Equal(formats, []string{"lowerCamel"}) {
+		t.Fatalf("last remaining format was modified: %v", formats)
+	}
+
+	// Verify light/dark theme switching updates root panel color dynamically.
+	lightPx := tt.Image().RGBAAt(220, 5)
+	if lightPx.R != lightSettingsPalette.panel.R || lightPx.G != lightSettingsPalette.panel.G || lightPx.B != lightSettingsPalette.panel.B {
+		t.Fatalf("light panel pixel = %+v, want %+v", lightPx, lightSettingsPalette.panel)
+	}
+	tt.SetDark(true)
+	tt.Frame()
+	darkPx := tt.Image().RGBAAt(220, 5)
+	if darkPx.R != darkSettingsPalette.panel.R || darkPx.G != darkSettingsPalette.panel.G || darkPx.B != darkSettingsPalette.panel.B {
+		t.Fatalf("dark panel pixel = %+v, want %+v", darkPx, darkSettingsPalette.panel)
+	}
+
+	// External update reconciles when no write is pending.
+	ext := current
+	ext.Identifier.StripMarkdown = true
+	v.applyExternalSettings(ext)
+	tt.Frame()
+	v.mu.Lock()
+	gotStrip := v.settings.Identifier.StripMarkdown
+	v.mu.Unlock()
+	if !gotStrip {
+		t.Fatal("expected external settings update to reconcile")
+	}
+}
+
+func TestSettingsViewDraftFlushAndSaveRollback(t *testing.T) {
+	var mu sync.Mutex
+	current := testSettingsConfig()
+	failNextSave := false
+
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if failNextSave {
+				failNextSave = false
+				return errors.New("disk full")
+			}
+			current = s
+			return nil
+		},
+		credentials: func() (CredentialStatus, error) {
+			return CredentialStatus{
+				Stored:     []string{keys.OpenAIKey},
+				Configured: []string{"openai"},
+			}, nil
+		},
+	})
+
+	defer v.dispose()
+	tt := ui.NewTester(v.render, 780, 600)
+	waitForCondition(t, time.Second, func() bool {
+		tt.Frame()
+		return tt.HasText("配置")
+	}, "expected services loaded")
+
+	if err := tt.Click("配置OpenAI"); err != nil {
+		t.Fatalf("Click 配置OpenAI: %v", err)
+	}
+	if err := tt.Click("编辑Base URL"); err != nil {
+		t.Fatalf("focus 编辑Base URL: %v", err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("https://proxy.example/v1")
+	tt.Frame()
+
+	// Collapsing the drawer must flush the pending Base URL draft.
+	if err := tt.Click("收起OpenAI"); err != nil {
+		t.Fatalf("Click 收起OpenAI: %v", err)
+	}
+	wantBaseURL := "https://proxy.example/v1"
+	waitForCondition(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return current.Services.OpenAI.BaseURL == wantBaseURL
+	}, "expected Base URL draft flushed on drawer collapse")
+
+	// Failed save rolls back from getSettings.
+	mu.Lock()
+	failNextSave = true
+	mu.Unlock()
+	v.setActiveTab(tabNaming)
+	tt.Frame()
+	if err := tt.Click("切换自动拆分标识符"); err != nil {
+		t.Fatalf("Click 切换自动拆分标识符: %v", err)
+	}
+	waitForCondition(t, time.Second, func() bool {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return v.pendingWrites == 0 && v.settings.Identifier.AutoSplit == current.Identifier.AutoSplit
+	}, "expected failed save to reconcile back to saved settings")
+}
+
+func TestSettingsViewSaveFIFOAndDisposeDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		started := make(chan struct{})
+		var saved []string
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+			saveSettings: func(s config.Settings) error {
+				if len(saved) == 0 {
+					close(started)
+					<-release
+				}
+				saved = append(saved, s.Services.OpenAI.BaseURL)
+				return nil
+			},
+		})
+		defer v.dispose()
+		var want []string
+		for i := 0; i < 25; i++ {
+			next := testSettingsConfig()
+			next.Services.OpenAI.BaseURL = fmt.Sprintf("https://seq.example/%d", i)
+			want = append(want, next.Services.OpenAI.BaseURL)
+			v.mu.Lock()
+			v.enqueueSaveLocked(next)
+			v.mu.Unlock()
+		}
+		<-started
+		// Keep the first write in flight while closing, including an uncommitted draft.
+		draft := "https://final.example/v1"
+		v.mu.Lock()
+		v.baseURLDraft = &draft
+		v.mu.Unlock()
+		v.dispose()
+		synctest.Wait()
+		if len(saved) != 0 {
+			t.Fatal("save escaped the barrier")
+		}
+		close(release)
+		synctest.Wait()
+		want = append(want, draft)
+		if !slices.Equal(saved, want) {
+			t.Fatalf("saved snapshots = %v, want FIFO %v", saved, want)
+		}
+		v.mu.Lock()
+		pending := v.pendingWrites
+		v.mu.Unlock()
+		if pending != 0 {
+			t.Fatalf("pending writes after drain = %d", pending)
+		}
+	})
+}
+
+func settingsClick(t *testing.T, tt *ui.Tester, label string) {
+	t.Helper()
+	if err := tt.Click(label); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
+	for _, svc := range []string{"openai", "siliconflow", "zhipu"} {
+		t.Run(svc, func(t *testing.T) {
+			current := config.Default()
+			var saved []config.Settings
+			written := map[string]string{keys.DeeplKey: "existing-deepl-key"}
+			v := newSettingsView(tabServices, current, settingsActions{
+				getSettings: func() config.Settings { return current },
+				saveSettings: func(s config.Settings) error {
+					current = config.Normalize(s)
+					saved = append(saved, cloneSettings(current))
+					return nil
+				},
+				setSecret:   func(key, value string) error { written[key] = value; return nil },
+				credentials: func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{svc}}, nil },
+			})
+			defer v.dispose()
+			waitSettingsIdle(t, v)
+			tt := ui.NewTester(v.render, 780, 900)
+			settingsClick(t, tt, "配置"+bubbleServiceName(svc))
+			settingsClick(t, tt, "编辑API Key")
+			tt.Type("unfinished-secret")
+			settingsClick(t, tt, "编辑模型")
+			tt.Key(ui.Cmd, ui.KeyA)
+			tt.Type(" custom-model ")
+			tt.Key(0, ui.KeyEnter)
+			waitSettingsIdle(t, v)
+			tt.Frame()
+			want := config.Default()
+			switch svc {
+			case "openai":
+				want.Services.OpenAI.Model = "custom-model"
+			case "siliconflow":
+				want.Services.SiliconFlow.Model = "custom-model"
+			case "zhipu":
+				want.Services.Zhipu.Model = "custom-model"
+			}
+			if current.Services.OpenAI != want.Services.OpenAI || current.Services.SiliconFlow != want.Services.SiliconFlow || current.Services.Zhipu != want.Services.Zhipu {
+				t.Fatalf("model edit leaked to other services: %+v", current.Services)
+			}
+			settingsClick(t, tt, "编辑模型")
+			tt.Key(ui.Cmd, ui.KeyA)
+			tt.Key(0, ui.KeyBackspace)
+			tt.Key(0, ui.KeyEnter)
+			waitSettingsIdle(t, v)
+			tt.Frame()
+			defaults := config.Default()
+			if current.Services.OpenAI != defaults.Services.OpenAI || current.Services.SiliconFlow != defaults.Services.SiliconFlow || current.Services.Zhipu != defaults.Services.Zhipu {
+				t.Fatalf("blank model did not restore defaults: %+v", current.Services)
+			}
+			v.mu.Lock()
+			draft := v.serviceDrafts[svc][serviceCredentialFields[svc][0].name]
+			expanded := v.expanded[svc]
+			v.mu.Unlock()
+			field, ok := tt.AccessByRole(ui.RoleTextField, "编辑API Key")
+			if !ok || !field.Password || field.Value != "" {
+				t.Fatalf("credential field is not masked: %+v", field)
+			}
+			if draft != "unfinished-secret" || !expanded || tt.HasText("unfinished-secret") {
+				t.Fatalf("normalization: draft=%q expanded=%v hasText=%v", draft, expanded, tt.HasText("unfinished-secret"))
+			}
+			if len(saved) != 2 {
+				t.Fatalf("saved %d snapshots, want 2", len(saved))
+			}
+			settingsClick(t, tt, "保存凭证")
+			waitSettingsIdle(t, v)
+			key := serviceCredentialFields[svc][0].name
+			if written[key] != "unfinished-secret" || written[keys.DeeplKey] != "existing-deepl-key" || len(written) != 2 {
+				t.Fatalf("credential write crossed service boundaries: %v", written)
+			}
+			v.mu.Lock()
+			remaining := v.serviceDrafts[svc][key]
+			v.mu.Unlock()
+			if remaining != "" {
+				t.Fatal("saved credential draft was not cleared")
+			}
+			tt.Frame()
+		})
+	}
+}
+
+func TestSettingsViewCredentialClearAndReorderPreserveDraft(t *testing.T) {
+	current := testSettingsConfig()
+	stored := []string{keys.OpenAIKey}
+	var cleared string
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings:  func() config.Settings { return current },
+		saveSettings: func(s config.Settings) error { current = s; return nil },
+		credentials: func() (CredentialStatus, error) {
+			status := CredentialStatus{Stored: slices.Clone(stored)}
+			if len(stored) > 0 {
+				status.Configured = []string{"openai"}
+			}
+			return status, nil
+		},
+		setSecret: func(key, value string) error {
+			if value != "" {
+				t.Error("expected credential deletion")
+			}
+			cleared = key
+			stored = nil
+			current.Services.Enabled = []string{"google"}
+			return nil
+		},
+	})
+	defer v.dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.render, 780, 900)
+	settingsClick(t, tt, "配置OpenAI")
+	settingsClick(t, tt, "编辑API Key")
+	tt.Type("unfinished-secret")
+	v.moveServiceRelative("openai", -1)
+	waitSettingsIdle(t, v)
+	tt.Frame()
+	v.mu.Lock()
+	draft := v.serviceDrafts["openai"][keys.OpenAIKey]
+	expanded := v.expanded["openai"]
+	v.mu.Unlock()
+	if !tt.Focused("编辑API Key") {
+		t.Fatal("reordering lost editor focus")
+	}
+	if current.Services.Order[0] != "openai" || draft != "unfinished-secret" || !expanded || tt.HasText("unfinished-secret") {
+		t.Fatalf("reorder: order=%v draft=%q expanded=%v hasText=%v", current.Services.Order, draft, expanded, tt.HasText("unfinished-secret"))
+	}
+	settingsClick(t, tt, "启用OpenAI")
+	waitSettingsIdle(t, v)
+	tt.Frame()
+	settingsClick(t, tt, "配置OpenAI")
+	v.mu.Lock()
+	draft = v.serviceDrafts["openai"][keys.OpenAIKey]
+	v.mu.Unlock()
+	if draft != "unfinished-secret" {
+		t.Fatal("group change lost credential draft")
+	}
+	settingsClick(t, tt, "清除API Key")
+	waitSettingsIdle(t, v)
+	tt.Frame()
+	v.mu.Lock()
+	draft = v.serviceDrafts["openai"][keys.OpenAIKey]
+	configured := slices.Contains(v.credentials.Configured, "openai")
+	v.mu.Unlock()
+	if cleared != keys.OpenAIKey || configured || draft != "" || slices.Contains(current.Services.Enabled, "openai") {
+		t.Fatal("credential clear did not refresh presence, draft and enablement")
+	}
+}
+
+func TestSettingsViewProbeWaitsForSavedModelAndIgnoresDisposedResult(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		current := testSettingsConfig()
+		saveRelease := make(chan struct{})
+		probeRelease := make(chan struct{})
+		var tested []string
+		v := newSettingsView(tabServices, current, settingsActions{
+			getSettings:  func() config.Settings { return current },
+			saveSettings: func(s config.Settings) error { <-saveRelease; current = s; return nil },
+			testService: func(_ context.Context, svc string) string {
+				tested = append(tested, current.Services.OpenAI.Model)
+				<-probeRelease
+				return ""
+			},
+		})
+		defer v.dispose()
+		v.mu.Lock()
+		next := cloneSettings(v.settings)
+		next.Services.OpenAI.Model = "saved-model"
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		v.testConnection("openai")
+		synctest.Wait()
+		if len(tested) != 0 {
+			t.Fatal("probe started before the model was saved")
+		}
+		close(saveRelease)
+		time.Sleep(20 * time.Millisecond)
+		synctest.Wait()
+		if !slices.Equal(tested, []string{"saved-model"}) {
+			t.Fatalf("probe used models %v", tested)
+		}
+		v.dispose()
+		close(probeRelease)
+		synctest.Wait()
+		v.mu.Lock()
+		result := v.testStatuses["openai"].result
+		v.mu.Unlock()
+		if result != "正在测试…" {
+			t.Fatalf("disposed view accepted probe result %q", result)
+		}
+	})
+}
+
+// Waiting under the view mutex also observes completed backend writes before
+// assertions inspect the fake backend. Tester itself stays on the test goroutine.
+func waitSettingsIdle(t *testing.T, v *settingsView) {
+	t.Helper()
+	waitForCondition(t, time.Second, func() bool {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		if v.pendingWrites != 0 || (v.actions.credentials != nil && !v.credentialsLoaded) {
+			return false
+		}
+		for _, busy := range v.credentialBusy {
+			if busy {
+				return false
+			}
+		}
+		return true
+	}, "settings work did not settle")
+}
+
+func TestSettingsViewFailedSaveDoesNotDropNextSnapshot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		current := testSettingsConfig()
+		var attempts []string
+		v := newSettingsView(tabGeneral, current, settingsActions{
+			getSettings: func() config.Settings { return current },
+			saveSettings: func(s config.Settings) error {
+				attempts = append(attempts, s.TargetLanguage)
+				if len(attempts) == 1 {
+					return errors.New("disk full")
+				}
+				current = s
+				return nil
+			},
+		})
+		defer v.dispose()
+		v.mu.Lock()
+		next := cloneSettings(v.settings)
+		next.TargetLanguage = "ja"
+		v.enqueueSaveLocked(next)
+		next.TargetLanguage = "fr"
+		next.OpenAtLogin = true
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		synctest.Wait()
+		if !slices.Equal(attempts, []string{"ja", "fr"}) || current.TargetLanguage != "fr" || !current.OpenAtLogin {
+			t.Fatalf("queued save after failure was lost: attempts=%v settings=%+v", attempts, current)
+		}
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		if v.pendingWrites != 0 || v.settings.TargetLanguage != "fr" || v.pendingToast != "保存失败：disk full" {
+			t.Fatal("save failure did not reconcile the final state and report the error")
+		}
+	})
+}
+
+func TestSettingsViewDisposedCredentialsCannotUpdateView(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		invalidations := 0
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+			credentials: func() (CredentialStatus, error) {
+				<-release
+				return CredentialStatus{Stored: []string{keys.OpenAIKey}}, nil
+			},
+			invalidate: func() { invalidations++ },
+		})
+		v.dispose()
+		close(release)
+		synctest.Wait()
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		if v.credentialsLoaded || len(v.credentials.Stored) != 0 || invalidations != 0 {
+			t.Fatal("late credential result updated a disposed view")
+		}
+	})
+}
+
+func TestSettingsViewFailedModelSaveStopsProbeUntilNextSave(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		current := testSettingsConfig()
+		failed := true
+		probes := 0
+		v := newSettingsView(tabServices, current, settingsActions{
+			getSettings: func() config.Settings { return current },
+			saveSettings: func(s config.Settings) error {
+				if failed {
+					return errors.New("disk full")
+				}
+				current = s
+				return nil
+			},
+			testService: func(_ context.Context, _ string) string { probes++; return "" },
+		})
+		defer v.dispose()
+		v.mu.Lock()
+		next := cloneSettings(v.settings)
+		next.Services.OpenAI.Model = "new-model"
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		v.testConnection("openai")
+		time.Sleep(20 * time.Millisecond)
+		synctest.Wait()
+		v.mu.Lock()
+		status := v.testStatuses["openai"]
+		v.mu.Unlock()
+		if probes != 0 || status.testing || !status.isError {
+			t.Fatalf("failed save still probed: calls=%d status=%+v", probes, status)
+		}
+		failed = false
+		v.mu.Lock()
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		synctest.Wait()
+		v.testConnection("openai")
+		synctest.Wait()
+		if probes != 1 || current.Services.OpenAI.Model != "new-model" {
+			t.Fatal("successful save did not unblock the probe")
+		}
+	})
+}
+
+func TestSettingsViewDragOnlySavesCompletedDrop(t *testing.T) {
+	for _, cancel := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cancel=%t", cancel), func(t *testing.T) {
+			current := testSettingsConfig()
+			var saved []config.Settings
+			v := newSettingsView(tabServices, current, settingsActions{
+				getSettings:  func() config.Settings { return current },
+				saveSettings: func(s config.Settings) error { current = s; saved = append(saved, cloneSettings(s)); return nil },
+				credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+			})
+			defer v.dispose()
+			waitSettingsIdle(t, v)
+			tt := ui.NewTester(v.render, 780, 900)
+			settingsClick(t, tt, "配置OpenAI")
+			settingsClick(t, tt, "编辑API Key")
+			tt.Type("draft-secret")
+			from, ok := tt.Find("拖动OpenAI")
+			if !ok {
+				t.Fatal("missing drag handle")
+			}
+			to, ok := tt.Find("Google")
+			if !ok {
+				t.Fatal("missing Google target")
+			}
+			x, y := from.X+from.W/2, from.Y+from.H/2
+			tx, ty := to.X+to.W/2, to.Y+to.H/2
+			tt.Press(x, y)
+			tt.Move(x+10, y)
+			tt.Move(tx, ty)
+			v.mu.Lock()
+			pending := v.pendingWrites
+			v.mu.Unlock()
+			if pending != 0 || len(saved) != 0 {
+				t.Fatal("drag preview saved before drop")
+			}
+			if cancel {
+				tt.Key(0, ui.KeyEscape)
+			}
+			tt.Release(tx, ty)
+			waitSettingsIdle(t, v)
+			tt.Frame()
+			if cancel && len(saved) != 0 {
+				t.Fatal("cancelled drag was saved")
+			}
+			if !cancel && (len(saved) != 1 || current.Services.Order[0] != "openai") {
+				t.Fatalf("drop did not reorder: saved=%d order=%v", len(saved), current.Services.Order)
+			}
+			v.mu.Lock()
+			draft := v.serviceDrafts["openai"][keys.OpenAIKey]
+			expanded := v.expanded["openai"]
+			v.mu.Unlock()
+			if draft != "draft-secret" || !expanded || !slices.Contains(current.Services.Enabled, "openai") {
+				t.Fatal("drag lost the drawer, draft or enablement")
+			}
+		})
+	}
+}

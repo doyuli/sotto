@@ -30,7 +30,7 @@ type bubbleActions struct {
 // Window creation, presentation, pin changes and Close commit on the UI thread.
 // m.mu guards state shared with translation workers.
 // Release m.mu before native window calls. See docs/translation-state.md for
-// the identities and ordering rules used by backend state and frontend events.
+// the identities and ordering rules used by backend state and native view updates.
 type bubbleManager struct {
 	mu        sync.Mutex
 	nextID    int64
@@ -48,7 +48,7 @@ type bubble struct {
 	view                   *bubbleView
 	appliedHeight          int
 	pinned                 bool
-	reqID                  string // the request its page last showed
+	reqID                  string // the request its native view last showed
 	generation             int64
 	showID                 int64
 	closeClaimed           bool
@@ -199,7 +199,7 @@ func (b *bubble) stopWork() {
 		cancel()
 	}
 	b.runCancels = nil
-	// A later Ready snapshot must not revive an already canceled stream.
+	// A later state snapshot must not revive an already canceled stream.
 	for service, result := range b.results {
 		if result.Streaming {
 			result.Streaming, result.Err = false, "翻译已取消，请重试"

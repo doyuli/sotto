@@ -39,7 +39,7 @@ Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论�
 - 📷 **离线双引擎截图 OCR**：框选屏幕即刻本地识别翻译，内置 PP-OCR 与原生 WinRT OCR，不上传图片更私密。
 - 💻 **变量命名一键转换**：一键将英文译文转换为 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE`、`kebab-case` 命名格式。
 - 🔒 **凭据安全与零遥测**：纯本地运行、零埋点；API 密钥存入 Windows 凭据管理器加密保护，不存明文配置。
-- 🎨 **轻量克制，融入系统**：纯 Go 后端 + WebView2，极低内存占用；无边框设计，跟随深浅主题，失焦收起或一键钉住常驻。
+- 🎨 **轻量克制，融入系统**：纯 Go 后端 + 原生 `mygo/ui` 窗口；无边框设计，跟随深浅主题，失焦收起或一键钉住常驻。
 
 ---
 
@@ -82,7 +82,6 @@ Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论�
 ## 系统要求与下载
 
 - **操作系统**：Windows 10 / Windows 11
-- **运行环境**：Microsoft Edge WebView2 Runtime（系统通常已内置）
 - **硬件架构**：
   - 64 位 x86 电脑（Intel / AMD）：下载 `sotto-*-windows-amd64-installer.exe`
   - 64 位 ARM 电脑（如 Surface Pro / Snapdragon X）：下载 `sotto-*-windows-arm64-installer.exe`
@@ -93,18 +92,18 @@ Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论�
 
 ## 开发与构建
 
-需准备 Go（>= 1.27.3）、Bun 及 WebView2 Runtime。MyGo 模块、`mygo-cli` 和 `mygo-runtime` 均固定为 0.8.3。
+需准备 Go（>= 1.27.3）和 Bun。MyGo 模块与 `mygo-cli` 均固定为 0.8.3。
 
 ```bash
 bun install                  # 安装依赖
 bun run dev                  # 开发运行（热重载）
-bun run typecheck            # 类型检查
-CGO_ENABLED=0 go test ./...  # 单元测试
+CGO_ENABLED=0 go test ./...   # 单元测试
+bunx mygo vet .              # 检查原生 UI 用法
 bun run build                # 构建当前架构安装包
 bun run build:win            # 同时构建 x64 与 arm64 安装包
 ```
 
-> 修改 Go 后端接口后，请运行 `bunx mygo generate` 更新前端绑定代码。
+> 原生 UI 测试使用 `ui.NewTester`。Windows 集成测试与桌面手工验收见 [e2e/README.md](e2e/README.md)。
 
 ---
 

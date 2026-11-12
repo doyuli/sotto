@@ -89,4 +89,4 @@ The service title strip is darker than the card in light mode and lighter in dar
 
 ## Motion
 
-150 ms state transitions only: hover, collapse, badge/state changes, and a subtle fade-in on newly appended translation text. Previously displayed text stays still; streaming never adds an artificial typing delay. Shimmer runs only while loading. OCR uses three muted dots beside “正在识别文字…” with a one-second opacity cycle; they stop when hidden and disappear on completion, failure or cancellation. `prefers-reduced-motion` keeps the dots static, disables reveal and shimmer animations and reduces transitions.
+150 ms state transitions only: hover, collapse, badge/state changes, and a subtle fade-in on newly appended translation text. Previously displayed text stays still; streaming never adds an artificial typing delay. Shimmer runs only while loading. OCR uses three muted dots beside “正在识别文字…” with a one-second opacity cycle; they stop when hidden and disappear on completion, failure or cancellation. The system’s reduced-motion preference keeps the dots static, disables reveal and shimmer animations and reduces transitions.

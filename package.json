@@ -9,26 +9,10 @@
     "build:win": "mygo build -platform windows/amd64,windows/arm64",
     "build:win:x64": "mygo build -platform windows/amd64",
     "build:win:arm64": "mygo build -platform windows/arm64",
-    "release": "bun scripts/release.ts",
-    "generate": "mygo generate",
-    "dev:web": "vite",
-    "test:web": "vitest run",
-    "build:web": "bun run typecheck && vite build",
-    "typecheck": "svelte-check --tsconfig tsconfig.json"
-  },
-  "dependencies": {
-    "mygo-runtime": "0.8.3"
+    "release": "bun scripts/release.ts"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "^1.4.4",
-    "jsdom": "^31.0.0",
-    "mygo-cli": "0.8.3",
-    "svelte": "^5.57.3",
-    "svelte-check": "^4.7.8",
-    "svelte-dnd-action": "^0.9.80",
-    "typescript": "~6",
-    "vite": "^8",
-    "vitest": "^5.1.0"
+    "mygo-cli": "0.8.3"
   }
 }
