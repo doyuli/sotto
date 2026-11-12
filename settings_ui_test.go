@@ -178,15 +178,26 @@ func TestSettingsViewServicesTab(t *testing.T) {
 		return tt.HasText("已启用")
 	}, "expected services list after credential retry")
 
-	// Move OpenAI up above Google.
-	if err := tt.Click("上移OpenAI"); err != nil {
-		t.Fatalf("Click 上移OpenAI: %v", err)
+	// Drag OpenAI up over Google to reorder in real time.
+	openaiGrip, ok := tt.Find("拖动OpenAI")
+	if !ok {
+		t.Fatal("missing 拖动OpenAI handle")
 	}
+	googleGrip, ok := tt.Find("拖动Google")
+	if !ok {
+		t.Fatal("missing 拖动Google handle")
+	}
+	sx, sy := openaiGrip.X+openaiGrip.W/2, openaiGrip.Y+openaiGrip.H/2
+	tx, ty := googleGrip.X+googleGrip.W/2, googleGrip.Y+googleGrip.H/2
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-8)
+	tt.Move(tx, ty)
+	tt.Release(tx, ty)
 	waitForCondition(t, time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(current.Services.Order) >= 2 && current.Services.Order[0] == "openai"
-	}, "expected OpenAI moved to first position")
+	}, "expected OpenAI dragged to first position")
 
 	// Expand DeepL drawer and check usage.
 	if err := tt.Click("配置DeepL"); err != nil {
@@ -648,7 +659,9 @@ func TestSettingsViewCredentialClearAndReorderPreserveDraft(t *testing.T) {
 	settingsClick(t, tt, "配置OpenAI")
 	settingsClick(t, tt, "编辑API Key")
 	tt.Type("unfinished-secret")
-	v.moveServiceRelative("openai", -1)
+	v.mu.Lock()
+	v.applyDragOrderLocked([]string{"openai", "google"})
+	v.mu.Unlock()
 	waitSettingsIdle(t, v)
 	tt.Frame()
 	v.mu.Lock()
@@ -903,5 +916,73 @@ func TestSettingsViewDragOnlySavesCompletedDrop(t *testing.T) {
 				t.Fatal("drag lost the drawer, draft or enablement")
 			}
 		})
+	}
+}
+
+func TestSettingsViewDragBackToOriginalPosition(t *testing.T) {
+	for _, reduceMotion := range []bool{false, true} {
+		for _, down := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reduceMotion=%t/down=%t", reduceMotion, down), func(t *testing.T) {
+				current := testSettingsConfig()
+				saves := 0
+				v := newSettingsView(tabServices, current, settingsActions{
+					getSettings:  func() config.Settings { return current },
+					saveSettings: func(s config.Settings) error { current = s; saves++; return nil },
+					credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+				})
+				defer v.dispose()
+				waitSettingsIdle(t, v)
+				tt := ui.NewTesterWith(v.render, 780, 900, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: reduceMotion}})
+				source, target := "OpenAI", "Google"
+				if down {
+					source, target = target, source
+				}
+				from, ok := tt.Find("拖动" + source)
+				if !ok {
+					t.Fatal("missing source")
+				}
+				to, ok := tt.Find("拖动" + target)
+				if !ok {
+					t.Fatal("missing target")
+				}
+				x, y := from.X+from.W/2, from.Y+from.H/2
+				tx, ty := to.X+to.W/2, to.Y+to.H/2
+				tt.Press(x, y)
+				tt.Move(x+8, y)
+				tt.Move(tx, ty)
+				for cycle := 0; cycle < 3; cycle++ {
+					tt.Advance(200 * time.Millisecond)
+					tt.Frame()
+					v.mu.Lock()
+					preview := slices.Clone(v.dragPreview)
+					v.mu.Unlock()
+					if !slices.Equal(preview, []string{"openai", "google"}) {
+						t.Fatalf("preview before return = %v", preview)
+					}
+					tt.Move(x, y)
+					tt.Advance(200 * time.Millisecond)
+					tt.Frame()
+					v.mu.Lock()
+					preview = slices.Clone(v.dragPreview)
+					pending := v.pendingWrites
+					v.mu.Unlock()
+					if !slices.Equal(preview, []string{"google", "openai"}) {
+						t.Fatalf("preview after returning = %v", preview)
+					}
+					if pending != 0 || saves != 0 {
+						t.Fatal("preview was saved before release")
+					}
+					if cycle < 2 {
+						tt.Move(tx, ty)
+					}
+				}
+				tt.Release(x, y)
+				waitSettingsIdle(t, v)
+				tt.Frame()
+				if saves != 0 || !slices.Equal(current.Services.Order, testSettingsConfig().Services.Order) {
+					t.Fatal("returning to the original position saved a different order")
+				}
+			})
+		}
 	}
 }

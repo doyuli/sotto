@@ -59,7 +59,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 2. Comparison is the feature: cards share one grammar so services are scanned, not deciphered.
 3. Stay out of the way: open fast, hide on blur, never steal more attention than the task.
 4. Local and private by default: keys stay in the OS keyring; no telemetry.
-5. Keyboard first: every frequent action is reachable without the mouse.
+5. Keyboard first: translation and settings controls support keyboard access; service ordering uses pointer drag.
 
 ## Accessibility & Inclusion
 

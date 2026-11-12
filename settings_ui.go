@@ -17,8 +17,7 @@ import (
 )
 
 var (
-	shieldSVG  = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	arrowUpSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
+	shieldSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
 type settingsPalette struct {
@@ -260,15 +259,17 @@ type settingsView struct {
 	credentials       CredentialStatus
 	credentialsErr    string
 
-	expanded       map[string]bool
-	serviceDrafts  map[string]map[string]string
-	baseURLDraft   *string
-	modelDrafts    map[string]string
-	credentialBusy map[string]bool
-	testStatuses   map[string]serviceTestStatus
-	deeplUsageText string
-	deeplUsagePct  float64
-	orderStatus    string
+	expanded         map[string]bool
+	serviceDrafts    map[string]map[string]string
+	baseURLDraft     *string
+	modelDrafts      map[string]string
+	credentialBusy   map[string]bool
+	testStatuses     map[string]serviceTestStatus
+	deeplUsageText   string
+	deeplUsagePct    float64
+	dragPreview      []string
+	lastDragTarget   string
+	lastDragPointerY float32
 
 	hotkeyListening    string
 	hotkeyConflicts    map[string]string
@@ -700,61 +701,48 @@ func (v *settingsView) testConnection(name string) {
 	}()
 }
 
-func (v *settingsView) moveServiceRelative(name string, delta int) {
-	v.mu.Lock()
-	enabled := make([]string, 0, len(v.settings.Services.Order))
-	for _, s := range v.settings.Services.Order {
-		if _, ok := serviceCredentialFields[s]; ok && v.serviceOnLocked(s) {
-			enabled = append(enabled, s)
-		}
-	}
-	idx := slices.Index(enabled, name)
-	targetIdx := idx + delta
-	if idx < 0 || targetIdx < 0 || targetIdx >= len(enabled) {
-		v.mu.Unlock()
+func (v *settingsView) applyDragOrderLocked(preview []string) {
+	if len(preview) == 0 {
 		return
 	}
-	targetName := enabled[targetIdx]
-	v.mu.Unlock()
-	v.moveService(name, targetName, delta > 0)
-}
-
-func (v *settingsView) moveService(name, target string, after bool) {
-	v.mu.Lock()
 	order := slices.Clone(v.settings.Services.Order)
-	from := slices.Index(order, name)
-	targetIdx := slices.Index(order, target)
-	if from < 0 || targetIdx < 0 {
-		v.mu.Unlock()
-		return
-	}
-	insertion := targetIdx
-	if after {
-		insertion++
-	}
-	to := insertion
-	if from < insertion {
-		to = insertion - 1
-	}
-	if from == to {
-		v.mu.Unlock()
-		return
-	}
-	order = slices.Delete(order, from, from+1)
-	order = slices.Insert(order, to, name)
-
-	pos := 0
-	for i := 0; i <= to && i < len(order); i++ {
-		if v.serviceOnLocked(order[i]) {
-			pos++
+	pi := 0
+	for i, s := range order {
+		if _, ok := serviceCredentialFields[s]; ok && v.serviceOnLocked(s) && pi < len(preview) {
+			order[i] = preview[pi]
+			pi++
 		}
 	}
-	v.orderStatus = fmt.Sprintf("%s 已移至第 %d 位", bubbleServiceName(name), pos)
+	if slices.Equal(order, v.settings.Services.Order) {
+		return
+	}
 	next := cloneSettings(v.settings)
 	next.Services.Order = order
 	v.enqueueSaveLocked(next)
-	v.mu.Unlock()
-	v.invalidate()
+}
+
+func sameServiceSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, s := range a {
+		if !slices.Contains(b, s) {
+			return false
+		}
+	}
+	return true
+}
+
+func moveSliceItem(items []string, fromSvc, toSvc string) []string {
+	from := slices.Index(items, fromSvc)
+	to := slices.Index(items, toSvc)
+	if from < 0 || to < 0 || from == to {
+		return items
+	}
+	out := slices.Clone(items)
+	out = slices.Delete(out, from, from+1)
+	out = slices.Insert(out, to, fromSvc)
+	return out
 }
 
 func (v *settingsView) render(c *ui.Context) {
@@ -966,7 +954,6 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 	v.mu.Lock()
 	loaded := v.credentialsLoaded
 	credErr := v.credentialsErr
-	orderStatus := v.orderStatus
 	cfg := cloneSettings(v.settings)
 	var enabledNames, disabledNames []string
 	for _, svc := range cfg.Services.Order {
@@ -978,6 +965,12 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		} else {
 			disabledNames = append(disabledNames, svc)
 		}
+	}
+	displayEnabled := enabledNames
+	if sameServiceSet(v.dragPreview, enabledNames) {
+		displayEnabled = slices.Clone(v.dragPreview)
+	} else {
+		v.dragPreview = nil
 	}
 	v.mu.Unlock()
 
@@ -1003,19 +996,43 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 
 	ui.Column(c).Gap(2).Children(func() {
 		ui.Text(c, "已启用的服务会同时翻译，序号即结果顺序。").FontSize(12).TextColor(p.fg)
-		ui.Text(c, "拖动序号或点击上下按钮调整顺序，凭证保存在系统密钥环。").FontSize(11).TextColor(p.muted)
-		if orderStatus != "" {
-			ui.Text(c, orderStatus).FontSize(11).TextColor(p.accentText)
-		}
+		ui.Text(c, "拖动序号调整顺序，凭证保存在系统密钥环。").FontSize(11).TextColor(p.muted)
 	})
 
-	v.renderServiceGroupHeader(c, p, "已启用", len(enabledNames))
-	if len(enabledNames) > 0 {
-		ui.Column(c).Gap(8).Children(func() {
-			for i, svc := range enabledNames {
-				v.renderServiceCard(c.Key("svc:"+svc), p, svc, true, i+1, len(enabledNames))
+	v.renderServiceGroupHeader(c, p, "已启用", len(displayEnabled))
+	if len(displayEnabled) > 0 {
+		anyDragging := false
+		hoveredTarget := ""
+		listCol := ui.Column(c).Gap(8)
+		if droppedSvc, ok := ui.Drop[string](listCol); ok && droppedSvc != "" {
+			v.mu.Lock()
+			if sameServiceSet(v.dragPreview, enabledNames) {
+				v.applyDragOrderLocked(v.dragPreview)
+			}
+			v.dragPreview = nil
+			v.lastDragTarget = ""
+			v.mu.Unlock()
+		}
+		listCol.Children(func() {
+			for i, svc := range displayEnabled {
+				draggingCard, overCard := v.renderServiceCard(c.Key("svc:"+svc), p, svc, true, i+1, displayEnabled)
+				if draggingCard {
+					anyDragging = true
+				}
+				if overCard != "" {
+					hoveredTarget = overCard
+				}
 			}
 		})
+		v.mu.Lock()
+		if hoveredTarget == "" {
+			v.lastDragTarget = ""
+		}
+		if !anyDragging && v.dragPreview != nil {
+			v.dragPreview = nil
+			v.lastDragTarget = ""
+		}
+		v.mu.Unlock()
 	} else {
 		ui.Row(c).Padding(14).Radius(12).Background(p.field).Border(1, p.border).Children(func() {
 			ui.Text(c, "还没有启用的服务。打开下方开关即可加入翻译。").FontSize(12).TextColor(p.muted)
@@ -1026,7 +1043,7 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		v.renderServiceGroupHeader(c, p, "未启用", len(disabledNames))
 		ui.Column(c).Gap(8).Children(func() {
 			for _, svc := range disabledNames {
-				v.renderServiceCard(c.Key("svc:"+svc), p, svc, false, 0, 0)
+				v.renderServiceCard(c.Key("svc:"+svc), p, svc, false, 0, nil)
 			}
 		})
 	}
@@ -1041,7 +1058,7 @@ func (v *settingsView) renderServiceGroupHeader(c *ui.Context, p settingsPalette
 	})
 }
 
-func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc string, enabled bool, position, totalEnabled int) {
+func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc string, enabled bool, position int, displayEnabled []string) (bool, string) {
 	title := bubbleServiceName(svc)
 	fields := serviceCredentialFields[svc]
 	keyless := len(fields) == 0
@@ -1050,6 +1067,7 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 	isConfigured := slices.Contains(v.credentials.Configured, svc)
 	isExpanded := v.expanded[svc]
 	busy := v.credentialBusy[svc]
+	dragAnimating := v.dragPreview != nil
 	v.mu.Unlock()
 
 	stateHint := "填写凭证后可启用"
@@ -1063,21 +1081,68 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 		stateHint = "打开开关后参与翻译"
 	}
 
-	card := ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip()
+	card := ui.Column(c).
+		Radius(12).
+		Background(p.card).
+		Border(1, p.border)
+	if dragAnimating {
+		card.Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Ease: ui.EaseOut})
+	}
+
+	dragging := false
+	overTarget := ""
 	if enabled {
-		if dragged, ok := ui.Drop[string](card); ok && dragged != "" && dragged != svc {
-			v.mu.Lock()
-			fromIdx := slices.Index(v.settings.Services.Order, dragged)
-			toIdx := slices.Index(v.settings.Services.Order, svc)
-			v.mu.Unlock()
-			v.moveService(dragged, svc, toIdx > fromIdx)
-		} else if _, over := ui.DragOver[string](card); over {
-			card.Border(1, p.accent)
+		if !isExpanded {
+			card.Drag(svc)
+		}
+		if card.Dragging() {
+			dragging = true
+			card.Opacity(0.35).Border(1, p.accent)
+		} else {
+			if droppedSvc, ok := ui.Drop[string](card); ok && droppedSvc != "" {
+				v.mu.Lock()
+				if sameServiceSet(v.dragPreview, displayEnabled) {
+					v.applyDragOrderLocked(v.dragPreview)
+				}
+				v.dragPreview = nil
+				v.lastDragTarget = ""
+				v.mu.Unlock()
+			}
+			if overSvc, over := ui.DragOver[string](card); over && overSvc != "" && overSvc != svc {
+				overTarget = svc
+				v.mu.Lock()
+				_, pointerY, _ := c.Root().PointerPosition()
+				_, localY, _ := card.PointerPosition()
+				bounds := card.LayoutBounds()
+				from, to := slices.Index(displayEnabled, overSvc), slices.Index(displayEnabled, svc)
+				crossed := (from > to && localY <= bounds.H/2) || (from < to && localY >= bounds.H/2)
+				moved := pointerY-v.lastDragPointerY >= 1 || v.lastDragPointerY-pointerY >= 1
+				// Layout animation must not swap the same pair back under a still
+				// pointer; actual pointer motion can cross it again in either direction.
+				if crossed && (v.lastDragTarget != svc || moved) {
+					v.lastDragTarget = svc
+					v.lastDragPointerY = pointerY
+					nextPreview := moveSliceItem(displayEnabled, overSvc, svc)
+					if !slices.Equal(v.dragPreview, nextPreview) {
+						v.dragPreview = nextPreview
+						c.AnimationFrame()
+					}
+				}
+				v.mu.Unlock()
+			}
 		}
 	}
 
 	card.Children(func() {
-		ui.Row(c).FillWidth().Padding(11, 14).AlignItems(ui.Center).Gap(12).Children(func() {
+		head := ui.Row(c).FillWidth().Padding(11, 14).AlignItems(ui.Center).Gap(12)
+		if enabled && isExpanded {
+			head.Drag(svc)
+			if head.Dragging() {
+				dragging = true
+				card.Opacity(0.35).Border(1, p.accent)
+			}
+		}
+		head.Children(func() {
 			if enabled {
 				grip := ui.Row(c).
 					Label("拖动"+title).
@@ -1087,8 +1152,7 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 					Border(1, p.border).
 					Center().
 					Cursor(ui.CursorPointer).
-					Tooltip("拖动排序").
-					Drag(svc)
+					Tooltip("拖动排序")
 				grip.Children(func() {
 					ui.Text(c, fmt.Sprintf("%d", position)).FontSize(11).FontWeight(600).TextColor(p.muted)
 				})
@@ -1119,52 +1183,6 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				if enabled && totalEnabled > 1 {
-					upBtn := ui.ButtonBase(c).
-						Label("上移"+title).
-						Tooltip("上移").
-						Disabled(position <= 1).
-						Cursor(ui.CursorPointer).
-						Size(24, 24).
-						Radius(6).
-						Center()
-					if position > 1 && upBtn.Hovered() {
-						upBtn.Background(p.hover)
-					}
-					if upBtn.Clicked() {
-						v.moveServiceRelative(svc, -1)
-					}
-					upBtn.Children(func() {
-						col := p.muted
-						if position <= 1 {
-							col = p.muted.Alpha(0.35)
-						}
-						ui.Icon(c, arrowUpSVG).Size(13, 13).TextColor(col)
-					})
-
-					downBtn := ui.ButtonBase(c).
-						Label("下移"+title).
-						Tooltip("下移").
-						Disabled(position >= totalEnabled).
-						Cursor(ui.CursorPointer).
-						Size(24, 24).
-						Radius(6).
-						Center()
-					if position < totalEnabled && downBtn.Hovered() {
-						downBtn.Background(p.hover)
-					}
-					if downBtn.Clicked() {
-						v.moveServiceRelative(svc, 1)
-					}
-					downBtn.Children(func() {
-						col := p.muted
-						if position >= totalEnabled {
-							col = p.muted.Alpha(0.35)
-						}
-						ui.Icon(c, chevronDownSVG).Size(13, 13).TextColor(col)
-					})
-				}
-
 				if !keyless {
 					cfgLabel := "配置"
 					accessLabel := "配置" + title
@@ -1213,6 +1231,7 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 			v.renderServiceDrawer(c, p, svc, fields, isConfigured)
 		}
 	})
+	return dragging, overTarget
 }
 
 func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string, fields []serviceCredentialField, isConfigured bool) {
