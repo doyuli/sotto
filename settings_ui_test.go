@@ -1244,3 +1244,44 @@ func TestSettingsKeyChangeInvalidatesUsageBeforeWriteCompletes(t *testing.T) {
 		synctest.Wait()
 	})
 }
+
+func TestSettingsTargetLanguageSelectAlignmentAndToggle(t *testing.T) {
+	for _, width := range []int{660, 780} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			v := newSettingsView(tabGeneral, testSettingsConfig(), settingsActions{})
+			defer v.dispose()
+			tt := ui.NewTester(v.render, width, 600)
+			trigger, ok := tt.Find("选择默认翻译语言")
+			if !ok {
+				t.Fatal("missing language selector")
+			}
+			settingsClick(t, tt, "选择默认翻译语言")
+			popup, ok := tt.Find("默认翻译语言选项")
+			if !ok || popup.X != trigger.X || popup.W != trigger.W || popup.Y < trigger.Y+trigger.H {
+				t.Fatalf("popup=%+v found=%v trigger=%+v", popup, ok, trigger)
+			}
+			// The open popup owns pointer input; click the trigger coordinates through its dismissal layer.
+			tt.ClickAt(trigger.X+trigger.W/2, trigger.Y+trigger.H/2)
+			if _, ok := tt.Find("默认翻译语言选项"); ok {
+				t.Fatal("second click did not close popup")
+			}
+			settingsClick(t, tt, "选择默认翻译语言")
+			settingsClick(t, tt, "自动（中文↔英文）")
+			waitSettingsIdle(t, v)
+			v.mu.Lock()
+			selected := v.settings.TargetLanguage
+			v.mu.Unlock()
+			if selected != "auto" {
+				t.Fatalf("selected language=%q", selected)
+			}
+			if _, ok := tt.Find("默认翻译语言选项"); ok {
+				t.Fatal("choosing a language left popup open")
+			}
+			settingsClick(t, tt, "选择默认翻译语言")
+			tt.Key(0, ui.KeyEscape)
+			if _, ok := tt.Find("默认翻译语言选项"); ok {
+				t.Fatal("Escape did not close popup")
+			}
+		})
+	}
+}

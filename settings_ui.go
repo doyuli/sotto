@@ -331,43 +331,53 @@ func (v *settingsView) renderGeneral(c *ui.Context, p settingsPalette) {
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
 		// Target language
 		v.renderSettingRow(c, p, "默认翻译到", "未指定目标时气泡首选的翻译语言", true, func() {
-			label := "自动（中文↔英文）"
-			if cfg.TargetLanguage != "auto" {
-				label = bubbleLangName(cfg.TargetLanguage)
+			selected := cfg.TargetLanguage
+			parts := ui.SelectBase(c, &selected)
+			trigger := parts.Trigger.Label("选择默认翻译语言").
+				Cursor(ui.CursorPointer).MinWidth(176).
+				Padding(6, 10).Radius(8).Background(p.field).Border(1, p.border)
+			trigger.OnChange(func() {
+				v.mu.Lock()
+				next := cloneSettings(v.settings)
+				next.TargetLanguage = selected
+				v.enqueueSaveLocked(next)
+				v.mu.Unlock()
+			})
+			if trigger.Hovered() {
+				trigger.Background(p.hover)
 			}
-			sel := ui.ButtonBase(c).
-				Label("默认翻译到").
-				Cursor(ui.CursorPointer).
-				Padding(6, 10).
-				Radius(8).
-				Background(p.field).
-				Border(1, p.border).
-				Menu(func(m *ui.Menu) {
-					if m.Item("自动（中文↔英文）").Checked(cfg.TargetLanguage == "auto").Chosen() {
-						v.mu.Lock()
-						next := cloneSettings(v.settings)
-						next.TargetLanguage = "auto"
-						v.enqueueSaveLocked(next)
-						v.mu.Unlock()
-					}
-					m.Separator()
-					for _, code := range languages.List {
-						if m.Item(bubbleLangName(code)).Checked(cfg.TargetLanguage == code).Chosen() {
-							v.mu.Lock()
-							next := cloneSettings(v.settings)
-							next.TargetLanguage = code
-							v.enqueueSaveLocked(next)
-							v.mu.Unlock()
-						}
-					}
-				})
-			if sel.Hovered() {
-				sel.Background(p.hover)
+			languageLabel := func(code string) string {
+				if code == "auto" {
+					return "自动（中文↔英文）"
+				}
+				return bubbleLangName(code)
 			}
-			sel.Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, label).FontSize(12).TextColor(p.fg).SingleLine()
+			trigger.Children(func() {
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Text(c, languageLabel(selected)).Grow(1).FontSize(12).TextColor(p.fg).SingleLine()
 					ui.Icon(c, chevronDownSVG).Size(12, 12).TextColor(p.muted)
+				})
+			})
+			parts.Popup(func(panel ui.Element) {
+				// Use the same anchored select as the bubble, including toggle-close
+				// behavior and a popup whose width follows the committed trigger.
+				bounds := trigger.Bounds()
+				panel.Label("默认翻译语言选项").Width(bounds.W).Padding(4).
+					Margin(4, 0, 0, 0).Radius(10).Background(p.panel).
+					Border(1, p.border).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
+				codes := append([]string{"auto"}, languages.List...)
+				_, windowH := c.Size()
+				room := max(bounds.Y-8, windowH-bounds.Y-bounds.H-8)
+				ui.Scroll(c).Height(min(float32(len(codes))*30, max(30, room-10))).Children(func() {
+					for _, code := range codes {
+						item := parts.Item(code).Height(30).Padding(0, 8).Radius(6).Cursor(ui.CursorPointer)
+						if item.Highlighted() {
+							item.Background(p.hover)
+						} else if code == selected {
+							item.Background(p.control)
+						}
+						item.Children(func() { ui.Text(c, languageLabel(code)).FontSize(12).TextColor(p.fg).SingleLine() })
+					}
 				})
 			})
 		})
