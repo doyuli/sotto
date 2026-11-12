@@ -9,8 +9,8 @@ import "strings"
 func localLanguage(lang string) bool {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	if lang == "" {
-		// Screenshots have no language hint; the existing confidence checks
-		// can request fallback, but cannot detect every unsupported script.
+		// Screenshots have no language hint. The fixed model may return
+		// nonempty text for an unsupported script; risks are diagnostic only.
 		return true
 	}
 	parts := strings.Split(lang, "-")

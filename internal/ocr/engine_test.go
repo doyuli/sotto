@@ -73,7 +73,7 @@ func TestLocalFailureIsLoggedBeforeFallback(t *testing.T) {
 	}
 }
 
-func TestLowConfidenceWhitespaceDoesNotScheduleFallback(t *testing.T) {
+func TestLowConfidenceTokensRemainDiagnostic(t *testing.T) {
 	for _, token := range []string{" ", "\t", "\u3000", "x"} {
 		t.Run(fmt.Sprintf("%q", token), func(t *testing.T) {
 			line := testLine("Hello Sotto", 0, 0, 200, 24, .95)
@@ -87,15 +87,14 @@ func TestLowConfidenceWhitespaceDoesNotScheduleFallback(t *testing.T) {
 				return Text{}, nil
 			}
 			got, err := recognizeEngines(context.Background(), nil, "", local, system)
-			wantCalls := 0
-			if token == "x" {
-				wantCalls = 1
+			if err != nil || calls != 0 || got.RetryCount != 0 || got.Engine != "local" || got.Text != line.Text {
+				t.Fatalf("result %+v error %v calls=%d", got, err, calls)
 			}
-			if err != nil || calls != wantCalls || got.RetryCount != wantCalls || got.Engine != "local" {
-				t.Fatalf("result %+v error %v calls=%d want=%d", got, err, calls, wantCalls)
-			}
-			if wantCalls == 1 && !reflect.DeepEqual(got.Risks[0].Tokens, []int{1}) {
+			if token == "x" && (len(got.Risks) != 1 || got.Risks[0].Reason != "low-token-confidence" || !reflect.DeepEqual(got.Risks[0].Tokens, []int{1})) {
 				t.Fatalf("lost original token index: %+v", got.Risks)
+			}
+			if token != "x" && len(got.Risks) != 0 {
+				t.Fatalf("whitespace risk: %+v", got.Risks)
 			}
 		})
 	}
@@ -146,20 +145,27 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 		{"regional system canceled", "uz-AF", good, nil, context.Canceled, "", 0, 1, context.Canceled},
 		{"unsupported missing system", "ko", good, nil, failure, "", 0, 1, failure},
 		{"unsupported system canceled", "ko", good, nil, context.Canceled, "", 0, 1, context.Canceled},
-		{"japanese low confidence", "ja", weak, nil, nil, "winrt", 1, 1, nil},
+		{"japanese low confidence", "ja", weak, nil, nil, "local", 1, 0, nil},
 		{"japanese missing models", "ja", Text{}, failure, nil, "winrt", 1, 1, nil},
 		{"japanese empty local", "ja", Text{}, nil, nil, "winrt", 1, 1, nil},
-		{"japanese missing system", "ja", weak, nil, failure, "local", 1, 1, nil},
+		{"japanese skips missing system", "ja", weak, nil, failure, "local", 1, 0, nil},
 		{"japanese local canceled", "ja", Text{}, context.Canceled, nil, "", 1, 0, context.Canceled},
-		{"low confidence", "", weak, nil, nil, "winrt", 1, 1, nil},
+		{"low confidence", "", weak, nil, nil, "local", 1, 0, nil},
 		{"missing models", "", Text{}, failure, nil, "winrt", 1, 1, nil},
+		{"partial engine failure", "", good, failure, nil, "winrt", 1, 1, nil},
+		{"layout failure", "", Text{Lines: []pipeline.Line{{Text: "invalid geometry"}}}, nil, nil, "winrt", 1, 1, nil},
 		{"empty local", "", Text{}, nil, nil, "winrt", 1, 1, nil},
+		{"whitespace local", "", Text{Lines: []pipeline.Line{testLine(" \t\u3000", 0, 0, 100, 20, .95)}}, nil, nil, "winrt", 1, 1, nil},
+		{"cleaned empty local", "", Text{Lines: []pipeline.Line{testLine("\ufffd", 0, 0, 100, 20, .95)}}, nil, nil, "winrt", 1, 1, nil},
 		{"empty local missing system", "", Text{}, nil, failure, "", 1, 1, failure},
 		{"cleaned empty local missing system", "", Text{Lines: []pipeline.Line{testLine("\ufffd", 0, 0, 100, 20, .95)}}, nil, failure, "", 1, 1, failure},
-		{"missing system", "", weak, nil, failure, "local", 1, 1, nil},
+		{"skips missing system", "", weak, nil, failure, "local", 1, 0, nil},
+		{"skips canceled system", "", weak, nil, context.Canceled, "local", 1, 0, nil},
 		{"both failed", "", Text{}, failure, failure, "", 1, 1, failure},
 		{"local canceled", "", Text{}, context.Canceled, nil, "", 1, 0, context.Canceled},
-		{"system canceled", "", weak, nil, context.Canceled, "", 1, 1, context.Canceled},
+		{"local deadline", "", Text{}, context.DeadlineExceeded, nil, "", 1, 0, context.DeadlineExceeded},
+		{"system canceled", "", Text{}, nil, context.Canceled, "", 1, 1, context.Canceled},
+		{"system deadline", "", Text{}, nil, context.DeadlineExceeded, "", 1, 1, context.DeadlineExceeded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -192,7 +198,7 @@ func TestEngineRoutingAndBudget(t *testing.T) {
 	}
 }
 
-func TestGeometryRisksDoNotScheduleUnusableFallback(t *testing.T) {
+func TestGeometryRisksRemainDiagnostic(t *testing.T) {
 	small := testLine("Hello Sotto", 0, 0, 200, 12, .99)
 	steep := testLine("Hello Sotto", 0, 0, 200, 24, .99)
 	steep.Quad[1].Y += 20
@@ -222,12 +228,8 @@ func TestGeometryRisksDoNotScheduleUnusableFallback(t *testing.T) {
 					return Text{}, errors.New("system unavailable")
 				}
 				got, err := recognizeEngines(context.Background(), nil, "", local, system)
-				wantCalls := 0
-				if weak {
-					wantCalls = 1
-				}
-				if err != nil || calls != wantCalls || got.RetryCount != wantCalls || got.Engine != "local" || got.Text != line.Text {
-					t.Fatalf("result %+v err=%v system calls=%d, want %d", got, err, calls, wantCalls)
+				if err != nil || calls != 0 || got.RetryCount != 0 || got.Engine != "local" || got.Text != line.Text {
+					t.Fatalf("result %+v err=%v system calls=%d", got, err, calls)
 				}
 				found := false
 				for _, risk := range got.Risks {
@@ -241,36 +243,77 @@ func TestGeometryRisksDoNotScheduleUnusableFallback(t *testing.T) {
 	}
 }
 
-func TestSelectionPreservesTrustedTextAndCoverage(t *testing.T) {
-	first := Text{Lines: []pipeline.Line{testLine("Order ID 12345", 0, 0, 180, 20, .96), testLine("uncertain text", 0, 30, 180, 20, .4)}}
-	first, _ = finish(first)
+func TestNonemptyRiskyLocalTextSkipsFallback(t *testing.T) {
 	tests := []struct {
 		name  string
 		lines []pipeline.Line
-		want  bool
+		want  string
 	}{
-		{"aligned correction", []pipeline.Line{testLine("Order ID 12345", 0, 0, 180, 20, -1), testLine("corrected text", 0, 30, 180, 20, -1)}, true},
-		{"more text wrong digit", []pipeline.Line{testLine("Order ID 12346 with more characters", 0, 0, 180, 20, -1), testLine("corrected text", 0, 30, 180, 20, -1)}, false},
-		{"missing region", []pipeline.Line{testLine("Order ID 12345", 0, 0, 180, 20, -1)}, false},
-		{"different position", []pipeline.Line{testLine("Order ID 12345 corrected text", 300, 300, 200, 50, -1)}, false},
-		{"suspicious characters", []pipeline.Line{testLine("Order ID 12345", 0, 0, 180, 20, -1), testLine("bad\ufffd text", 0, 30, 180, 20, -1)}, false},
-		{"empty", nil, false},
+		{"low-line-confidence", []pipeline.Line{testLine("uncertain text", 0, 0, 180, 20, .4)}, "uncertain text"},
+		{"suspicious-character", []pipeline.Line{testLine("Hello\ufffd Sotto", 0, 0, 180, 20, .95)}, "Hello Sotto"},
+		{"empty-line", []pipeline.Line{testLine("Hello Sotto", 0, 0, 180, 20, .95), testLine("", 0, 30, 180, 20, 0)}, "Hello Sotto"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			second, err := finish(Text{Lines: tt.lines})
-			if err != nil {
-				t.Fatal(err)
+			local := func(context.Context, image.Image, string) (Text, error) {
+				return Text{Engine: "local", Lines: tt.lines}, nil
 			}
-			if got := preferSystem(first, second); got != tt.want {
-				t.Fatalf("preferSystem=%v want %v", got, tt.want)
+			system := func(context.Context, image.Image, string) (Text, error) {
+				t.Fatal("nonempty local text scheduled fallback")
+				return Text{}, nil
+			}
+			got, err := recognizeEngines(context.Background(), nil, "", local, system)
+			if err != nil || got.Text != tt.want || got.Engine != "local" || got.RetryCount != 0 || got.Selection != "" {
+				t.Fatalf("result %+v error %v", got, err)
+			}
+			if len(got.Attempts) != 1 || !reflect.DeepEqual(got.Lines, tt.lines) {
+				t.Fatalf("lost raw lines or attempts: %+v", got)
+			}
+			found := false
+			for _, risk := range got.Risks {
+				found = found || risk.Reason == tt.name
+			}
+			if !found || !strings.Contains(strings.Join(got.Attempts[0].Risks, ","), tt.name) {
+				t.Fatalf("lost diagnostic risk %s: %+v", tt.name, got)
 			}
 		})
 	}
-	small, _ := finish(Text{Lines: []pipeline.Line{testLine("small trusted text", 0, 0, 100, 10, .99)}})
-	other, _ := finish(Text{Lines: []pipeline.Line{testLine("small trusted text", 0, 0, 100, 10, -1)}})
-	if preferSystem(small, other) {
-		t.Fatal("unknown confidence is not evidence of improvement")
+}
+
+func TestFallbackEmptyResultsAndErrors(t *testing.T) {
+	localFailure := errors.New("local inference failed")
+	systemFailure := errors.New("system worker failed")
+	for _, tt := range []struct {
+		name                string
+		localErr, systemErr error
+		wantErr             error
+	}{
+		{"both empty", nil, nil, nil},
+		{"local failed system empty", localFailure, nil, localFailure},
+		{"local empty system failed", nil, systemFailure, systemFailure},
+		{"both failed", localFailure, systemFailure, localFailure},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			local := func(context.Context, image.Image, string) (Text, error) {
+				return Text{}, tt.localErr
+			}
+			system := func(context.Context, image.Image, string) (Text, error) {
+				return Text{Engine: "winrt", Lines: []pipeline.Line{testLine("\ufffd", 0, 0, 100, 20, -1)}}, tt.systemErr
+			}
+			got, err := recognizeEngines(context.Background(), nil, "", local, system)
+			if !errors.Is(err, tt.wantErr) || got.Text != "" || len(got.Attempts) != 2 {
+				t.Fatalf("result %+v error %v", got, err)
+			}
+			if tt.systemErr != nil && !errors.Is(err, tt.systemErr) {
+				t.Fatalf("lost system error: %v", err)
+			}
+			if err == nil && (got.Engine != "winrt" || got.Selection != "local-empty" || got.RetryCount != 1) {
+				t.Fatalf("lost empty fallback metadata: %+v", got)
+			}
+			if err != nil && len(got.Lines) != 0 {
+				t.Fatalf("error published partial lines: %+v", got)
+			}
+		})
 	}
 }
 

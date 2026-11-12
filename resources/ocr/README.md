@@ -32,10 +32,10 @@ Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/
 
 ## Recognition behavior
 
-- The screenshot UI supplies no language hint. It tries PPOCR first without detecting the screenshot's script in advance. Unsupported text may be misrecognized with high confidence, so system fallback is not guaranteed to recover it.
+- The screenshot UI supplies no language hint. It tries PPOCR first without detecting the screenshot's script in advance. Nonempty misrecognitions of unsupported scripts are returned as local results.
 - Sessions initialize on first use and are reused serially until idle release. Detection defaults to `min(4, runtime.NumCPU())` inference threads; recognition uses 2.
 - Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
-- Empty local results or text-confidence risks can trigger one system OCR fallback. Discarded low-score detection regions, low-confidence whitespace and geometry-only risks do not trigger it. Replacement requires coverage of local text regions and preservation of trusted text.
+- Successful local results with nonempty text after cleanup and layout are returned immediately. Confidence, character, empty-line and geometry risks remain in diagnostics. Local errors or an empty final text trigger one system OCR fallback. Cancellation and request deadlines terminate the request. Explicit language hints outside the local model's scope go directly to system OCR.
 - Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation prevents stale results from being published but cannot interrupt native inference already running.
 
 Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 1,000 candidates; recognition inputs to 2,048 pixels wide. Exceeded budgets return an error or use system fallback. Complex tables, vertical/inverted text and exact code indentation are not guaranteed.
@@ -90,4 +90,4 @@ go test ./internal/ocr -run '^TestV6SmallRuntimePreflight$' -count=1 -v
 Remove-Item Env:SOTTO_OCR_PREFLIGHT
 ```
 
-The preflight also closes and rebuilds the session pair 20 times while checking that the shared runtime is retained. The default tests use fake runners/clocks and helper child processes; native model loading and inference remain opt-in. The preflight does not measure recognition accuracy or end-to-end reconstruction latency. Check real screenshots on x64 and ARM64: small text, light/dark backgrounds, mixed Chinese/English, code and numbers. Also check repeated captures, cancellation, idle release/rebuild, missing language packs and corrupt resources.
+The preflight also closes and rebuilds the session pair 20 times while checking that the shared runtime is retained. The default tests use fake runners/clocks and helper child processes; native model loading and inference remain opt-in. The preflight does not measure recognition accuracy or end-to-end reconstruction latency. Check real screenshots on x64 and ARM64: small text, light/dark backgrounds, mixed Chinese/English, code and numbers. Confirm nonempty local results with confidence risks or partially empty lines use one local attempt and retain their diagnostics. Empty final text and corrupt local resources should attempt system OCR once. Also check both engines finding no text, missing language packs, repeated captures, cancellation and idle release/rebuild.
