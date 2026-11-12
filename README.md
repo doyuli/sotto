@@ -39,7 +39,7 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 - 📷 **Offline Dual-Engine OCR**: Snip any screen region to translate locally. Powered by on-device PP-OCR and native WinRT OCR—no images uploaded to the cloud.
 - 💻 **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
 - 🔒 **Secure Credentials & Zero Telemetry**: Strictly local with no tracking. API keys are safely encrypted in Windows Credential Manager (DPAPI) rather than plain-text configs.
-- 🎨 **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with WebView2 for minimal memory usage; frameless design that respects themes, hides on blur, or pins in place.
+- 🎨 **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects themes, hides on blur, or pins in place.
 
 ---
 
@@ -82,7 +82,6 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 ## System Requirements & Download
 
 - **Operating System**: Windows 10 / Windows 11
-- **Runtime**: Microsoft Edge WebView2 Runtime (pre-installed on modern Windows)
 - **Architectures**:
   - 64-bit x86 PC (Intel / AMD): download `sotto-*-windows-amd64-installer.exe`
   - 64-bit ARM device (e.g. Surface Pro / Snapdragon X): download `sotto-*-windows-arm64-installer.exe`
@@ -93,18 +92,18 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 ## Development
 
-Requires Go (>= 1.27.3), Bun, and WebView2 Runtime. The MyGo module, `mygo-cli`, and `mygo-runtime` are pinned to 0.8.3.
+Requires Go (>= 1.27.3) and Bun. The MyGo module and `mygo-cli` are pinned to 0.8.3.
 
 ```bash
 bun install                  # Install dependencies
-bun run dev                  # Start dev server (with hot reload)
-bun run typecheck            # Run type checking
-CGO_ENABLED=0 go test ./...  # Run unit tests
+bun run dev                  # Run the native app (with hot reload)
+CGO_ENABLED=0 go test ./...   # Run unit tests
+bunx mygo vet .              # Check native UI usage
 bun run build                # Build for current architecture
 bun run build:win            # Build for both x64 and arm64
 ```
 
-> Run `bunx mygo generate` after modifying Go backend bindings to update TypeScript types.
+> Native UI tests use `ui.NewTester`. Windows integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md).
 
 ---
 

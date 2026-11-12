@@ -43,10 +43,6 @@ func main() {
 		updater.SetAutomaticChecks(false)
 	}
 	app := newApplication()
-	mygo.Bind(
-		ConfigSvc{app},
-		HotkeySvc{},
-	)
 	mygo.App.WhenReady(app.ready)
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

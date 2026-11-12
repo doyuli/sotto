@@ -15,10 +15,7 @@ import (
 	"sotto/internal/translate"
 )
 
-// The services the pages call. mygo generate turns them into the typed
-// client in src/mygo.ts: ConfigSvc.Get becomes ConfigSvc.get.
-
-// ConfigSvc reads and writes the settings.
+// ConfigSvc reads and writes the settings and credentials for the native settings UI.
 type ConfigSvc struct{ app *application }
 
 func (s ConfigSvc) Get() config.Settings { return s.app.settings() }

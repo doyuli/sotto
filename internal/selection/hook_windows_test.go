@@ -57,9 +57,9 @@ func TestWindowContainsNativePopup(t *testing.T) {
 		want bool
 	}{
 		{"bubble", bubble, true},
-		{"webview child", child, true},
-		{"select popup", popup, true},
-		{"select popup child", popupChild, true},
+		{"child surface", child, true},
+		{"owned popup", popup, true},
+		{"owned popup child", popupChild, true},
 		{"shared owner sibling", sibling, false},
 		{"other window", other, false},
 		{"no window", 0, false},
@@ -92,9 +92,9 @@ func TestForegroundHookFiltersWindows(t *testing.T) {
 		want  [2]int
 	}{
 		{"bubble", eventSystemForeground, bubble, [2]int{0, 1}},
-		{"webview child", eventSystemForeground, child, [2]int{0, 1}},
-		{"select popup", eventSystemForeground, popup, [2]int{0, 1}},
-		{"select popup child", eventSystemForeground, popupChild, [2]int{0, 1}},
+		{"child surface", eventSystemForeground, child, [2]int{0, 1}},
+		{"owned popup", eventSystemForeground, popup, [2]int{0, 1}},
+		{"owned popup child", eventSystemForeground, popupChild, [2]int{0, 1}},
 		{"shared owner sibling", eventSystemForeground, sibling, [2]int{1, 1}},
 		{"other window", eventSystemForeground, other, [2]int{1, 0}},
 		{"no window", eventSystemForeground, 0, [2]int{}},

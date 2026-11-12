@@ -227,7 +227,7 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 }
 
 func notifyOutside(watches []*windowLeaveWatch, x, y int32) {
-	// The hook reports physical screen pixels. Resolve the WebView child
+	// The hook reports physical screen pixels. Resolve the child surface
 	// to its top-level window before deciding whether the click is outside.
 	point := uint64(uint32(x)) | uint64(uint32(y))<<32
 	hit, _, _ := procWindowFromPhysicalPoint.Call(uintptr(point))
@@ -238,8 +238,8 @@ func notifyOutside(watches []*windowLeaveWatch, x, y int32) {
 	}
 }
 
-// WindowOwnsForeground includes WebView2's native select popup, which has its
-// own HWND but belongs to the bubble. Other app windows must still dismiss it.
+// WindowOwnsForeground includes owned popups and child surfaces of the bubble.
+// Other app windows must still dismiss it.
 func WindowOwnsForeground(hwnd uintptr) bool {
 	foreground, _, _ := procGetForegroundWindow.Call()
 	return windowContains(hwnd, foreground)

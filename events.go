@@ -1,8 +1,6 @@
 package main
 
 import (
-	"github.com/egoist/mygo"
-
 	"sotto/internal/config"
 )
 
@@ -64,10 +62,3 @@ type RunStoppedMsg struct {
 	SessionID string `json:"sessionID"`
 	Revision  int64  `json:"revision"`
 }
-
-var (
-	// SettingsChanged tells the settings page the new settings.
-	SettingsChanged = mygo.NewEvent[config.Settings]("settings-changed")
-	// OpenTranslationSettings selects the services tab in an existing window.
-	OpenTranslationSettings = mygo.NewEvent[bool]("open-translation-settings")
-)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
+	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
@@ -54,12 +55,13 @@ type application struct {
 	cfgPath       string
 	configWriteMu sync.Mutex
 
-	mu          sync.Mutex
-	cfg         config.Settings
-	hotkeys     map[string]string // action → the accelerator in force
-	entry       entryGate
-	settingsWin *mygo.Window
-	quitting    bool
+	mu           sync.Mutex
+	cfg          config.Settings
+	hotkeys      map[string]string // action → the accelerator in force
+	entry        entryGate
+	settingsWin  *mygo.Window
+	settingsView *settingsView
+	quitting     bool
 
 	bubbles *bubbleManager
 	snip    *snipManager
@@ -107,11 +109,17 @@ func (a *application) ready() {
 	mygo.App.OnWindowAllClosed(func() {})
 	// Mark the quit so the bubbles' OnClose handlers let it close them
 	// (OnBeforeQuit runs before the quit sequence closes the windows).
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
 		a.mu.Lock()
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
+		a.mu.Lock()
+		sv := a.settingsView
+		a.mu.Unlock()
+		if sv != nil && !sv.prepareQuit(mygo.App.Quit) {
+			e.PreventDefault()
+		}
 	})
 	speaker := speech.New()
 	mygo.App.OnQuit(speaker.Close)
@@ -193,14 +201,14 @@ func (a *application) applySettings(s config.Settings) {
 	a.broadcastSettings(a.settings())
 }
 
-// broadcastSettings tells open native bubbles and the settings page the new settings.
+// broadcastSettings tells open native bubbles and the settings window the new settings.
 func (a *application) broadcastSettings(s config.Settings) {
 	a.bubbles.applySettings(s)
 	a.mu.Lock()
-	settingsWin := a.settingsWin
+	sv := a.settingsView
 	a.mu.Unlock()
-	if settingsWin != nil {
-		SettingsChanged.Emit(settingsWin, s)
+	if sv != nil {
+		sv.applyExternalSettings(s)
 	}
 }
 
@@ -479,38 +487,69 @@ func (a *application) setTrayOpenAtLogin(open bool) {
 // It runs on the main thread (the tray); NewWindow executes directly
 // there, outside the mutex.
 func (a *application) showSettings(services bool) {
+	if a.isQuitting() {
+		return
+	}
 	a.mu.Lock()
 	win := a.settingsWin
+	sv := a.settingsView
 	a.mu.Unlock()
 	if win != nil {
-		if services {
-			OpenTranslationSettings.Emit(win, true)
+		if services && sv != nil {
+			sv.setActiveTab(tabServices)
 		}
 		win.Show()
 		win.Focus()
 		return
 	}
-	url := "/settings.html"
+	tab := tabGeneral
 	if services {
-		url += "?tab=services"
+		tab = tabServices
+	}
+	svc := ConfigSvc{a}
+	if sv == nil {
+		sv = newSettingsView(tab, a.settings(), settingsActions{
+			getSettings:  svc.Get,
+			saveSettings: svc.Set,
+			credentials:  func() (CredentialStatus, error) { return svc.Credentials(), nil },
+			setSecret:    svc.SetSecret,
+			testService:  svc.TestService,
+			openKeyPage:  svc.OpenKeyPage,
+			deeplUsage:   svc.DeeplUsage,
+			hotkeyBusy:   HotkeySvc{}.Busy,
+			invalidate: func() {
+				a.mu.Lock()
+				w := a.settingsWin
+				a.mu.Unlock()
+				if w != nil {
+					w.Invalidate()
+				}
+			},
+		})
+	} else {
+		sv.setActiveTab(tab)
+		sv.refreshCredentialsAsync()
 	}
 	w := mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto 设置",
-		URL:             url,
+		Content:         ui.View(sv.render),
 		Width:           780,
 		Height:          600,
 		MinWidth:        660,
 		MinHeight:       500,
 		StateKey:        "settings",
 		BackgroundColor: "light-dark(#ffffff, #222325)",
-		Page:            mygo.PageOptions{DevTools: mygo.DevToolsAuto},
 	})
 	a.mu.Lock()
 	a.settingsWin = w
+	a.settingsView = sv
 	a.mu.Unlock()
 	w.OnClosed(func() {
+		sv.detachWindow()
 		a.mu.Lock()
-		a.settingsWin = nil
+		if a.settingsWin == w {
+			a.settingsWin = nil
+		}
 		a.mu.Unlock()
 	})
 	w.Show()

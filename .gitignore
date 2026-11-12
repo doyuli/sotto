@@ -1,6 +1,4 @@
 node_modules/
-/dist/
 /build/
 /.mygo/
-/.svelte-check/
 mygo_windows_*.syso

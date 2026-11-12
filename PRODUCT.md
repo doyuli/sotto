@@ -2,11 +2,11 @@
 
 ## Platform
 
-web
+Windows desktop
 
 ## Stack
 
-Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3 native screenshot selection, and WebView2 bubble/settings with Vite + TypeScript.
+Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3 native screenshot selection, and native `mygo/ui` bubbles and settings.
 
 ## Users
 
@@ -51,7 +51,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 ## Evidence on Hand
 
 - `DESIGN.md` — reusable brand and bubble design tokens.
-- Running implementation: `src/components/BubblePage.svelte`, `src/style.css`, `bubbles.go`.
+- Running implementation: `bubble_ui.go`, `settings_ui.go`, `bubbles.go`.
 
 ## Product Principles
 
@@ -59,11 +59,11 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 2. Comparison is the feature: cards share one grammar so services are scanned, not deciphered.
 3. Stay out of the way: open fast, hide on blur, never steal more attention than the task.
 4. Local and private by default: keys stay in the OS keyring; no telemetry.
-5. Keyboard first: every frequent action is reachable without the mouse.
+5. Keyboard first: translation and settings controls support keyboard access; service ordering uses pointer drag.
 
 ## Accessibility & Inclusion
 
 - Maintain WCAG AA contrast in both themes, including muted action icons.
 - Visible keyboard focus on every control.
-- Respect `prefers-reduced-motion`; motion only communicates state.
+- Respect the system’s reduced-motion preference; motion only communicates state.
 - Chinese and English text must remain readable at 12–15 px in a compact desktop panel.

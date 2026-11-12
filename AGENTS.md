@@ -1,18 +1,16 @@
 # Sotto — Agent 工作规则
 
-翻译工具 app：mygo v0.8.3（Go 后端 + 原生截图遮罩 + WebView2 气泡/设置），Windows 优先，纯 Go 无 cgo。
+翻译工具 app：mygo v0.8.3（Go 后端 + 原生截图遮罩 + 原生 `mygo/ui` 气泡与设置），Windows 优先，纯 Go 无 cgo。
 产品定位见 `PRODUCT.md`，品牌与视觉规范见 `DESIGN.md`；mygo 的 API 以本地源码为唯一事实来源。
 
 ## 开发循环
 
 ```bash
 export PATH="/c/Program Files/Go/bin:$PATH"   # go 不在 Git Bash 默认 PATH
-bun run dev            # 开发运行（vite:5173 + Go + WebView2，热重载）
-bunx mygo generate     # 改了 Go 绑定服务/事件后必须重新生成 src/mygo.ts
-bun run typecheck      # svelte-check（Svelte + TypeScript）
+bun run dev            # 开发运行（Go + 原生 UI）
 CGO_ENABLED=0 go test ./...
 bunx mygo vet .
-bun run build          # 生产构建（类型检查 + Vite + 嵌入 + 出包）
+bun run build          # 生产构建（编译 + 出包）
 CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌面会话，见 e2e/README.md）
 ```
 
@@ -26,11 +24,9 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌
 4. **线程模型**：
    - GlobalShortcut/托盘/菜单回调在**主线程**：只做派发，禁止阻塞；耗时工作 `go` 出去。
    - `Window` 的方法（Show/Hide/SetPosition…）内部自动 marshal，goroutine 可安全调用。
-   - `Event.Emit` 任意 goroutine 可调；但 DOM 未就绪只暂存有限条——初始数据用"页面 mount 主动拉"（`Ready`），事件只做增量。
-   - `Window.Update` 仅用于向原生 `ui` 视图异步发布后台状态；WebView 禁用，继续使用绑定/事件。原生视图状态归 UI 线程，绘制回调不做抓屏或 OCR。
+   - `Window.Invalidate()` / `applyState` 用于向原生 `ui` 视图异步发布后台状态；原生视图状态归 UI 线程（或互斥保护后触发 `Invalidate()`），绘制回调不做抓屏或 OCR。
    - UIA/COM 调用只在专用 MTA 线程（见 internal/selection/uia_windows.go）。
-5. **改 Go 绑定/事件后必须** `bunx mygo generate` → `bun run typecheck`，否则前端调不到新方法。
-6. **纯逻辑包必须有单测**（config/langdetect/naming/translate）；平台包（selection/capture/ocr）用手工清单验收。
+5. **纯逻辑包与原生 UI 必须有单测**（config/langdetect/naming/translate、`*_ui_test.go`）；平台包（selection/capture/ocr）用手工清单验收。
 7. **剪贴板纪律**：模拟复制产生的任何写入必须带三个排除伪格式（见 internal/selection/clipboard_windows.go）；禁用剪贴板监听做划词入口。气泡外部点击检测走 `WH_MOUSE_LL` 鼠标钩子（internal/selection/hook_windows.go），回调必须立即返回。
 8. **错误处理**：`fmt.Errorf("...: %w", err)` 包装；服务错误映射为用户可读中文文案（见 internal/translate 的 UserMessage）。
 9. 注释对齐现有代码（英文、解释 why）；UI 文案用中文。
@@ -58,5 +54,5 @@ internal/selection # 划词：UIA 主路径 + Ctrl+C 兜底；气泡外部点击
 internal/capture   # GDI 截屏
 internal/ocr       # PP-OCR（ONNX Runtime 直调）+ Windows.Media.Ocr 兜底
 snip*.go           # 原生截图：每屏视图、框选状态、窗口与抓屏 HWND 租约
-src/               # Web 前端（Svelte 5 多入口）：bubble.html / settings.html
+bubble_ui.go / settings_ui.go  # 原生 mygo/ui 气泡与设置视图
 ```
