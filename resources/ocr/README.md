@@ -40,6 +40,10 @@ Runtime DLLs live in `resources/windows-amd64/ocr` and `resources/windows-arm64/
 
 Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 1,000 candidates; recognition inputs to 2,048 pixels wide. Exceeded budgets return an error or use system fallback. Complex tables, vertical/inverted text and exact code indentation are not guaranteed.
 
+Screenshot capture applies the same source-image budget after DPI conversion and client-bound clipping, before creating a GDI DIB or Go image. Win32 coordinate ranges and pixel-storage arithmetic are checked before narrowing or allocation. Oversized selections ask the user to select a smaller region.
+
+Native model outputs are borrowed by synchronous pipeline consumers: full probability validation, detection postprocessing and CTC decoding finish before `OrtValue` is released. The bridge no longer copies complete output tensors into Go slices. Both tensor data and shape are valid only during the consumer callback; published lines and tokens own their results. Cancellation never releases a native output during consumption, and consumer errors or panics unwind native cleanup and the session lock. This removes output-copy allocations, not model outputs, ORT arenas or a guaranteed amount of working set.
+
 ## Idle resource lifetime
 
 PP-OCR has a 5-minute idle deadline, and Windows OCR has a 30-second idle deadline. Each is measured from the actual completion of the most recent request that used that engine. Using system OCR does not renew idle local sessions, or vice versa. Local inference and system fallback share one admission gate for the full request. Queued requests, active inference and cancellation while a native call is still running prevent idle release; cancellation alone does not mean inference has returned. Once admission is returned, already-expired resources are scheduled immediately. Admission/worker contention uses a one-second retry deadline that requests using the other engine do not postpone.
@@ -52,7 +56,7 @@ Set `SOTTO_OCR_IDLE` for PP-OCR or `SOTTO_OCR_WINRT_IDLE` for Windows OCR. Sotto
 
 During development, capture the same region several times in the app and inspect the terminal's `ocr:` summary: total time, selected engine, detection size, main stage durations, risk reasons and fallback costs. Failed requests additionally log full attempt details. These logs exclude recognized text and image data. Full diagnostics remain available in the recognition result; numeric fields ending in `Us` are microseconds.
 
-The first successful local call, and the first call after idle release, include model verification and session initialization. Calls while warm reuse the sessions. Detection/recognition inference timings include the native bridge and output copy. Total OCR time includes queue wait, but excludes screenshot capture and translation. Both engine attempts remain visible when fallback supplies the final result.
+The first successful local call, and the first call after idle release, include model verification and session initialization. Calls while warm reuse the sessions. Detection/recognition inference timings include the native bridge and cleanup, excluding synchronous output consumers. Detection postprocessing and CTC decoding retain their separate timing fields. Total OCR time includes queue wait, but excludes screenshot capture and translation. Both engine attempts remain visible when fallback supplies the final result.
 
 For comparisons, set environment variables before launching a fresh app process:
 
@@ -90,4 +94,16 @@ go test ./internal/ocr -run '^TestV6SmallRuntimePreflight$' -count=1 -v
 Remove-Item Env:SOTTO_OCR_PREFLIGHT
 ```
 
-The preflight also closes and rebuilds the session pair 20 times while checking that the shared runtime is retained. The default tests use fake runners/clocks and helper child processes; native model loading and inference remain opt-in. The preflight does not measure recognition accuracy or end-to-end reconstruction latency. Check real screenshots on x64 and ARM64: small text, light/dark backgrounds, mixed Chinese/English, code and numbers. Confirm nonempty local results with confidence risks or partially empty lines use one local attempt and retain their diagnostics. Empty final text and corrupt local resources should attempt system OCR once. Also check both engines finding no text, missing language packs, repeated captures, cancellation and idle release/rebuild.
+The preflight also exercises consumer errors, cancellation and panic recovery before reusing each native session, then closes and rebuilds the session pair 20 times while checking that the shared runtime is retained. The default tests use fake runners/clocks and helper child processes; native model loading and inference remain opt-in. The preflight does not measure recognition accuracy or end-to-end reconstruction latency. Check real screenshots on x64 and ARM64: small text, light/dark backgrounds, mixed Chinese/English, code and numbers. Confirm nonempty local results with confidence risks or partially empty lines use one local attempt and retain their diagnostics. Empty final text and corrupt local resources should attempt system OCR once. Also check both engines finding no text, missing language packs, repeated captures, cancellation and idle release/rebuild.
+
+To compare Go allocation traffic with and without the former recognition-output copy:
+
+```powershell
+$env:SOTTO_OCR_PREFLIGHT = "1"
+go test ./internal/ocr -run '^$' -bench '^BenchmarkV6SmallRecognitionOutput$' -benchmem -count=3
+Remove-Item Env:SOTTO_OCR_PREFLIGHT
+```
+
+Both benchmark cases run the same warm native recognition model and checksum consumer on a zero input. `copied` adds a full output copy; `borrowed` consumes native storage directly. The comparison reports Go allocation traffic and bridge/inference time, excluding image preprocessing and CTC decoding. Native allocations and complete-OCR peak/idle process memory require desktop sampling.
+
+Capture acceptance additionally covers 1080p/4K selections, mixed DPI and negative monitor origins, and rejecting an over-budget physical selection before GDI allocation. A valid clipped selection must still work even when its unclipped dimensions exceed the budget. Check the smaller-selection error text in the screenshot bubble.

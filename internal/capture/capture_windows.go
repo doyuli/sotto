@@ -60,9 +60,6 @@ type bitmapInfo struct {
 	ClrImportant  uint32
 }
 
-// toPx is mygo's DIP-to-physical conversion.
-func toPx(v, dpi int) int32 { return int32(screencoords.Scale(float64(v), dpi, 96)) }
-
 // grab converts the DIP rectangle through the matching display layout
 // before capturing physical screen pixels.
 func grab(r Rect) (image.Image, error) {
@@ -82,6 +79,10 @@ func grab(r Rect) (image.Image, error) {
 
 // bitBlt takes pw×ph physical pixels at px,py of the virtual screen.
 func bitBlt(px, py, pw, ph int) (image.Image, error) {
+	bytes, err := pixelBytes(int64(px), int64(py), int64(pw), int64(ph))
+	if err != nil {
+		return nil, err
+	}
 	// GDI batches are thread-local; copy, flush and release on the same thread.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -132,7 +133,7 @@ func bitBlt(px, py, pw, ph int) (image.Image, error) {
 	img := image.NewNRGBA(image.Rect(0, 0, pw, ph))
 	// native through the DIB's memory pointer, as internal/selection
 	// does, so go vet sees a legal conversion.
-	src := unsafe.Slice((*byte)(native(bits)), pw*ph*4)
+	src := unsafe.Slice((*byte)(native(bits)), bytes)
 	// The DIB's rows are BGRA; GDI leaves the alpha undefined, and the
 	// screen is opaque, so every pixel comes out at full opacity.
 	for i := 0; i < len(src); i += 4 {
@@ -165,10 +166,9 @@ func grabWindow(hwnd uintptr, r Rect) (image.Image, error) {
 	if ok, _, _ := modUser32.NewProc("GetClientRect").Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok == 0 {
 		return nil, fmt.Errorf("capture: window bounds unavailable")
 	}
-	x, y := toPx(r.X, int(dpi)), toPx(r.Y, int(dpi))
-	right, bottom := min(toPx(r.X+r.W, int(dpi)), bounds.Right), min(toPx(r.Y+r.H, int(dpi)), bounds.Bottom)
-	if right <= x || bottom <= y {
-		return nil, fmt.Errorf("capture: selection outside display")
+	pixels, err := windowCaptureRect(r, int(dpi), origin.X, origin.Y, bounds.Right, bounds.Bottom)
+	if err != nil {
+		return nil, err
 	}
-	return bitBlt(int(origin.X+x), int(origin.Y+y), int(right-x), int(bottom-y))
+	return bitBlt(pixels.X, pixels.Y, pixels.W, pixels.H)
 }

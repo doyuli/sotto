@@ -17,8 +17,8 @@ type lifecycleRunner struct {
 	err    error
 }
 
-func (*lifecycleRunner) Run(context.Context, pipeline.Tensor) (pipeline.Tensor, error) {
-	return pipeline.Tensor{}, nil
+func (*lifecycleRunner) Run(_ context.Context, _ pipeline.Tensor, consume func(pipeline.Tensor) error) error {
+	return consume(pipeline.Tensor{})
 }
 func (r *lifecycleRunner) Close() error { r.closes++; return r.err }
 

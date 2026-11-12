@@ -18,7 +18,12 @@ type Tensor struct {
 }
 
 type Runner interface {
-	Run(context.Context, Tensor) (Tensor, error)
+	// Run borrows input until it returns. After successful inference it calls
+	// consume synchronously once. Output storage is read-only and valid only
+	// inside consume; it must not be retained or used to reenter the runner.
+	// Run propagates consumer errors unless canceled and releases output on
+	// every exit, including cancellation and panic.
+	Run(ctx context.Context, input Tensor, consume func(Tensor) error) error
 }
 
 type Point struct {
@@ -54,7 +59,7 @@ type Diagnostics struct {
 }
 
 // Timings uses microseconds, accumulated across all recognition lines. Runner
-// time includes the native bridge and output transfer, not just model compute.
+// time includes the native bridge and cleanup, but excludes output consumers.
 type Timings struct {
 	DetectionPreprocessUS   int64 `json:"detectionPreprocessUs"`
 	DetectionInferenceUS    int64 `json:"detectionInferenceUs"`

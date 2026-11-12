@@ -4,6 +4,7 @@ package ocr
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -60,28 +61,32 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = session.Close() })
 			n := preflightElements(t, inputShape)
-			output, shape, err := session.run(make([]float32, n), inputShape)
+			err = session.Run(context.Background(), pipeline.Tensor{Data: make([]float32, n), Shape: inputShape}, func(out pipeline.Tensor) error {
+				output, shape := out.Data, out.Shape
+				if len(shape) != spec.OutputRank || shape[0] != 1 {
+					t.Fatalf("unexpected output shape %v", shape)
+				}
+				if spec.OutputClasses != 0 && shape[len(shape)-1] != spec.OutputClasses {
+					t.Fatalf("output classes %v, want %d", shape, spec.OutputClasses)
+				}
+				if spec.OutputRank == 4 && shape[1] != 1 {
+					t.Fatalf("detector must return one probability map, got %v", shape)
+				}
+				if len(output) != preflightElements(t, shape) {
+					t.Fatalf("output length %d does not match shape %v", len(output), shape)
+				}
+				for i, value := range output {
+					if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < -1e-6 || value > 1+1e-6 {
+						t.Fatalf("invalid probability at %d: %v", i, value)
+					}
+				}
+				t.Logf("ORT API %d, windows/%s: %v -> %v; zero-tensor smoke only", ortAPIVersion, runtime.GOARCH, inputShape, shape)
+				return nil
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(shape) != spec.OutputRank || shape[0] != 1 {
-				t.Fatalf("unexpected output shape %v", shape)
-			}
-			if spec.OutputClasses != 0 && shape[len(shape)-1] != spec.OutputClasses {
-				t.Fatalf("output classes %v, want %d", shape, spec.OutputClasses)
-			}
-			if spec.OutputRank == 4 && shape[1] != 1 {
-				t.Fatalf("detector must return one probability map, got %v", shape)
-			}
-			if len(output) != preflightElements(t, shape) {
-				t.Fatalf("output length %d does not match shape %v", len(output), shape)
-			}
-			for i, value := range output {
-				if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) || value < -1e-6 || value > 1+1e-6 {
-					t.Fatalf("invalid probability at %d: %v", i, value)
-				}
-			}
-			t.Logf("ORT API %d, windows/%s: %v -> %v; zero-tensor smoke only", ortAPIVersion, runtime.GOARCH, inputShape, shape)
+			checkORTConsumerExits(t, session, pipeline.Tensor{Data: make([]float32, n), Shape: inputShape})
 		})
 	}
 	t.Run("idle release and rebuild retains runtime", func(t *testing.T) {
@@ -114,7 +119,7 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 				// Run again after repeated release, not just CreateSession, so
 				// the retained shared memory-info object is actually exercised.
 				for i, session := range []*ortSession{det, rec} {
-					if _, _, err := session.run(make([]float32, preflightElements(t, inputs[i])), inputs[i]); err != nil {
+					if err := session.Run(context.Background(), pipeline.Tensor{Data: make([]float32, preflightElements(t, inputs[i])), Shape: inputs[i]}, func(pipeline.Tensor) error { return nil }); err != nil {
 						_, _ = releaseIdleResource(localOCR)
 						t.Fatal(err)
 					}
@@ -132,6 +137,88 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Every abnormal consumer exit must release the output and unlock the session
+// before another request can use it. Real native calls remain opt-in.
+func checkORTConsumerExits(t *testing.T, session *ortSession, input pipeline.Tensor) {
+	t.Helper()
+	failure := errors.New("consumer failure")
+	if err := session.Run(context.Background(), input, func(pipeline.Tensor) error { return failure }); !errors.Is(err, failure) {
+		t.Fatalf("lost consumer error: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := session.Run(ctx, input, func(pipeline.Tensor) error { cancel(); return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost consumer cancellation: %v", err)
+	}
+	if err := session.Run(ctx, input, func(pipeline.Tensor) error {
+		t.Fatal("canceled request consumed output")
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled request ran: %v", err)
+	}
+	func() {
+		defer func() {
+			if got := recover(); got != failure {
+				t.Fatalf("lost consumer panic: %v", got)
+			}
+		}()
+		_ = session.Run(context.Background(), input, func(pipeline.Tensor) error { panic(failure) })
+	}()
+	calls := 0
+	if err := session.Run(context.Background(), input, func(pipeline.Tensor) error { calls++; return nil }); err != nil || calls != 1 {
+		t.Fatalf("session did not recover after consumer exits: calls=%d err=%v", calls, err)
+	}
+}
+
+// This bridge comparison reports Go allocations only. The copied case adds
+// the former full-output transfer; both cases run the same native inference
+// and checksum consumer. It excludes image preprocessing and CTC decoding.
+func BenchmarkV6SmallRecognitionOutput(b *testing.B) {
+	if os.Getenv("SOTTO_OCR_PREFLIGHT") != "1" {
+		b.Skip("set SOTTO_OCR_PREFLIGHT=1 on Windows to benchmark the packaged runtime")
+	}
+	root := filepath.Join("..", "..")
+	runtimeDir, err := filepath.Abs(filepath.Join(root, "resources", "windows-"+runtime.GOARCH, "ocr"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Setenv("SOTTO_OCR_DIR", runtimeDir)
+	m, err := readManifest()
+	if err != nil {
+		b.Fatal(err)
+	}
+	spec := m.Models[1]
+	session, err := newORTSession(filepath.Join(root, "resources", "ocr", spec.File), spec.InputName, spec.OutputName)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = session.Close() })
+	input := pipeline.Tensor{Data: make([]float32, 3*48*320), Shape: []int64{1, 3, 48, 320}}
+	if err := session.Run(context.Background(), input, func(pipeline.Tensor) error { return nil }); err != nil {
+		b.Fatal(err)
+	}
+	for _, mode := range []string{"borrowed", "copied"} {
+		b.Run(mode, func(b *testing.B) {
+			var checksum float64
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := session.Run(context.Background(), input, func(out pipeline.Tensor) error {
+					data := out.Data
+					if mode == "copied" {
+						data = append([]float32(nil), data...)
+					}
+					for _, value := range data {
+						checksum += float64(value)
+					}
+					return nil
+				}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.Logf("checksum=%g", checksum)
+		})
+	}
 }
 
 func preflightElements(t *testing.T, shape []int64) int {
