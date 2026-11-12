@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -203,11 +201,10 @@ var serviceNotes = map[string]string{
 	"volcengine":  "需开通「机器翻译」并授权 Access Key。",
 }
 
-var defaultServiceModels = map[string]string{
-	"openai":      "gpt-4o-mini",
-	"siliconflow": "tencent/Hunyuan-MT-7B",
-	"zhipu":       "glm-4.7-flash",
-}
+var defaultServiceModels = func() map[string]string {
+	cfg := config.Default()
+	return map[string]string{"openai": serviceModel(cfg, "openai"), "siliconflow": serviceModel(cfg, "siliconflow"), "zhipu": serviceModel(cfg, "zhipu")}
+}()
 
 type copyFormatOption struct {
 	style   string
@@ -221,528 +218,6 @@ var settingsCopyFormats = []copyFormatOption{
 	{style: naming.Snake, label: "下划线", example: "user_name"},
 	{style: naming.Constant, label: "常量", example: "USER_NAME"},
 	{style: naming.Kebab, label: "短横线", example: "user-name"},
-}
-
-type settingsActions struct {
-	getSettings  func() config.Settings
-	saveSettings func(config.Settings) error
-	credentials  func() (CredentialStatus, error)
-	setSecret    func(name, value string) error
-	testService  func(ctx context.Context, name string) string
-	openKeyPage  func(service string) error
-	deeplUsage   func() (DeeplUsage, error)
-	hotkeyBusy   func(accel string) bool
-	invalidate   func()
-}
-
-type serviceTestStatus struct {
-	testing bool
-	result  string
-	isError bool
-}
-
-type settingsView struct {
-	mu      sync.Mutex
-	actions settingsActions
-
-	activeTab     settingsTab
-	settings      config.Settings
-	pendingWrites int
-	saveFailed    bool
-	savePending   []config.Settings
-	saveWake      chan struct{}
-	saveStop      chan struct{}
-	pendingToast  string
-	disposed      bool
-
-	credentialsLoaded bool
-	credentials       CredentialStatus
-	credentialsErr    string
-
-	expanded         map[string]bool
-	serviceDrafts    map[string]map[string]string
-	baseURLDraft     *string
-	modelDrafts      map[string]string
-	credentialBusy   map[string]bool
-	testStatuses     map[string]serviceTestStatus
-	deeplUsageText   string
-	deeplUsagePct    float64
-	dragPreview      []string
-	lastDragTarget   string
-	lastDragPointerY float32
-
-	hotkeyListening    string
-	hotkeyConflicts    map[string]string
-	hotkeyCaptureArmed bool
-}
-
-func newSettingsView(initialTab settingsTab, cfg config.Settings, actions settingsActions) *settingsView {
-	if initialTab == "" {
-		initialTab = tabGeneral
-	}
-	v := &settingsView{
-		actions:         actions,
-		activeTab:       initialTab,
-		settings:        cloneSettings(cfg),
-		saveWake:        make(chan struct{}, 1),
-		saveStop:        make(chan struct{}),
-		expanded:        make(map[string]bool),
-		serviceDrafts:   make(map[string]map[string]string),
-		modelDrafts:     make(map[string]string),
-		credentialBusy:  make(map[string]bool),
-		testStatuses:    make(map[string]serviceTestStatus),
-		deeplUsageText:  "额度查询中…",
-		hotkeyConflicts: make(map[string]string),
-	}
-	go v.runSaveLoop()
-	v.refreshCredentialsAsync()
-	return v
-}
-
-func cloneSettings(cfg config.Settings) config.Settings {
-	out := cfg
-	out.Services.Enabled = slices.Clone(cfg.Services.Enabled)
-	out.Services.Order = slices.Clone(cfg.Services.Order)
-	out.CopyFormats = slices.Clone(cfg.CopyFormats)
-	return out
-}
-
-func (v *settingsView) dispose() {
-	v.mu.Lock()
-	if v.disposed {
-		v.mu.Unlock()
-		return
-	}
-	v.flushTextDraftsLocked()
-	v.disposed = true
-	close(v.saveStop)
-	v.mu.Unlock()
-}
-
-func (v *settingsView) invalidate() {
-	if v.actions.invalidate != nil {
-		v.actions.invalidate()
-	}
-}
-
-func (v *settingsView) setActiveTab(tab settingsTab) {
-	v.mu.Lock()
-	if tab != tabHotkeys {
-		v.hotkeyListening = ""
-		v.hotkeyCaptureArmed = false
-	}
-	if tab != tabServices {
-		v.flushTextDraftsLocked()
-	}
-	v.activeTab = tab
-	disposed := v.disposed
-	v.mu.Unlock()
-	if !disposed {
-		v.invalidate()
-	}
-}
-
-func (v *settingsView) applyExternalSettings(cfg config.Settings) {
-	v.mu.Lock()
-	disposed := v.disposed
-	if v.pendingWrites == 0 && !disposed {
-		v.settings = cloneSettings(cfg)
-	}
-	v.mu.Unlock()
-	if !disposed {
-		v.invalidate()
-	}
-}
-
-func (v *settingsView) flushTextDraftsLocked() {
-	if v.baseURLDraft == nil && len(v.modelDrafts) == 0 {
-		return
-	}
-	next := cloneSettings(v.settings)
-	if v.baseURLDraft != nil {
-		next.Services.OpenAI.BaseURL = strings.TrimSpace(*v.baseURLDraft)
-		v.baseURLDraft = nil
-	}
-	for svc, val := range v.modelDrafts {
-		trimmed := strings.TrimSpace(val)
-		switch svc {
-		case "openai":
-			next.Services.OpenAI.Model = trimmed
-		case "siliconflow":
-			next.Services.SiliconFlow.Model = trimmed
-		case "zhipu":
-			next.Services.Zhipu.Model = trimmed
-		}
-		delete(v.modelDrafts, svc)
-	}
-	v.enqueueSaveLocked(next)
-}
-
-func (v *settingsView) enqueueSaveLocked(next config.Settings) {
-	v.settings = cloneSettings(next)
-	if v.disposed {
-		return
-	}
-	v.pendingWrites++
-	v.savePending = append(v.savePending, cloneSettings(next))
-	select {
-	case v.saveWake <- struct{}{}:
-	default:
-	}
-}
-
-func (v *settingsView) runSaveLoop() {
-	for {
-		v.mu.Lock()
-		if len(v.savePending) == 0 {
-			disposed := v.disposed
-			v.mu.Unlock()
-			if disposed {
-				return
-			}
-			select {
-			case <-v.saveWake:
-			case <-v.saveStop:
-			}
-			continue
-		}
-		snap := v.savePending[0]
-		v.savePending = v.savePending[1:]
-		v.mu.Unlock()
-
-		var err error
-		if v.actions.saveSettings != nil {
-			err = v.actions.saveSettings(snap)
-		}
-		v.mu.Lock()
-		v.pendingWrites--
-		v.saveFailed = err != nil
-		pending := v.pendingWrites
-		disposed := v.disposed
-		if err != nil {
-			v.pendingToast = "保存失败：" + err.Error()
-		}
-		if pending == 0 && !disposed && v.actions.getSettings != nil {
-			v.settings = cloneSettings(v.actions.getSettings())
-		}
-		v.mu.Unlock()
-		if !disposed {
-			v.invalidate()
-		}
-	}
-}
-
-func (v *settingsView) refreshCredentialsAsync() {
-	if v.actions.credentials == nil {
-		return
-	}
-	go func() {
-		status, err := v.actions.credentials()
-		v.mu.Lock()
-		disposed := v.disposed
-		if !disposed {
-			if err != nil {
-				v.credentialsErr = "读取服务状态失败：" + err.Error()
-				v.pendingToast = v.credentialsErr
-			} else {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
-		}
-		v.mu.Unlock()
-		if !disposed {
-			v.invalidate()
-		}
-	}()
-}
-
-func (v *settingsView) loadDeeplUsageAsync() {
-	if v.actions.deeplUsage == nil {
-		return
-	}
-	v.mu.Lock()
-	v.deeplUsageText = "额度查询中…"
-	v.deeplUsagePct = 0
-	v.mu.Unlock()
-	go func() {
-		usage, err := v.actions.deeplUsage()
-		v.mu.Lock()
-		disposed := v.disposed
-		if !disposed {
-			if err != nil {
-				v.deeplUsageText = "额度查询失败"
-			} else {
-				pct := 0.0
-				if usage.Limit > 0 {
-					pct = min(float64(usage.Used)/float64(usage.Limit), 1.0)
-				}
-				v.deeplUsagePct = pct
-				v.deeplUsageText = fmt.Sprintf("本月已用 %d / %d 字符", usage.Used, usage.Limit)
-			}
-		}
-		v.mu.Unlock()
-		if !disposed {
-			v.invalidate()
-		}
-	}()
-}
-
-func (v *settingsView) serviceOnLocked(name string) bool {
-	fields := serviceCredentialFields[name]
-	keyless := len(fields) == 0
-	return slices.Contains(v.settings.Services.Enabled, name) &&
-		(keyless || slices.Contains(v.credentials.Configured, name))
-}
-
-func (v *settingsView) hasServiceDraftLocked(name string) bool {
-	for _, val := range v.serviceDrafts[name] {
-		if strings.TrimSpace(val) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func (v *settingsView) saveCredentials(name string) {
-	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing || !v.hasServiceDraftLocked(name) {
-		v.mu.Unlock()
-		return
-	}
-	fields := serviceCredentialFields[name]
-	toWrite := make(map[string]string)
-	for _, f := range fields {
-		if val := strings.TrimSpace(v.serviceDrafts[name][f.name]); val != "" {
-			toWrite[f.name] = val
-		}
-	}
-	v.credentialBusy[name] = true
-	v.testStatuses[name] = serviceTestStatus{}
-	v.mu.Unlock()
-	v.invalidate()
-
-	go func() {
-		var writeErr error
-		for _, f := range fields {
-			val, ok := toWrite[f.name]
-			if !ok {
-				continue
-			}
-			if v.actions.setSecret != nil {
-				if err := v.actions.setSecret(f.name, val); err != nil {
-					writeErr = err
-					break
-				}
-			}
-		}
-		var status CredentialStatus
-		var credErr error
-		if v.actions.credentials != nil {
-			status, credErr = v.actions.credentials()
-		}
-
-		v.mu.Lock()
-		disposed := v.disposed
-		if !disposed {
-			v.credentialBusy[name] = false
-			if writeErr != nil {
-				v.testStatuses[name] = serviceTestStatus{
-					result:  "更新失败：" + writeErr.Error(),
-					isError: true,
-				}
-			} else {
-				for key := range toWrite {
-					if v.serviceDrafts[name] != nil {
-						delete(v.serviceDrafts[name], key)
-					}
-				}
-				v.testStatuses[name] = serviceTestStatus{result: "凭证已保存"}
-			}
-			if credErr != nil {
-				v.credentialsErr = "读取服务状态失败：" + credErr.Error()
-				v.pendingToast = v.credentialsErr
-			} else if v.actions.credentials != nil {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
-		}
-		loadUsage := !disposed && name == "deepl" && slices.Contains(v.credentials.Stored, keys.DeeplKey)
-		v.mu.Unlock()
-		if loadUsage {
-			v.loadDeeplUsageAsync()
-		}
-		if !disposed {
-			v.invalidate()
-		}
-	}()
-}
-
-func (v *settingsView) clearSecret(name, key string) {
-	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing {
-		v.mu.Unlock()
-		return
-	}
-	v.credentialBusy[name] = true
-	v.testStatuses[name] = serviceTestStatus{}
-	v.mu.Unlock()
-	v.invalidate()
-
-	go func() {
-		var writeErr error
-		if v.actions.setSecret != nil {
-			writeErr = v.actions.setSecret(key, "")
-		}
-		var status CredentialStatus
-		var credErr error
-		if v.actions.credentials != nil {
-			status, credErr = v.actions.credentials()
-		}
-		var refreshedSettings *config.Settings
-		if v.actions.getSettings != nil {
-			s := v.actions.getSettings()
-			refreshedSettings = &s
-		}
-
-		v.mu.Lock()
-		disposed := v.disposed
-		if !disposed {
-			v.credentialBusy[name] = false
-			if writeErr != nil {
-				v.testStatuses[name] = serviceTestStatus{
-					result:  "更新失败：" + writeErr.Error(),
-					isError: true,
-				}
-			} else {
-				if v.serviceDrafts[name] != nil {
-					delete(v.serviceDrafts[name], key)
-				}
-				v.testStatuses[name] = serviceTestStatus{result: "凭证已清除"}
-			}
-			if credErr != nil {
-				v.credentialsErr = "读取服务状态失败：" + credErr.Error()
-				v.pendingToast = v.credentialsErr
-			} else if v.actions.credentials != nil {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
-			if refreshedSettings != nil && v.pendingWrites == 0 {
-				v.settings = cloneSettings(*refreshedSettings)
-			}
-		}
-		v.mu.Unlock()
-		if !disposed {
-			v.invalidate()
-		}
-	}()
-}
-
-func (v *settingsView) testConnection(name string) {
-	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing || v.hasServiceDraftLocked(name) {
-		v.mu.Unlock()
-		return
-	}
-	v.testStatuses[name] = serviceTestStatus{testing: true, result: "正在测试…"}
-	v.mu.Unlock()
-	v.invalidate()
-
-	go func() {
-		// Wait briefly for any queued settings writes (e.g. OpenAI model/baseURL) before testing.
-		var disposed, saveFailed bool
-		for {
-			v.mu.Lock()
-			pending := v.pendingWrites
-			saveFailed = v.saveFailed
-			disposed = v.disposed
-			v.mu.Unlock()
-			if pending == 0 || disposed {
-				break
-			}
-			time.Sleep(15 * time.Millisecond)
-		}
-		if disposed {
-			return
-		}
-		if saveFailed {
-			v.mu.Lock()
-			disposed = v.disposed
-			if !disposed {
-				v.testStatuses[name] = serviceTestStatus{result: "设置保存失败，请重新保存后测试", isError: true}
-			}
-			v.mu.Unlock()
-			if !disposed {
-				v.invalidate()
-			}
-			return
-		}
-		var errMsg string
-		if v.actions.testService != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-			errMsg = v.actions.testService(ctx, name)
-			cancel()
-		}
-		v.mu.Lock()
-		disposed = v.disposed
-		if !disposed {
-			if errMsg != "" {
-				v.testStatuses[name] = serviceTestStatus{result: errMsg, isError: true}
-			} else {
-				v.testStatuses[name] = serviceTestStatus{result: "连接成功"}
-			}
-		}
-		v.mu.Unlock()
-		if !disposed {
-			v.invalidate()
-		}
-	}()
-}
-
-func (v *settingsView) applyDragOrderLocked(preview []string) {
-	if len(preview) == 0 {
-		return
-	}
-	order := slices.Clone(v.settings.Services.Order)
-	pi := 0
-	for i, s := range order {
-		if _, ok := serviceCredentialFields[s]; ok && v.serviceOnLocked(s) && pi < len(preview) {
-			order[i] = preview[pi]
-			pi++
-		}
-	}
-	if slices.Equal(order, v.settings.Services.Order) {
-		return
-	}
-	next := cloneSettings(v.settings)
-	next.Services.Order = order
-	v.enqueueSaveLocked(next)
-}
-
-func sameServiceSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, s := range a {
-		if !slices.Contains(b, s) {
-			return false
-		}
-	}
-	return true
-}
-
-func moveSliceItem(items []string, fromSvc, toSvc string) []string {
-	from := slices.Index(items, fromSvc)
-	to := slices.Index(items, toSvc)
-	if from < 0 || to < 0 || from == to {
-		return items
-	}
-	out := slices.Clone(items)
-	out = slices.Delete(out, from, from+1)
-	out = slices.Insert(out, to, fromSvc)
-	return out
 }
 
 func (v *settingsView) render(c *ui.Context) {
@@ -776,7 +251,7 @@ func (v *settingsView) render(c *ui.Context) {
 			v.renderSidebar(c, p, active)
 			ui.Box(c).Width(1).FillHeight().Background(p.border)
 			ui.Scroll(c).Grow(1).FillHeight().Children(func() {
-				ui.Column(c).Padding(20).MaxWidth(600).Gap(12).Children(func() {
+				ui.Column(c).Padding(24, 28).MaxWidth(620).Gap(14).Children(func() {
 					switch active {
 					case tabGeneral:
 						v.renderGeneral(c, p)
@@ -794,7 +269,7 @@ func (v *settingsView) render(c *ui.Context) {
 }
 
 func (v *settingsView) renderSidebar(c *ui.Context, p settingsPalette, active settingsTab) {
-	ui.Column(c).Width(170).FillHeight().Background(p.sidebar).Padding(12).Gap(4).Children(func() {
+	ui.Column(c).Width(176).FillHeight().Background(p.sidebar).Padding(16, 12).Gap(4).Children(func() {
 		for _, item := range settingsNavItems {
 			isActive := item.id == active
 			btn := ui.ButtonBase(c).
@@ -802,13 +277,11 @@ func (v *settingsView) renderSidebar(c *ui.Context, p settingsPalette, active se
 				Cursor(ui.CursorPointer).
 				FillWidth().
 				Radius(8).
-				Padding(8, 10)
+				Padding(9, 10)
 			if isActive {
-				btn.Background(p.control).Border(1, p.border)
+				btn.Background(p.control)
 			} else if btn.Hovered() {
-				btn.Background(p.hover).Border(1, ui.Transparent)
-			} else {
-				btn.Border(1, ui.Transparent)
+				btn.Background(p.hover)
 			}
 			if btn.Clicked() {
 				v.setActiveTab(item.id)
@@ -820,8 +293,13 @@ func (v *settingsView) renderSidebar(c *ui.Context, p settingsPalette, active se
 					color = p.accentText
 					weight = 600
 				}
-				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-					ui.Text(c, item.label).FontSize(12).FontWeight(weight).TextColor(color).SingleLine()
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+					barColor := ui.Transparent
+					if isActive {
+						barColor = p.accent
+					}
+					ui.Box(c).Size(3, 14).Radius(999).Background(barColor)
+					ui.Text(c, item.label).FontSize(13).FontWeight(weight).TextColor(color).SingleLine()
 				})
 			})
 		}
@@ -830,10 +308,9 @@ func (v *settingsView) renderSidebar(c *ui.Context, p settingsPalette, active se
 
 		ui.Row(c).
 			FillWidth().
-			Padding(6, 10).
+			Padding(7, 10).
 			Radius(9).
 			Background(p.field).
-			Border(1, p.border).
 			AlignItems(ui.Center).
 			Gap(6).
 			Tooltip("凭据由 Windows Credential Manager 本地加密保护").
@@ -849,7 +326,7 @@ func (v *settingsView) renderGeneral(c *ui.Context, p settingsPalette) {
 	cfg := cloneSettings(v.settings)
 	v.mu.Unlock()
 
-	ui.Text(c, "通用").FontSize(16).FontWeight(600).TextColor(p.fg)
+	ui.Text(c, "通用").FontSize(18).FontWeight(600).TextColor(p.fg)
 
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
 		// Target language
@@ -935,11 +412,11 @@ func (v *settingsView) renderGeneral(c *ui.Context, p settingsPalette) {
 
 func (v *settingsView) renderSettingRow(c *ui.Context, p settingsPalette, title, sub string, divider bool, control func()) {
 	ui.Column(c).FillWidth().Children(func() {
-		ui.Row(c).FillWidth().Padding(11, 14).AlignItems(ui.Center).Gap(16).Children(func() {
-			ui.Column(c).Grow(1).Gap(2).Children(func() {
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(p.fg)
+		ui.Row(c).FillWidth().Padding(13, 16).AlignItems(ui.Center).Gap(16).Children(func() {
+			ui.Column(c).Grow(1).Gap(3).Children(func() {
+				ui.Text(c, title).FontSize(13).FontWeight(500).TextColor(p.fg)
 				if sub != "" {
-					ui.Text(c, sub).FontSize(11).TextColor(p.muted)
+					ui.Text(c, sub).FontSize(12).LineHeight(1.5).TextColor(p.muted)
 				}
 			})
 			control()
@@ -967,14 +444,14 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		}
 	}
 	displayEnabled := enabledNames
-	if sameServiceSet(v.dragPreview, enabledNames) {
-		displayEnabled = slices.Clone(v.dragPreview)
+	if sameServiceSet(v.drag.preview, enabledNames) {
+		displayEnabled = slices.Clone(v.drag.preview)
 	} else {
-		v.dragPreview = nil
+		v.drag.preview = nil
 	}
 	v.mu.Unlock()
 
-	ui.Text(c, "翻译服务").FontSize(16).FontWeight(600).TextColor(p.fg)
+	ui.Text(c, "翻译服务").FontSize(18).FontWeight(600).TextColor(p.fg)
 
 	if !loaded {
 		ui.Row(c).Padding(14).Radius(12).Background(p.card).Border(1, p.border).AlignItems(ui.Center).Gap(12).Children(func() {
@@ -994,9 +471,9 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		return
 	}
 
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, "已启用的服务会同时翻译，序号即结果顺序。").FontSize(12).TextColor(p.fg)
-		ui.Text(c, "拖动序号调整顺序，凭证保存在系统密钥环。").FontSize(11).TextColor(p.muted)
+	ui.Column(c).Gap(3).Children(func() {
+		ui.Text(c, "已启用的服务会同时翻译，序号即结果顺序。").FontSize(13).TextColor(p.fg)
+		ui.Text(c, "拖动序号调整顺序，凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
 	})
 
 	v.renderServiceGroupHeader(c, p, "已启用", len(displayEnabled))
@@ -1006,11 +483,7 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		listCol := ui.Column(c).Gap(8)
 		if droppedSvc, ok := ui.Drop[string](listCol); ok && droppedSvc != "" {
 			v.mu.Lock()
-			if sameServiceSet(v.dragPreview, enabledNames) {
-				v.applyDragOrderLocked(v.dragPreview)
-			}
-			v.dragPreview = nil
-			v.lastDragTarget = ""
+			v.finishDragLocked(enabledNames)
 			v.mu.Unlock()
 		}
 		listCol.Children(func() {
@@ -1026,11 +499,10 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		})
 		v.mu.Lock()
 		if hoveredTarget == "" {
-			v.lastDragTarget = ""
+			v.drag.target = ""
 		}
-		if !anyDragging && v.dragPreview != nil {
-			v.dragPreview = nil
-			v.lastDragTarget = ""
+		if !anyDragging && v.drag.preview != nil {
+			v.drag.clear()
 		}
 		v.mu.Unlock()
 	} else {
@@ -1067,7 +539,7 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 	isConfigured := slices.Contains(v.credentials.Configured, svc)
 	isExpanded := v.expanded[svc]
 	busy := v.credentialBusy[svc]
-	dragAnimating := v.dragPreview != nil
+	dragAnimating := v.drag.preview != nil
 	v.mu.Unlock()
 
 	stateHint := "填写凭证后可启用"
@@ -1097,15 +569,11 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 		}
 		if card.Dragging() {
 			dragging = true
-			card.Opacity(0.35).Border(1, p.accent)
+			card.Opacity(0.4).Border(1.5, p.accent).Background(p.accentSoft)
 		} else {
 			if droppedSvc, ok := ui.Drop[string](card); ok && droppedSvc != "" {
 				v.mu.Lock()
-				if sameServiceSet(v.dragPreview, displayEnabled) {
-					v.applyDragOrderLocked(v.dragPreview)
-				}
-				v.dragPreview = nil
-				v.lastDragTarget = ""
+				v.finishDragLocked(displayEnabled)
 				v.mu.Unlock()
 			}
 			if overSvc, over := ui.DragOver[string](card); over && overSvc != "" && overSvc != svc {
@@ -1115,16 +583,16 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 				_, localY, _ := card.PointerPosition()
 				bounds := card.LayoutBounds()
 				from, to := slices.Index(displayEnabled, overSvc), slices.Index(displayEnabled, svc)
-				crossed := (from > to && localY <= bounds.H/2) || (from < to && localY >= bounds.H/2)
-				moved := pointerY-v.lastDragPointerY >= 1 || v.lastDragPointerY-pointerY >= 1
+				crossed := (from > to && localY <= bounds.H/2+2) || (from < to && localY >= bounds.H/2-2)
+				moved := pointerY-v.drag.pointerY >= 1 || v.drag.pointerY-pointerY >= 1
 				// Layout animation must not swap the same pair back under a still
 				// pointer; actual pointer motion can cross it again in either direction.
-				if crossed && (v.lastDragTarget != svc || moved) {
-					v.lastDragTarget = svc
-					v.lastDragPointerY = pointerY
+				if crossed && (v.drag.target != svc || moved) {
+					v.drag.target = svc
+					v.drag.pointerY = pointerY
 					nextPreview := moveSliceItem(displayEnabled, overSvc, svc)
-					if !slices.Equal(v.dragPreview, nextPreview) {
-						v.dragPreview = nextPreview
+					if !slices.Equal(v.drag.preview, nextPreview) {
+						v.drag.preview = nextPreview
 						c.AnimationFrame()
 					}
 				}
@@ -1134,32 +602,40 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 	}
 
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Padding(11, 14).AlignItems(ui.Center).Gap(12)
+		head := ui.Row(c).FillWidth().Padding(12, 16).AlignItems(ui.Center).Gap(12)
+		if !keyless && isExpanded {
+			head.Background(p.cardHead)
+		}
 		if enabled && isExpanded {
 			head.Drag(svc)
 			if head.Dragging() {
 				dragging = true
-				card.Opacity(0.35).Border(1, p.accent)
+				card.Opacity(0.4).Border(1.5, p.accent).Background(p.accentSoft)
 			}
 		}
 		head.Children(func() {
 			if enabled {
 				grip := ui.Row(c).
 					Label("拖动"+title).
-					Size(24, 24).
-					Radius(6).
+					Size(26, 26).
+					Radius(7).
 					Background(p.field).
 					Border(1, p.border).
 					Center().
 					Cursor(ui.CursorPointer).
 					Tooltip("拖动排序")
+				gripNumColor := p.badgeInk
+				if grip.Hovered() {
+					grip.Background(p.hover).Border(1, p.accent.Alpha(0.45))
+					gripNumColor = p.fg
+				}
 				grip.Children(func() {
-					ui.Text(c, fmt.Sprintf("%d", position)).FontSize(11).FontWeight(600).TextColor(p.muted)
+					ui.Text(c, fmt.Sprintf("%d", position)).FontSize(11).FontWeight(600).TextColor(gripNumColor)
 				})
 			}
 
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(p.fg)
 					if !enabled {
 						badgeText := "未配置"
@@ -1174,12 +650,12 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 							badgeBg = p.accentSoft
 							badgeFg = p.accentText
 						}
-						ui.Row(c).Padding(1, 7).Radius(999).Background(badgeBg).Children(func() {
-							ui.Text(c, badgeText).FontSize(10).FontWeight(600).TextColor(badgeFg).SingleLine()
+						ui.Row(c).Padding(2, 8).Radius(999).Background(badgeBg).Children(func() {
+							ui.Text(c, badgeText).FontSize(11).FontWeight(600).TextColor(badgeFg).SingleLine()
 						})
 					}
 				})
-				ui.Text(c, stateHint).FontSize(11).TextColor(p.muted)
+				ui.Text(c, stateHint).FontSize(12).TextColor(p.muted)
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -1205,12 +681,29 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 					})
 				}
 
+				v.mu.Lock()
+				handle := v.switchHandles[svc]
+				if handle == nil {
+					handle = &ui.Handle{}
+					v.switchHandles[svc] = handle
+				}
+				// A rollback can move the same switch back to its old parent.
+				focus := v.focusService == svc || handle.Focused(c)
+				if focus {
+					v.focusService = ""
+				}
+				v.mu.Unlock()
+				if focus {
+					handle.Focus(c)
+				}
 				on := enabled
 				sw := ui.Switch(c, &on).
 					Label("启用" + title).
+					Bind(handle).
 					Disabled(busy || (!keyless && !isConfigured))
 				if sw.Changed() {
 					v.mu.Lock()
+					v.focusService = svc
 					next := cloneSettings(v.settings)
 					next.Services.Enabled = slices.DeleteFunc(slices.Clone(next.Services.Enabled), func(s string) bool {
 						return s == svc
@@ -1244,19 +737,11 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 	if v.baseURLDraft != nil {
 		baseURLVal = *v.baseURLDraft
 	}
-	modelVal := ""
-	if draft, ok := v.modelDrafts[svc]; ok {
-		modelVal = draft
-	} else {
-		switch svc {
-		case "openai":
-			modelVal = v.settings.Services.OpenAI.Model
-		case "siliconflow":
-			modelVal = v.settings.Services.SiliconFlow.Model
-		case "zhipu":
-			modelVal = v.settings.Services.Zhipu.Model
-		}
+	modelVal, ok := v.modelDrafts[svc]
+	if !ok {
+		modelVal = serviceModel(v.settings, svc)
 	}
+
 	storedMap := make(map[string]bool, len(fields))
 	draftMap := make(map[string]string, len(fields))
 	for _, f := range fields {
@@ -1271,7 +756,7 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 	v.mu.Unlock()
 
 	ui.Box(c).FillWidth().Height(1).Background(p.border)
-	ui.Column(c).FillWidth().Background(p.cardHead).Padding(12, 14).Gap(10).Children(func() {
+	ui.Column(c).FillWidth().Background(p.card).Padding(14, 16).Gap(12).Children(func() {
 		// Link to console
 		ui.Row(c).Children(func() {
 			link := ui.ButtonBase(c).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
@@ -1292,7 +777,7 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 			v.mu.Lock()
 			hasBaseURLDraft := v.baseURLDraft != nil
 			v.mu.Unlock()
-			v.renderDrawerInputRow(c, p, "Base URL", "任何 OpenAI 兼容接口", &baseURLVal, "https://api.openai.com/v1", false, locked, hasBaseURLDraft,
+			v.renderDrawerInputRow(c, p, "Base URL", "任何 OpenAI 兼容接口", &baseURLVal, "https://api.openai.com/v1", locked, hasBaseURLDraft,
 				func(val string) {
 					v.mu.Lock()
 					copyVal := val
@@ -1316,7 +801,7 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 			v.mu.Lock()
 			_, hasModelDraft := v.modelDrafts[svc]
 			v.mu.Unlock()
-			v.renderDrawerInputRow(c, p, "模型", "留空恢复默认模型", &modelVal, defaultModel, false, locked, hasModelDraft,
+			v.renderDrawerInputRow(c, p, "模型", "留空恢复默认模型", &modelVal, defaultModel, locked, hasModelDraft,
 				func(val string) {
 					v.mu.Lock()
 					v.modelDrafts[svc] = val
@@ -1327,14 +812,7 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 					v.mu.Lock()
 					next := cloneSettings(v.settings)
 					trimmed := strings.TrimSpace(val)
-					switch svc {
-					case "openai":
-						next.Services.OpenAI.Model = trimmed
-					case "siliconflow":
-						next.Services.SiliconFlow.Model = trimmed
-					case "zhipu":
-						next.Services.Zhipu.Model = trimmed
-					}
+					setServiceModel(&next, svc, trimmed)
 					delete(v.modelDrafts, svc)
 					v.testStatuses[svc] = serviceTestStatus{}
 					v.enqueueSaveLocked(next)
@@ -1356,20 +834,22 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 			val := draftMap[f.name]
 			field := f
 			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Column(c).Width(130).Gap(2).Children(func() {
-					ui.Text(c, field.label).FontSize(12).FontWeight(600).TextColor(p.fg)
+				ui.Column(c).Width(136).Gap(2).Children(func() {
+					ui.Text(c, field.label).FontSize(13).FontWeight(500).TextColor(p.fg)
 					if sub != "" {
-						ui.Text(c, sub).FontSize(11).TextColor(p.muted)
+						ui.Text(c, sub).FontSize(12).TextColor(p.muted)
 					}
 				})
 				ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(8).Children(func() {
 					inp := ui.TextInput(c, &val).
-						Label("编辑" + field.label).
+						Label("编辑"+field.label).
 						Password().
 						Placeholder(ph).
 						Disabled(locked).
 						Grow(1).
-						FontSize(12)
+						Padding(7, 10).
+						Radius(8).
+						FontSize(13)
 					if inp.Changed() {
 						v.mu.Lock()
 						if v.serviceDrafts[svc] == nil {
@@ -1417,15 +897,23 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 		ui.Row(c).FillWidth().Padding(4, 0, 0, 0).AlignItems(ui.Center).Gap(8).Children(func() {
 			statusText := "未测试"
 			statusColor := p.muted
+			dotColor := p.muted.Alpha(0.5)
 			if testStatus.result != "" {
 				statusText = testStatus.result
 				if testStatus.isError {
 					statusColor = p.error
+					dotColor = p.error
 				} else if !testStatus.testing {
 					statusColor = p.success
+					dotColor = p.success
+				} else {
+					dotColor = p.accent
 				}
 			}
-			ui.Text(c, statusText).FontSize(11).TextColor(statusColor).Grow(1)
+			ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Box(c).Size(6, 6).Radius(999).Background(dotColor)
+				ui.Text(c, statusText).FontSize(12).TextColor(statusColor)
+			})
 
 			testDisabled := !isConfigured || locked || hasDraft
 			v.renderSecondaryButtonDisabled(c, p, "测试连接", "测试连接", testDisabled, func() {
@@ -1437,11 +925,17 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 				Label("保存凭证").
 				Disabled(saveDisabled).
 				Cursor(ui.CursorPointer).
-				Padding(6, 12).
+				Padding(6, 14).
 				Radius(8).
 				Background(p.primaryBg)
 			if saveDisabled {
 				saveBtn.Opacity(0.45)
+			} else if saveBtn.Hovered() {
+				if p.dark {
+					saveBtn.Background(p.accent.Alpha(0.88))
+				} else {
+					saveBtn.Background(p.accent)
+				}
 			}
 			if saveBtn.Clicked() {
 				v.saveCredentials(svc)
@@ -1459,26 +953,25 @@ func (v *settingsView) renderDrawerInputRow(
 	label, sub string,
 	val *string,
 	placeholder string,
-	password, disabled, hasDraft bool,
+	disabled, hasDraft bool,
 	onDraft func(string),
 	onCommit func(string),
 ) {
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-		ui.Column(c).Width(130).Gap(2).Children(func() {
-			ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(p.fg)
+		ui.Column(c).Width(136).Gap(2).Children(func() {
+			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(p.fg)
 			if sub != "" {
-				ui.Text(c, sub).FontSize(11).TextColor(p.muted)
+				ui.Text(c, sub).FontSize(12).TextColor(p.muted)
 			}
 		})
 		inp := ui.TextInput(c, val).
-			Label("编辑" + label).
+			Label("编辑"+label).
 			Placeholder(placeholder).
 			Disabled(disabled).
 			Grow(1).
-			FontSize(12)
-		if password {
-			inp.Password()
-		}
+			Padding(7, 10).
+			Radius(8).
+			FontSize(13)
 		if inp.Changed() && onDraft != nil {
 			onDraft(*val)
 		}
@@ -1537,9 +1030,9 @@ func (v *settingsView) renderHotkeys(c *ui.Context, p settingsPalette) {
 	}
 	v.mu.Unlock()
 
-	ui.Text(c, "快捷键").FontSize(16).FontWeight(600).TextColor(p.fg)
+	ui.Text(c, "快捷键").FontSize(18).FontWeight(600).TextColor(p.fg)
 
-	ui.Row(c).FillWidth().Padding(9, 12).Radius(12).Background(p.field).Border(1, p.border).Children(func() {
+	ui.Row(c).FillWidth().Padding(11, 14).Radius(10).Background(p.field).Children(func() {
 		ui.Text(c, "全局快捷键会覆盖其他应用中的相同组合。注册冲突时会自动尝试候选键位，并同步这里显示的当前生效值；激活快捷键按钮可更换，按 Esc 取消。").
 			FontSize(12).LineHeight(1.6).TextColor(p.muted)
 	})
@@ -1552,11 +1045,11 @@ func (v *settingsView) renderHotkeys(c *ui.Context, p settingsPalette) {
 			divider := i < len(settingsHotkeys)-1
 
 			ui.Column(c).FillWidth().Children(func() {
-				ui.Row(c).FillWidth().Padding(11, 14).AlignItems(ui.Center).Gap(16).Children(func() {
+				ui.Row(c).FillWidth().Padding(13, 16).AlignItems(ui.Center).Gap(16).Children(func() {
 					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, item.label).FontSize(12).FontWeight(600).TextColor(p.fg)
+						ui.Text(c, item.label).FontSize(13).FontWeight(500).TextColor(p.fg)
 						if conflict != "" {
-							ui.Text(c, conflict).FontSize(11).TextColor(p.error)
+							ui.Text(c, conflict).FontSize(12).TextColor(p.error)
 						}
 					})
 
@@ -1568,8 +1061,8 @@ func (v *settingsView) renderHotkeys(c *ui.Context, p settingsPalette) {
 						Label(item.label+"快捷键").
 						Tooltip("激活后按下新组合键").
 						Cursor(ui.CursorPointer).
-						MinWidth(132).
-						Padding(6, 12).
+						MinWidth(136).
+						Padding(7, 14).
 						Radius(8).
 						Center()
 					if isListening {
@@ -1703,7 +1196,7 @@ func (v *settingsView) renderNaming(c *ui.Context, p settingsPalette) {
 	cfg := cloneSettings(v.settings)
 	v.mu.Unlock()
 
-	ui.Text(c, "命名转换").FontSize(16).FontWeight(600).TextColor(p.fg)
+	ui.Text(c, "命名转换").FontSize(18).FontWeight(600).TextColor(p.fg)
 
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
 		autoSplit := cfg.Identifier.AutoSplit
@@ -1755,9 +1248,9 @@ func (v *settingsView) renderNaming(c *ui.Context, p settingsPalette) {
 		})
 	})
 
-	ui.Column(c).Padding(6, 0, 0, 0).Gap(4).Children(func() {
+	ui.Column(c).Padding(8, 0, 0, 0).Gap(4).Children(func() {
 		ui.Text(c, "复制格式").FontSize(13).FontWeight(600).TextColor(p.fg)
-		ui.Text(c, "英语译文下方会显示已开启的复制格式。至少开启一种。").FontSize(11).TextColor(p.muted)
+		ui.Text(c, "英语译文下方会显示已开启的复制格式。至少开启一种。").FontSize(12).TextColor(p.muted)
 	})
 
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
@@ -1767,9 +1260,9 @@ func (v *settingsView) renderNaming(c *ui.Context, p settingsPalette) {
 			divider := i < len(settingsCopyFormats)-1
 
 			ui.Column(c).FillWidth().Children(func() {
-				ui.Row(c).FillWidth().Padding(10, 14).AlignItems(ui.Center).Gap(12).Children(func() {
-					ui.Text(c, opt.label).FontSize(12).FontWeight(600).TextColor(p.fg).Width(64)
-					ui.Row(c).Padding(2, 8).Radius(6).Background(p.field).Children(func() {
+				ui.Row(c).FillWidth().Padding(12, 16).AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Text(c, opt.label).FontSize(13).FontWeight(500).TextColor(p.fg).Width(76)
+					ui.Row(c).Padding(3, 9).Radius(6).Background(p.field).Children(func() {
 						ui.Text(c, opt.example).Font("monospace").FontSize(11).TextColor(p.muted).SingleLine()
 					})
 					ui.Spacer(c)

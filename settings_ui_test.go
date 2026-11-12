@@ -954,7 +954,7 @@ func TestSettingsViewDragBackToOriginalPosition(t *testing.T) {
 					tt.Advance(200 * time.Millisecond)
 					tt.Frame()
 					v.mu.Lock()
-					preview := slices.Clone(v.dragPreview)
+					preview := slices.Clone(v.drag.preview)
 					v.mu.Unlock()
 					if !slices.Equal(preview, []string{"openai", "google"}) {
 						t.Fatalf("preview before return = %v", preview)
@@ -963,7 +963,7 @@ func TestSettingsViewDragBackToOriginalPosition(t *testing.T) {
 					tt.Advance(200 * time.Millisecond)
 					tt.Frame()
 					v.mu.Lock()
-					preview = slices.Clone(v.dragPreview)
+					preview = slices.Clone(v.drag.preview)
 					pending := v.pendingWrites
 					v.mu.Unlock()
 					if !slices.Equal(preview, []string{"google", "openai"}) {
@@ -985,4 +985,262 @@ func TestSettingsViewDragBackToOriginalPosition(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestSettingsControllerSurvivesWindowReopen(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		current := testSettingsConfig()
+		release := make(chan struct{})
+		v := newSettingsView(tabGeneral, current, settingsActions{getSettings: func() config.Settings { return current }, saveSettings: func(s config.Settings) error { <-release; current = s; return nil }})
+		defer v.dispose()
+		v.mu.Lock()
+		next := cloneSettings(v.settings)
+		next.OpenAtLogin = true
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		synctest.Wait()
+		v.detachWindow()
+		v.setActiveTab(tabGeneral)
+		v.mu.Lock()
+		next = cloneSettings(v.settings)
+		next.AutoUpdate = true
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		close(release)
+		synctest.Wait()
+		if !current.OpenAtLogin || !current.AutoUpdate {
+			t.Fatal("reopening lost an old or new edit")
+		}
+	})
+}
+
+func TestSettingsCredentialJobsPublishInOrder(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stored := map[string]bool{}
+		release := make(chan struct{})
+		calls := 0
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+			setSecret: func(k, val string) error { stored[k] = true; return nil },
+			credentials: func() (CredentialStatus, error) {
+				calls++
+				status := CredentialStatus{}
+				for k := range stored {
+					status.Stored = append(status.Stored, k)
+				}
+				if stored[keys.OpenAIKey] {
+					status.Configured = append(status.Configured, "openai")
+				}
+				if stored[keys.DeeplKey] {
+					status.Configured = append(status.Configured, "deepl")
+				}
+				if calls == 2 {
+					<-release
+				}
+				return status, nil
+			},
+		})
+		defer v.dispose()
+		synctest.Wait()
+		v.mu.Lock()
+		v.serviceDrafts["openai"] = map[string]string{keys.OpenAIKey: "a"}
+		v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "b"}
+		v.mu.Unlock()
+		v.saveCredentials("openai")
+		synctest.Wait()
+		v.saveCredentials("deepl")
+		synctest.Wait()
+		if stored[keys.DeeplKey] {
+			t.Fatal("second credential job overtook the first refresh")
+		}
+		close(release)
+		synctest.Wait()
+		v.mu.Lock()
+		configured := slices.Clone(v.credentials.Configured)
+		v.mu.Unlock()
+		if !slices.Contains(configured, "deepl") || !slices.Contains(configured, "openai") {
+			t.Fatalf("lost credential state: %v", configured)
+		}
+	})
+}
+
+func TestSettingsServiceSwitchKeepsFocusAcrossGroups(t *testing.T) {
+	v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{})
+	defer v.dispose()
+	v.mu.Lock()
+	v.credentialsLoaded = true
+	v.credentials = CredentialStatus{Configured: []string{"openai"}}
+	v.mu.Unlock()
+	tt := ui.NewTester(v.render, 780, 900)
+	settingsClick(t, tt, "启用OpenAI")
+	if !tt.Focused("启用OpenAI") {
+		t.Fatal("switch lost focus after moving to disabled group")
+	}
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	v.mu.Lock()
+	enabled := slices.Contains(v.settings.Services.Enabled, "openai")
+	v.mu.Unlock()
+	if !enabled || !tt.Focused("启用OpenAI") {
+		t.Fatal("focused switch could not move back to enabled group")
+	}
+}
+
+func TestSettingsUsageRejectsOldRequests(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first := make(chan struct{})
+		second := make(chan struct{})
+		calls := 0
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{deeplUsage: func() (DeeplUsage, error) {
+			calls++
+			id := calls
+			if id == 1 {
+				<-first
+			} else {
+				<-second
+			}
+			return DeeplUsage{Used: id, Limit: 10}, nil
+		}})
+		defer v.dispose()
+		v.loadDeeplUsageAsync()
+		synctest.Wait()
+		v.loadDeeplUsageAsync()
+		synctest.Wait()
+		close(second)
+		synctest.Wait()
+		close(first)
+		synctest.Wait()
+		v.mu.Lock()
+		text := v.deeplUsageText
+		v.mu.Unlock()
+		if text != "本月已用 2 / 10 字符" {
+			t.Fatalf("old usage overwrote latest: %s", text)
+		}
+	})
+}
+
+func TestSettingsDetachRejectsProbeAndUsageResults(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		cancelled := false
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+			testService: func(ctx context.Context, _ string) string {
+				<-ctx.Done()
+				cancelled = true
+				<-release
+				return "old result"
+			},
+			deeplUsage: func() (DeeplUsage, error) { <-release; return DeeplUsage{Used: 5, Limit: 10}, nil },
+		})
+		defer v.dispose()
+		v.testConnection("openai")
+		v.loadDeeplUsageAsync()
+		synctest.Wait()
+		v.detachWindow()
+		synctest.Wait()
+		if !cancelled {
+			t.Fatal("closing window did not cancel the probe")
+		}
+		v.setActiveTab(tabServices)
+		close(release)
+		synctest.Wait()
+		v.mu.Lock()
+		status := v.testStatuses["openai"]
+		usage := v.deeplUsageText
+		v.mu.Unlock()
+		if status.result != "" || usage != "额度查询中…" {
+			t.Fatal("old window result reached reopened UI")
+		}
+	})
+}
+
+func TestSettingsServiceSwitchKeepsFocusAfterRollback(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	cfg := testSettingsConfig()
+	v := newSettingsView(tabServices, cfg, settingsActions{
+		getSettings:  func() config.Settings { return cfg },
+		saveSettings: func(config.Settings) error { <-release; return errors.New("disk full") },
+		credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+	})
+	defer v.dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.render, 780, 900)
+	settingsClick(t, tt, "启用OpenAI")
+	if !tt.Focused("启用OpenAI") {
+		t.Fatal("optimistic switch lost focus")
+	}
+	releaseOnce.Do(func() { close(release) })
+	waitSettingsIdle(t, v)
+	tt.Frame()
+	if !tt.Focused("启用OpenAI") {
+		t.Fatal("rollback lost switch focus")
+	}
+	// Moving focus to another control must still work normally.
+	settingsClick(t, tt, "配置OpenAI")
+	settingsClick(t, tt, "编辑API Key")
+	tt.Frame()
+	if !tt.Focused("编辑API Key") {
+		t.Fatal("switch reclaimed focus from editor")
+	}
+}
+
+func TestSettingsQuitWaitsForQueuedWrites(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		current := testSettingsConfig()
+		retries := 0
+		v := newSettingsView(tabGeneral, current, settingsActions{saveSettings: func(s config.Settings) error { <-release; current = s; return nil }})
+		v.mu.Lock()
+		draft := "https://quit.example/v1"
+		v.baseURLDraft = &draft
+		v.mu.Unlock()
+		retry := func() { retries++ }
+		if v.prepareQuit(retry) {
+			t.Fatal("quit proceeded with an unsaved draft")
+		}
+		if v.prepareQuit(retry) {
+			t.Fatal("repeated quit bypassed the pending write")
+		}
+		synctest.Wait()
+		if retries != 0 {
+			t.Fatal("quit retried before writes finished")
+		}
+		close(release)
+		synctest.Wait()
+		if retries != 1 || current.Services.OpenAI.BaseURL != draft || !v.prepareQuit(retry) {
+			t.Fatal("quit did not drain writes and retry exactly once")
+		}
+	})
+}
+
+func TestSettingsKeyChangeInvalidatesUsageBeforeWriteCompletes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		usageRelease := make(chan struct{})
+		writeRelease := make(chan struct{})
+		v := newSettingsView(tabServices, testSettingsConfig(), settingsActions{
+			deeplUsage:  func() (DeeplUsage, error) { <-usageRelease; return DeeplUsage{Used: 9, Limit: 10}, nil },
+			setSecret:   func(string, string) error { <-writeRelease; return nil },
+			credentials: func() (CredentialStatus, error) { return CredentialStatus{}, nil },
+		})
+		defer v.dispose()
+		synctest.Wait()
+		v.loadDeeplUsageAsync()
+		synctest.Wait()
+		v.mu.Lock()
+		v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "new-key"}
+		v.mu.Unlock()
+		v.saveCredentials("deepl")
+		synctest.Wait()
+		close(usageRelease)
+		synctest.Wait()
+		v.mu.Lock()
+		usage := v.deeplUsageText
+		v.mu.Unlock()
+		if usage != "额度查询中…" {
+			t.Fatal("old key's usage applied during new key write")
+		}
+		close(writeRelease)
+		synctest.Wait()
+	})
 }

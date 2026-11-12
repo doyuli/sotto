@@ -55,9 +55,9 @@ type application struct {
 	cfgPath       string
 	configWriteMu sync.Mutex
 
-	mu          sync.Mutex
-	cfg         config.Settings
-	hotkeys     map[string]string // action → the accelerator in force
+	mu           sync.Mutex
+	cfg          config.Settings
+	hotkeys      map[string]string // action → the accelerator in force
 	entry        entryGate
 	settingsWin  *mygo.Window
 	settingsView *settingsView
@@ -109,11 +109,17 @@ func (a *application) ready() {
 	mygo.App.OnWindowAllClosed(func() {})
 	// Mark the quit so the bubbles' OnClose handlers let it close them
 	// (OnBeforeQuit runs before the quit sequence closes the windows).
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
 		a.mu.Lock()
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
+		a.mu.Lock()
+		sv := a.settingsView
+		a.mu.Unlock()
+		if sv != nil && !sv.prepareQuit(mygo.App.Quit) {
+			e.PreventDefault()
+		}
 	})
 	speaker := speech.New()
 	mygo.App.OnQuit(speaker.Close)
@@ -481,6 +487,9 @@ func (a *application) setTrayOpenAtLogin(open bool) {
 // It runs on the main thread (the tray); NewWindow executes directly
 // there, outside the mutex.
 func (a *application) showSettings(services bool) {
+	if a.isQuitting() {
+		return
+	}
 	a.mu.Lock()
 	win := a.settingsWin
 	sv := a.settingsView
@@ -498,24 +507,29 @@ func (a *application) showSettings(services bool) {
 		tab = tabServices
 	}
 	svc := ConfigSvc{a}
-	sv = newSettingsView(tab, a.settings(), settingsActions{
-		getSettings:  svc.Get,
-		saveSettings: svc.Set,
-		credentials:  func() (CredentialStatus, error) { return svc.Credentials(), nil },
-		setSecret:    svc.SetSecret,
-		testService:  svc.TestService,
-		openKeyPage:  svc.OpenKeyPage,
-		deeplUsage:   svc.DeeplUsage,
-		hotkeyBusy:   HotkeySvc{}.Busy,
-		invalidate: func() {
-			a.mu.Lock()
-			w := a.settingsWin
-			a.mu.Unlock()
-			if w != nil {
-				w.Invalidate()
-			}
-		},
-	})
+	if sv == nil {
+		sv = newSettingsView(tab, a.settings(), settingsActions{
+			getSettings:  svc.Get,
+			saveSettings: svc.Set,
+			credentials:  func() (CredentialStatus, error) { return svc.Credentials(), nil },
+			setSecret:    svc.SetSecret,
+			testService:  svc.TestService,
+			openKeyPage:  svc.OpenKeyPage,
+			deeplUsage:   svc.DeeplUsage,
+			hotkeyBusy:   HotkeySvc{}.Busy,
+			invalidate: func() {
+				a.mu.Lock()
+				w := a.settingsWin
+				a.mu.Unlock()
+				if w != nil {
+					w.Invalidate()
+				}
+			},
+		})
+	} else {
+		sv.setActiveTab(tab)
+		sv.refreshCredentialsAsync()
+	}
 	w := mygo.NewWindow(mygo.WindowOptions{
 		Title:           "Sotto 设置",
 		Content:         ui.View(sv.render),
@@ -531,11 +545,10 @@ func (a *application) showSettings(services bool) {
 	a.settingsView = sv
 	a.mu.Unlock()
 	w.OnClosed(func() {
-		sv.dispose()
+		sv.detachWindow()
 		a.mu.Lock()
 		if a.settingsWin == w {
 			a.settingsWin = nil
-			a.settingsView = nil
 		}
 		a.mu.Unlock()
 	})
