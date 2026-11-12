@@ -9,7 +9,7 @@
 | 全局入口 | `entryTask.id / ctx` | 新的输入、划词、OCR 入口使旧取词/识别任务失效；入口切换同时收起并取消未钉住气泡的工作。 |
 | 窗口对象 | `bubble.id`、`win` | 原生窗口身份，存活期间不变。输入、划词和 OCR 共用一个可复用窗口；钉住后脱离复用。 |
 | 内容会话 | `sessionID` | 一轮原文内容的会话身份。新的输入、划词或 OCR 入口替换会话；当前输入入口仍有效且未钉住面板已可见时，重复打开只聚焦，保留会话。 |
-| 快照顺序 | `generation` | 同一窗口内容会话的递增编号，用于前端拒绝旧 BubbleReset；同会话 OCR 阶段再以 layoutID 排序；新 sessionID 是不透明字符串，不能比较先后。 |
+| 快照顺序 | `generation` | 同一窗口内容会话的递增编号，用于原生视图拒绝旧会话快照；新 sessionID 是不透明字符串，不能比较先后。 |
 | 展示轮次 | `showID` | 每次明确唤起递增，即使 sessionID 和原文不变。防止上次展示的 Close 关闭重开的面板。 |
 | 展示轮次 | `closeClaimed` | 同一 showID 的关闭至多接受一次；重新展示时复位。原生关闭也置位。 |
 | 请求顺序 | `revision` | 后端已接受的最大请求/取消/关闭版本；前端发送新命令前递增。用于全文请求、取消、关闭排序及快照同步。 |
@@ -20,7 +20,7 @@
 | 服务身份 | `serviceRequests[service]` | 该卡片当前接受哪个 reqID 的结果；在重试开始时原子登记，不等凭据读取完成。 |
 | 正在运行 | `runCancels[reqID]` | 每个请求的取消函数。一个全文请求可能仍有其他服务未完成，单卡重试不取消它。完成时移除，全文替换/取消/关闭时统一取消。 |
 | 识别阶段 | `cancelCapture`、`phase` | OCR 尚未变成翻译请求时的取消函数和展示阶段。识别结果只能写回原会话且 revision 仍为 -1 的窗口。 |
-| 延迟显示 | `canShow`、`ready`、`awaitingLayout`、`layoutID`、`layoutSequence`、`presentationShown` | 原生页面就绪且当前布局确认后才显示；关闭或入口失效后不得迟到弹窗。 |
+| 延迟显示 | `canShow`、`ready`、`presentationShown` | 原生视图应用当前状态、窗口就绪且入口仍有效时首次显示；关闭或入口失效后不得迟到弹窗。 |
 
 前端的 `cardRequests` 对应服务请求身份，`cards` 保存结果，`cardNodes` 保留未变化的 DOM 节点。用户失焦、外部点击或新的入口收起未钉住气泡时，都会结束当前展示会话：取消全文、单卡重试和 OCR，清空结果身份，置 `closeClaimed` 并发出 `RunStopped`。隐藏后重新唤起时开启新会话并清空输入草稿、译文和请求身份。当前输入入口仍有效且未钉住面板已可见时，重复打开只聚焦，不撤销入口、不重置内容，也不停止在途翻译；仅递增 showID，使迟到的旧关闭、失焦和外部点击回调失效。钉住的窗口保留独立会话。
 
@@ -40,11 +40,11 @@
 ```mermaid
 stateDiagram-v2
     [*] --> Hidden
-    Hidden --> WaitingLayout: ShowTask / 新 sessionID、showID++
+    Hidden --> WaitingReady: ShowTask / 新 sessionID、showID++
     Presented --> Presented: 当前可见输入重复打开 / 保留现场并聚焦
-    Presented --> WaitingLayout: 新的内容入口 / 取消旧会话并创建新会话
-    WaitingLayout --> Presented: 当前布局确认 + 原生就绪 + 入口有效
-    WaitingLayout --> Hidden: 关闭或入口失效
+    Presented --> WaitingReady: 新的内容入口 / 取消旧会话并创建新会话
+    WaitingReady --> Presented: 原生状态已应用 + 窗口就绪 + 入口有效
+    WaitingReady --> Hidden: 关闭或入口失效
     Presented --> Hidden: 失焦/外部点击/入口收起 / 取消工作、清空身份并发 RunStopped
     Presented --> Hidden: 有效 Close / 取消工作并推进 revision
     Presented --> Presented: 旧 showID 或旧 revision 的 Close / 忽略
@@ -82,9 +82,9 @@ stateDiagram-v2
 关键不变量：
 
 - sessionID 不匹配的请求无效；跨会话不能比较 revision。
-- 已收起或关闭的未钉住展示拒绝新的全文、单卡重试、OCR 完成和布局回调；新的 `replaceContent` 会复位该边界并允许新任务。
+- 已收起或关闭的未钉住展示拒绝新的全文、单卡重试、OCR 完成和迟到首显；新的 `replaceContent` 会复位该边界并允许新任务。
 - 新的输入、划词和 OCR 入口在开始展示/采集前立即 `hideTransient`，结束旧未钉住气泡的会话，不等待新内容返回；划词先 `selection.Prepare()` 保存来源，再收起旧气泡。`replaceContent` 再次确保取消全部旧请求（含重试），替换会话与结果身份后才能启动新请求。取词失败也不恢复旧会话；旧 HTTP 完成或元信息迟到不能改写新词。
-- `closeClaimed` 封死已收起会话的后续全文请求、单卡重试、OCR 写回和布局确认，即使迟到命令带更高 revision 也无效。只有开启新会话才复位；钉住窗口不受临时气泡收起影响。
+- `closeClaimed` 封死已收起会话的后续全文请求、单卡重试、OCR 写回和迟到首显，即使迟到命令带更高 revision 也无效。只有开启新会话才复位；钉住窗口不受临时气泡收起影响。
 - 全文请求必须比全局 revision 新。单卡重试只需同时越过 fullRevision 和本服务的重试版本。
 - 不同服务的重试允许乱序到达；接收较早的独立重试不能降低全局 revision。
 - 结果只按 `serviceRequests[service] == reqID` 接受，不能简单比较全局 reqID。
@@ -139,12 +139,10 @@ DIB/DIBV5 可以使用 128 MiB 快照总预算，其他格式合计仍限 32 MiB
 
 ## 新会话与内容尺寸更新
 
-- 输入入口在 `entry.begin()` 前检查当前可见输入是否仍持有入口：命中时保持已展示状态，递增 showID 并发送 `BubblePresented` 聚焦，不发 `BubbleReset`；页面按新 showID 重新测量，旧测量不会覆盖它。`Close` 返回是否接纳，前端只有收到当前展示的关闭确认或匹配的 `RunStopped` 后才结算翻译，拒绝的旧关闭不清空活动请求。其余入口由 `ShowTask` 执行 `replaceContent`，取消被替换会话的工作，递增 `layoutID`，置 `awaitingLayout`，先隐藏复用窗口，再发送新状态。
-- 前端 `apply` 在 `tick` 后调整 textarea 并同步测量气泡根节点。`ResizeObserver` 持续观察该节点，覆盖译文流式增长、卡片折叠、输入框变化和缩放；窗口 resize 时也测量。每次读取当前 DOM，不使用可能过期的 observer entry；相同身份和宽高去重，卸载后断开 observer 和窗口监听。
-- 每条 `BubbleSvc.Rendered` 测量携带 sessionID / showID / layoutID、CSS 高度及页面单调递增的 sequence（组件重新挂载不重置；Ready 快照提供后端已接受序号的下界，页面重新加载后继续递增）。后端在 UI 线程核对调用窗口、全部身份和 sequence，只接受更新的测量；较高译文先到、较早短布局后到时，后者不能覆盖尺寸。导航取消的旧页面 IPC 在 UI 线程执行前再次校验 context，不能写回新页面。后续有效测量也可以让窗口正常缩短。
-- `Rendered` 在 UI 线程处理完成后返回是否接纳。前端为最新测量保留独立任务，false、IPC 拒绝或 1 秒未响应时，按 50 / 100 / 150 ms 退避，最多额外重试 3 次；每次重读当前 DOM 并递增 sequence。重复 observer 通知不重置额度；新尺寸或新会话取代旧任务，迟到响应不能修改新任务，卸载时清理定时器。
-- 首次显示等待布局时每个展示轮次记录一次日志；400 ms 后仍等待且入口有效时记录超时，包含窗口、show/layout/sequence 和原生 ready 状态。超时只诊断，不绕过布局门禁显示旧 DOM；日志不包含原文。
-- **尺寸只有一条写入通路**：气泡禁用 mygo FitContent，由 Rendered 将 CSS 高度按 Page.ZoomFactor 转为 DIP，通过 SetContentSize 更新内容区尺寸，并按工作区和锚点重新定位。固定宽度仍由窗口约束控制。避免应用 SetSize 与 FitContent 的缓存及去重逻辑竞争。
-- 只有布局确认、原生 OnReadyToShow 和入口有效性同时满足才首次显示；`claimShow` 在锁内只允许每个展示轮次显示一次。后续有效测量可调整仍在展示的窗口尺寸，但不会重新显示已因失焦、外部点击或入口切换而结束会话的未钉住窗口。钉住窗口的后续尺寸更新不受新入口使旧 canShow 失效的影响。
-- OCR 完成更新文字时递增 layoutID，防止迟到的“正在识别”布局释放新内容的首次显示；即使旧布局已确认但原生页面尚未就绪，也必须等待文字布局。`presentationShown` 区分已确认和已显示。
-- 本地依据：mygo v0.8.3 `bridge.go` 中绑定调用由 goroutine 执行，content-size 在主线程同步处理；`window.go` 的 SetSize 不同步 FitContent 缓存，`fit_content.go` 与前端 sizeReporter 会对相同尺寸去重。因此不能混用两条内容尺寸写入通路。SetContentSize 的 DIP 语义及 Page.ZoomFactor 以本地源码为准。
+- 输入入口在 `entry.begin()` 前检查当前可见输入是否仍持有入口：命中时保持已展示状态，递增 showID 并通过原生视图的 `onPresented` 聚焦，保留草稿和在途工作。`Close` 只接受当前 sessionID、showID 和更新的 revision，旧关闭不能清空活动请求。其余入口由 `ShowTask` 执行 `replaceContent`，取消旧会话工作、递增 generation 并生成新 sessionID；先隐藏复用窗口、重置尺寸和位置，再向原生视图应用新状态。
+- 气泡使用 `ui.View`，内容高度由原生视图在 UI 线程测量，经 `onHeightMeasured` 传给窗口。高度和工作区上限均使用原生逻辑单位，`bubbleLayoutHeight(height, limit)` 负责夹取和小数舍入；不再经过 WebView 页面缩放、DOM observer 或布局确认 IPC。
+- 后续内容尺寸由 `SetContentSize` 更新，保持固定宽度，并按工作区与锚点重新定位。相同高度不重复写入；已关闭展示拒绝测量，测量本身不会调用首次显示。钉住窗口的后续尺寸更新不受新入口使旧 canShow 失效的影响。
+- `ShowTask` 在原生视图应用当前快照后尝试显示；若窗口尚未就绪，则由 `OnReadyToShow` 再次尝试，并重新检查入口有效性。`claimShow` 在锁内只允许每个有效且未关闭的展示轮次显示一次，复用窗口保留原生 ready 状态。
+- OCR 完成只更新仍属于该 sessionID、未关闭且 revision 仍为 -1 的展示；不替换 generation 或 showID，也不重新打开窗口。异步快照经 `Window.Update` 回到 UI 线程，由视图的会话和请求身份检查拒绝过期工作。
+- 剪贴板恢复和放弃恢复在工作 goroutine 执行，完成回调通过 `Window.Update` 回到 UI 线程；视图负责 busy 状态、过期回调和提示的检查。
+- 本地依据：mygo v0.8.3 `ui/doc.go` 规定视图构建在主线程执行，异步状态通过 `Window.Update` 发布；窗口尺寸由 `window.go` 的 `SetContentSize` 使用原生逻辑单位更新。

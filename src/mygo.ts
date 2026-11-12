@@ -4,45 +4,8 @@ import { call, event } from "mygo-runtime";
 
 // ---- Types ----
 
-export interface BubblePresentedMsg {
-  clipboardRecoveryID: string;
-  sessionID: string;
-  showID: number;
-  revision: number;
-  focus: boolean;
-}
-
 export interface BubbleSettings {
   autoHide: boolean;
-}
-
-/**
- * BubbleState is the whole state of one bubble: what Ready returns when
- * its page mounts, and what BubbleReset carries when an unpinned bubble
- * is reused for a new query.
- */
-export interface BubbleState {
-  layoutSequence: number;
-  layoutID: number;
-  maxHeight: number;
-  clipboardRecoveryID: string;
-  showID: number;
-  id: number;
-  reqID: string;
-  serviceRequests: Record<string, string>;
-  generation: number;
-  sessionID: string;
-  revision: number;
-  phase: string;
-  message: string;
-  meta: RunMetaMsg | null;
-  results: TranslationUpdateMsg[];
-  trigger: string;
-  text: string;
-  sourceLang: string;
-  targetLang: string;
-  pinned: boolean;
-  settings: Settings;
 }
 
 /** CredentialStatus contains presence information without exposing stored values. */
@@ -55,13 +18,6 @@ export interface CredentialStatus {
 export interface DeeplUsage {
   used: number;
   limit: number;
-}
-
-/** FormatOption is one naming style of a translation, ready to copy. */
-export interface FormatOption {
-  style: string;
-  label: string;
-  value: string;
 }
 
 export interface HotkeySettings {
@@ -86,39 +42,6 @@ export interface OpenAIOptions {
   model: string;
 }
 
-/**
- * RunMetaMsg tells the page the languages a request resolved to, so its
- * badge and selectors can follow the automatic detection, and the
- * services that will answer it.
- */
-export interface RunMetaMsg {
-  reqID: string;
-  sourceLang: string;
-  targetLang: string;
-  services: string[];
-}
-
-/** RunReq is what a page sends to start a translation. */
-export interface RunReq {
-  reqID: string;
-  sessionID: string;
-  revision: number;
-  service: string;
-  /** "input" | "selection" | "ocr" */
-  source: string;
-  text: string;
-  /** "" or "auto" detects */
-  sourceLang: string;
-  /** "" uses the default */
-  targetLang: string;
-}
-
-export interface RunStoppedMsg {
-  showID: number;
-  sessionID: string;
-  revision: number;
-}
-
 export interface ServiceSettings {
   enabled: string[];
   order: string[];
@@ -136,19 +59,6 @@ export interface Settings {
   bubble: BubbleSettings;
   openAtLogin: boolean;
   autoUpdate: boolean;
-}
-
-/**
- * TranslationUpdateMsg carries cumulative text for one service and request.
- * Streaming is true until completion; Err settles a failure without losing text.
- */
-export interface TranslationUpdateMsg {
-  streaming: boolean;
-  reqID: string;
-  service: string;
-  text: string;
-  detectedLang: string;
-  err: string;
 }
 
 // ---- Services ----
@@ -184,69 +94,6 @@ export const ConfigSvc = {
   },
 } as const;
 
-/** TranslateSvc runs translations for the pages. */
-export const TranslateSvc = {
-  /**
-   * Cancel stops a run; the next one cancels the last on its own, so this
-   * is for the pages' explicit stop.
-   */
-  cancel(sessionID: string, revision: number): Promise<void> {
-    return call("TranslateSvc.Cancel", sessionID, revision);
-  },
-  /**
-   * Formats turns an English translation into the configured naming
-   * styles, for the bubble's copy chips.
-   */
-  formats(text: string): Promise<FormatOption[]> {
-    return call("TranslateSvc.Formats", text);
-  },
-  /**
-   * Run translates req and pushes the results to the calling window as
-   * translation-update events, including cumulative text while a service streams.
-   */
-  run(req: RunReq): Promise<void> {
-    return call("TranslateSvc.Run", req);
-  },
-} as const;
-
-/** BubbleSvc serves the bubble pages. */
-export const BubbleSvc = {
-  /** Close reports whether this presentation's close was accepted. */
-  close(id: number, sessionID: string, showID: number, revision: number): Promise<boolean> {
-    return call("BubbleSvc.Close", id, sessionID, showID, revision);
-  },
-  /** Copy puts text on the clipboard. */
-  copy(text: string): Promise<void> {
-    return call("BubbleSvc.Copy", text);
-  },
-  discardClipboardRecovery(id: string): Promise<void> {
-    return call("BubbleSvc.DiscardClipboardRecovery", id);
-  },
-  /** OpenTranslationSettings opens the services tab from the bubble. */
-  openTranslationSettings(): Promise<void> {
-    return call("BubbleSvc.OpenTranslationSettings");
-  },
-  /**
-   * Ready returns the bubble's state. Its page asks on mounting, because
-   * events sent before its DOM is ready are held only in small numbers.
-   */
-  ready(id: number): Promise<BubbleState> {
-    return call("BubbleSvc.Ready", id);
-  },
-  /** Rendered reports whether the UI thread accepted and applied the measurement. */
-  rendered(id: number, sessionID: string, showID: number, layoutID: number, sequence: number, height: number): Promise<boolean> {
-    return call("BubbleSvc.Rendered", id, sessionID, showID, layoutID, sequence, height);
-  },
-  /** RestoreClipboard retries a retained snapshot without replacing a newer copy. */
-  restoreClipboard(id: string): Promise<void> {
-    return call("BubbleSvc.RestoreClipboard", id);
-  },
-  /** SetPinned changes pin state only for the caller's current presentation. */
-  setPinned(id: number, sessionID: string, showID: number, pinned: boolean): Promise<boolean> {
-    return call("BubbleSvc.SetPinned", id, sessionID, showID, pinned);
-  },
-} as const;
-
 /** HotkeySvc checks whether a global shortcut is available. */
 export const HotkeySvc = {
   /** Busy reports whether an accelerator is taken, by any app. */
@@ -255,29 +102,11 @@ export const HotkeySvc = {
   },
 } as const;
 
-/** SnipSvc starts native screenshot selection from the bubble's recovery action. */
-export const SnipSvc = {
-  /** Start opens a new screenshot session from a recovery action. */
-  start(): Promise<void> {
-    return call("SnipSvc.Start");
-  },
-} as const;
-
 // ---- Events ----
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
-  /** BubbleLayoutChanged updates the reading budget after a display or zoom change. */
-  bubbleLayoutChanged: event<number>("bubble-layout-changed"),
-  runStopped: event<RunStoppedMsg>("run-stopped"),
-  bubblePresented: event<BubblePresentedMsg>("bubble-presented"),
-  /** BubbleReset re-initializes a reused bubble's page. */
-  bubbleReset: event<BubbleState>("bubble-reset"),
-  /** TranslationUpdate reports one service result as it arrives. */
-  translationUpdate: event<TranslationUpdateMsg>("translation-update"),
-  /** RunMeta reports a request's resolved languages before its results. */
-  runMeta: event<RunMetaMsg>("run-meta"),
-  /** SettingsChanged tells every page the new settings. */
+  /** SettingsChanged tells the settings page the new settings. */
   settingsChanged: event<Settings>("settings-changed"),
   /** OpenTranslationSettings selects the services tab in an existing window. */
   openTranslationSettings: event<boolean>("open-translation-settings"),

@@ -118,18 +118,14 @@ func TestBubbleDismissCancelsAllJobsAndSettlesSnapshot(t *testing.T) {
 	}
 }
 
-func TestBubbleDismissRecognitionRejectsLateCaptureAndLayout(t *testing.T) {
+func TestBubbleDismissRecognitionRejectsLateCaptureAndShow(t *testing.T) {
 	for _, trigger := range []string{"selection", "ocr"} {
 		t.Run(trigger, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, trigger, "recognizing")
 			capture, cancel := context.WithCancel(context.Background())
 			b.cancelCapture = cancel
 			shown := Shown{Win: b.win, ReqID: b.sessionID, Text: b.text}
-			// Dismiss after layout acknowledgement but before the first show,
-			// so claimShow must honor closure rather than an unready layout.
-			if !b.acceptLayout(b.sessionID, b.showID, b.layoutID, 1) {
-				t.Fatal("recognition layout rejected")
-			}
+			// Native readiness cannot release first show after dismissal.
 			if !dismissTestBubble(m, b) || capture.Err() != context.Canceled {
 				t.Fatal("recognition dismissal did not cancel capture")
 			}
@@ -142,11 +138,11 @@ func TestBubbleDismissRecognitionRejectsLateCaptureAndLayout(t *testing.T) {
 					t.Fatal("dismissed capture completed into the stopped session")
 				}
 			}
-			if b.acceptLayout(b.sessionID, b.showID, b.layoutID, b.layoutSequence+100) || b.claimShow() {
-				t.Fatal("late recognition layout revived the dismissed presentation")
+			if b.claimShow() {
+				t.Fatal("late show revived the dismissed recognition")
 			}
 			if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) {
-				t.Fatalf("late capture or layout mutated the stopped snapshot: before=%+v after=%+v", before, after)
+				t.Fatalf("late capture or show mutated the stopped snapshot: before=%+v after=%+v", before, after)
 			}
 		})
 	}
@@ -194,8 +190,8 @@ func TestBubbleDismissRejectsLateWorkAtAnyRevision(t *testing.T) {
 		}
 		m.finishRun(b.win, attempt.request)
 	}
-	if b.acceptLayout(b.sessionID, b.showID, b.layoutID, b.layoutSequence+1) || b.claimShow() {
-		t.Fatal("late layout reopened the dismissed bubble")
+	if b.claimShow() {
+		t.Fatal("late show reopened the dismissed bubble")
 	}
 	if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) || len(b.runCancels) != 0 {
 		t.Fatalf("late work changed the stopped snapshot: before=%+v after=%+v", before, after)
@@ -248,14 +244,14 @@ func TestBubbleDismissAllowsReplacementButNotOldSession(t *testing.T) {
 		t.Run(trigger, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, trigger, "")
 			startDismissTestJobs(t, m, b)
-			oldSession, oldShow, oldLayout := b.sessionID, b.showID, b.layoutID
+			oldSession, oldShow, oldGeneration := b.sessionID, b.showID, b.generation
 			if !dismissTestBubble(m, b) {
 				t.Fatal("dismissal rejected")
 			}
 			b.replaceContent(config.Default(), trigger, "replacement source", "", "", nil)
 			b.present()
 			b.canShow = func() bool { return true }
-			if b.closeClaimed || b.sessionID == oldSession || b.showID <= oldShow || !b.awaitingLayout {
+			if b.closeClaimed || b.sessionID == oldSession || b.showID <= oldShow || b.generation <= oldGeneration || b.presentationShown {
 				t.Fatal("replacement did not acquire a fresh presentation")
 			}
 			for _, service := range []string{"", "google"} {
@@ -263,38 +259,38 @@ func TestBubbleDismissAllowsReplacementButNotOldSession(t *testing.T) {
 					t.Fatal("old session entered the replacement")
 				}
 			}
-			if b.acceptLayout(oldSession, oldShow, oldLayout, 100) || b.claimClose(oldSession, oldShow, 1<<60) || m.completeCapture(config.Default(), Shown{Win: b.win, ReqID: oldSession}, "old capture", "") {
+			if b.claimClose(oldSession, oldShow, 1<<60) || m.completeCapture(config.Default(), Shown{Win: b.win, ReqID: oldSession}, "old capture", "") {
 				t.Fatal("old presentation callback affected replacement")
 			}
 			full, retry := startDismissTestJobs(t, m, b)
 			if full.Err() != nil || retry.Err() != nil || b.text != "replacement source" {
 				t.Fatal("replacement failed to start fresh full and retry jobs")
 			}
-			if b.claimShow() || !b.acceptLayout(b.sessionID, b.showID, b.layoutID, 1) || !b.claimShow() {
-				t.Fatal("replacement did not require and accept its own first-show layout")
+			if !b.claimShow() || b.claimShow() {
+				t.Fatal("replacement did not show exactly once using native readiness")
 			}
 		})
 	}
 }
 
-func TestBubbleLayoutStateTransitionsDoNotDismissJobs(t *testing.T) {
+func TestBubblePresentationAndCaptureCompletionDoNotDismissJobs(t *testing.T) {
 	m, b := newDismissTestBubble(t, "ocr", "recognizing")
 	capture, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	b.cancelCapture = cancel
-	if !b.acceptLayout(b.sessionID, b.showID, b.layoutID, 1) {
-		t.Fatal("recognition layout rejected")
+	if !b.claimShow() || capture.Err() != nil {
+		t.Fatal("first presentation dismissed pending capture")
 	}
-	b.advanceCaptureLayout()
-	if capture.Err() != nil || b.closeClaimed || !b.canShow() || b.revision != -1 || !b.awaitingLayout {
-		t.Fatal("recognition layout transition dismissed pending capture")
+	if !m.completeCapture(config.Default(), Shown{Win: b.win, ReqID: b.sessionID}, "recognized text", "") {
+		t.Fatal("current capture completion rejected")
+	}
+	if capture.Err() != nil || b.closeClaimed || !b.canShow() || b.revision != -1 || !b.presentationShown || b.cancelCapture != nil {
+		t.Fatal("capture completion dismissed presentation or retained pending acquisition")
 	}
 	full, retry := startDismissTestJobs(t, m, b)
-	if !b.acceptLayout(b.sessionID, b.showID, b.layoutID, 2) || !b.claimShow() || !b.acceptLayout(b.sessionID, b.showID, b.layoutID, 3) {
-		t.Fatal("current translation layout rejected")
+	if b.claimShow() || full.Err() != nil || retry.Err() != nil || b.closeClaimed || !b.canShow() {
+		t.Fatal("translation repeated first show or dismissed active jobs")
 	}
-	if full.Err() != nil || retry.Err() != nil || b.closeClaimed || !b.canShow() {
-		t.Fatal("translation layout transition dismissed active jobs")
-	}
-	// These are state-only checks. Native Hide during layout/reuse must be
-	// covered by desktop e2e; a zero Window cannot establish callback behavior.
+	// Native Hide during reuse is covered by desktop e2e; a zero Window
+	// cannot establish callback behavior.
 }

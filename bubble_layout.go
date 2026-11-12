@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"log"
 	"math"
 
 	"github.com/egoist/mygo"
@@ -82,7 +80,66 @@ func clampBubblePosition(work mygo.Rectangle, x, y, width, height int) (int, int
 		min(max(y, work.Y+marginY), work.Y+max(work.Height-height-marginY, 0))
 }
 
-// reflow runs on the main thread. Pinned windows retain their user position;
+// bubblePosition tracks actual geometry, not event counts: a native move
+// notification may arrive after SetPosition returned or after another move.
+type bubblePosition struct {
+	point    mygo.Point
+	displays []mygo.Display
+	known    bool
+}
+
+func (p *bubblePosition) remember(bounds mygo.Rectangle, displays []mygo.Display) {
+	p.point = mygo.Point{X: bounds.X, Y: bounds.Y}
+	p.displays = append(p.displays[:0], displays...)
+	p.known = true
+}
+
+func sameBubbleDisplays(before, after []mygo.Display) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	for _, old := range before {
+		found := false
+		for _, current := range after {
+			if old == current {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// A changed display configuration can relocate a window without user input.
+// Crossing between unchanged displays, however, is still a manual move.
+func (p *bubblePosition) moved(bounds mygo.Rectangle, displays []mygo.Display) bool {
+	moved := p.known && p.point != (mygo.Point{X: bounds.X, Y: bounds.Y}) && sameBubbleDisplays(p.displays, displays)
+	p.remember(bounds, displays)
+	return moved
+}
+
+// Native callbacks can run inside these calls; delayed callbacks instead see
+// the actual resulting position recorded before the main thread yields.
+func (b *bubble) changeGeometry(change func()) {
+	adjusting := b.adjustingLayout
+	b.adjustingLayout = true
+	defer func() { b.adjustingLayout = adjusting }()
+	change()
+	b.positionState.remember(b.win.Bounds(), mygo.Screen.Displays())
+}
+
+func (b *bubble) setPosition(x, y int) {
+	b.changeGeometry(func() { b.win.SetPosition(x, y) })
+}
+
+func (b *bubble) setContentSize(width, height int) {
+	b.changeGeometry(func() { b.win.SetContentSize(width, height) })
+}
+
+// reflow runs on the main thread. Manually moved windows retain their position;
 // only automatic content growth is kept inside the current work area.
 func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	if b.adjustingLayout {
@@ -91,26 +148,28 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 	b.adjustingLayout = true
 	defer func() { b.adjustingLayout = false }()
 	bounds := b.win.Bounds()
+	displays := mygo.Screen.Displays()
+	if b.positionState.moved(bounds, displays) {
+		b.placement = nil
+	}
 	display := mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2})
 	work := display.WorkArea
 	m.mu.Lock()
 	pinned := b.pinned
 	m.mu.Unlock()
 	if !pinned && b.placement != nil {
-		b.placement.refresh(mygo.Screen.Displays(), display, bounds.Width)
+		b.placement.refresh(displays, display, bounds.Width)
 		work = b.placement.work
 	}
-	zoom := b.win.Page().ZoomFactor()
-	if zoom <= 0 {
-		zoom = 1
-	}
-	limit := float64(bubbleHeightLimit(work)) / zoom
+	limit := float64(bubbleHeightLimit(work))
 	m.mu.Lock()
 	changed := b.maxHeight != limit
 	b.maxHeight = limit
+	view := b.view
 	m.mu.Unlock()
-	if changed {
-		BubbleLayoutChanged.Emit(b.win, limit)
+	if changed && view != nil {
+		view.setMaxHeight(limit)
+		b.win.Invalidate()
 	}
 	if !resize {
 		return
@@ -122,7 +181,7 @@ func (m *bubbleManager) reflow(b *bubble, resize bool) {
 		x, y = b.placement.position(bounds.Width, bounds.Height)
 	}
 	if x != bounds.X || y != bounds.Y {
-		b.win.SetPosition(x, y)
+		b.setPosition(x, y)
 	}
 }
 
@@ -142,57 +201,8 @@ func (m *bubbleManager) refreshDisplays() {
 	})
 }
 
-// Rendered is the sole content-size writer. Every measurement, including
-// translation growth and card folding, follows the same sequence checks.
-func (m *bubbleManager) Rendered(ctx context.Context, win *mygo.Window, id int64, session string, showID, layoutID, sequence int64, height float64) bool {
-	if ctx.Err() != nil || win == nil || height <= 0 || math.IsNaN(height) || math.IsInf(height, 0) {
-		return false
-	}
-	applied := false
-	mygo.RunOnMain(func() {
-		// Navigation cancels the old page context, including queued measurements.
-		if ctx.Err() != nil {
-			return
-		}
-		m.mu.Lock()
-		b := m.byID[id]
-		accepted := b != nil && b.win == win && b.acceptLayout(session, showID, layoutID, sequence)
-		m.mu.Unlock()
-		if !accepted {
-			log.Printf("bubble: layout rejected id=%d show=%d layout=%d sequence=%d", id, showID, layoutID, sequence)
-			return
-		}
-		// A pinned bubble still resizes after a new entry invalidates canShow.
-		// Entry ownership gates first presentation, not ongoing content layout.
-		m.reflow(b, false)
-		zoom := b.win.Page().ZoomFactor()
-		m.mu.Lock()
-		limit := b.maxHeight
-		m.mu.Unlock()
-		b.win.SetContentSize(480, bubbleLayoutHeight(height, limit, zoom))
-		m.reflow(b, true)
-		m.showWin(b)
-		applied = true
-	})
-	return applied
-}
-
-// Measurements share one monotonic sequence for the mounted page. The layout
-// identity additionally rejects old OCR stages and old sessions.
-func (b *bubble) acceptLayout(session string, showID, layoutID, sequence int64) bool {
-	if b.closeClaimed || session != b.sessionID || showID != b.showID || layoutID != b.layoutID || sequence <= b.layoutSequence {
-		return false
-	}
-	b.layoutSequence = sequence
-	b.awaitingLayout = false
-	return true
-}
-
-func bubbleLayoutHeight(height, limit, zoom float64) int {
-	if zoom <= 0 {
-		zoom = 1
-	}
-	// Clamp before conversion and round fractional CSS sizes as mygo does.
-	h := int(math.Ceil(min(min(height, limit)*zoom, bubbleMaxHeight) - 1.0/128))
+func bubbleLayoutHeight(height, limit float64) int {
+	// Clamp before conversion and round fractional native view sizes as mygo does.
+	h := int(math.Ceil(min(min(height, limit), bubbleMaxHeight) - 1.0/128))
 	return max(160, h)
 }
