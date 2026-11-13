@@ -43,10 +43,6 @@ func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg conf
 	if key == "" {
 		return Result{}, ErrNotConfigured
 	}
-	target := englishName(req.TargetLang)
-	if target == "" {
-		return Result{}, unsupported("OpenAI", req.TargetLang)
-	}
 	base := strings.TrimSuffix(cfg.Services.OpenAI.BaseURL, "/")
 	if base == "" {
 		base = "https://api.openai.com/v1"
@@ -55,18 +51,71 @@ func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg conf
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
+	return translateChatCompletion(ctx, o.Client, o.Name(), "OpenAI", base, model, key, req, stream, emit)
+}
+
+// CustomOpenAI translates through a user-configured OpenAI-compatible endpoint.
+// An API key is optional so local servers (e.g. Ollama) work without credentials.
+type CustomOpenAI struct {
+	Service config.CustomService
+	Client  *http.Client
+}
+
+func (c CustomOpenAI) Name() string { return c.Service.ID }
+
+func (c CustomOpenAI) Available(_ KeyStore, _ config.Settings) bool {
+	return c.Service.IsConfigured()
+}
+
+func (c CustomOpenAI) Translate(ctx context.Context, req Request, k KeyStore, cfg config.Settings) (Result, error) {
+	return c.translate(ctx, req, k, false, nil)
+}
+
+func (c CustomOpenAI) Stream(ctx context.Context, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
+	return c.translate(ctx, req, k, true, emit)
+}
+
+func (c CustomOpenAI) translate(ctx context.Context, req Request, k KeyStore, stream bool, emit func(Result)) (Result, error) {
+	if !c.Available(k, config.Settings{}) {
+		return Result{}, ErrNotConfigured
+	}
+	key := ""
+	if k != nil {
+		key = k.Get(keys.CustomAPIKey(c.Service.ID))
+	}
+	return translateChatCompletion(ctx, c.Client, c.Service.ID, c.Service.Name, c.Service.BaseURL, c.Service.Model, key, req, stream, emit)
+}
+
+func chatCompletionsEndpoint(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	base = strings.TrimSuffix(base, "/chat/completions")
+	return base + "/chat/completions"
+}
+
+func translateChatCompletion(
+	ctx context.Context,
+	client *http.Client,
+	serviceID, displayName, baseURL, model, key string,
+	req Request,
+	stream bool,
+	emit func(Result),
+) (Result, error) {
+	target := englishName(req.TargetLang)
+	if target == "" {
+		return Result{}, unsupported(displayName, req.TargetLang)
+	}
 	payload := map[string]any{
 		"model":       model,
 		"messages":    translationMessages(req, target),
 		"temperature": 0.1,
 	}
-	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", stream, func(text string) {
+	choice, err := requestChatCompletion(ctx, client, chatCompletionsEndpoint(baseURL), key, payload, displayName, stream, func(text string) {
 		if emit != nil {
-			emit(Result{Service: o.Name(), Text: cleanOpenAIText(text), Streaming: true})
+			emit(Result{Service: serviceID, Text: cleanOpenAIText(text), Streaming: true})
 		}
 	})
 	// The reply may wrap the translation in quotes despite the prompt.
-	return Result{Service: o.Name(), Text: cleanOpenAIText(choice.Message.Content)}, err
+	return Result{Service: serviceID, Text: cleanOpenAIText(choice.Message.Content)}, err
 }
 
 func cleanOpenAIText(text string) string {

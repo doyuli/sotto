@@ -13,21 +13,28 @@ import (
 )
 
 type settingsActions struct {
-	getSettings  func() config.Settings
-	saveSettings func(config.Settings) error
-	credentials  func() (CredentialStatus, error)
-	setSecret    func(name, value string) error
-	testService  func(ctx context.Context, name string) string
-	openKeyPage  func(service string) error
-	deeplUsage   func() (DeeplUsage, error)
-	hotkeyBusy   func(accel string) bool
-	invalidate   func()
+	getSettings        func() config.Settings
+	saveSettings       func(config.Settings) error
+	saveCustomSettings func(config.Settings, string, *string) error
+	credentials        func() (CredentialStatus, error)
+	setSecret          func(name, value string) error
+	testService        func(ctx context.Context, name string) string
+	openKeyPage        func(service string) error
+	deeplUsage         func() (DeeplUsage, error)
+	hotkeyBusy         func(accel string) bool
+	invalidate         func()
 }
 
 type serviceTestStatus struct {
 	testing bool
 	result  string
 	isError bool
+}
+
+type customDraft struct {
+	service     config.CustomService // Retain its ID across failed save attempts.
+	apiKey      string
+	deleteUntil time.Time
 }
 
 type settingsView struct {
@@ -59,6 +66,7 @@ type settingsView struct {
 	serviceDrafts  map[string]map[string]string
 	baseURLDraft   *string
 	modelDrafts    map[string]string
+	customDrafts   map[string]customDraft
 	credentialBusy map[string]bool
 	testStatuses   map[string]serviceTestStatus
 	deeplUsageText string
@@ -86,6 +94,7 @@ func newSettingsView(initialTab settingsTab, cfg config.Settings, actions settin
 		expanded:        make(map[string]bool),
 		serviceDrafts:   make(map[string]map[string]string),
 		modelDrafts:     make(map[string]string),
+		customDrafts:    make(map[string]customDraft),
 		credentialBusy:  make(map[string]bool),
 		testStatuses:    make(map[string]serviceTestStatus),
 		deeplUsageText:  "额度查询中…",
@@ -100,6 +109,7 @@ func cloneSettings(cfg config.Settings) config.Settings {
 	out := cfg
 	out.Services.Enabled = slices.Clone(cfg.Services.Enabled)
 	out.Services.Order = slices.Clone(cfg.Services.Order)
+	out.Services.Custom = slices.Clone(cfg.Services.Custom)
 	out.CopyFormats = slices.Clone(cfg.CopyFormats)
 	return out
 }
@@ -191,6 +201,11 @@ func (v *settingsView) enqueueTask(task func()) {
 }
 
 func (v *settingsView) enqueueSaveLocked(next config.Settings) {
+	v.queueSaveLocked(next, v.actions.saveSettings, nil)
+}
+
+// complete runs under mu after persistence; UI cleanup must wait for its result.
+func (v *settingsView) queueSaveLocked(next config.Settings, write func(config.Settings) error, complete func(error)) {
 	if v.disposed {
 		return
 	}
@@ -199,8 +214,8 @@ func (v *settingsView) enqueueSaveLocked(next config.Settings) {
 	snap := cloneSettings(next)
 	v.enqueueTaskLocked(func() {
 		var err error
-		if v.actions.saveSettings != nil {
-			err = v.actions.saveSettings(snap)
+		if write != nil {
+			err = write(snap)
 		}
 		v.mu.Lock()
 		v.pendingWrites--
@@ -210,6 +225,9 @@ func (v *settingsView) enqueueSaveLocked(next config.Settings) {
 		}
 		if v.pendingWrites == 0 && !v.disposed && v.actions.getSettings != nil {
 			v.settings = cloneSettings(v.actions.getSettings())
+		}
+		if complete != nil {
+			complete(err)
 		}
 		disposed := v.disposed
 		v.mu.Unlock()
@@ -257,6 +275,7 @@ func (v *settingsView) detachWindow() {
 	v.hotkeyListening = ""
 	v.hotkeyCaptureArmed = false
 	v.serviceDrafts = make(map[string]map[string]string)
+	v.customDrafts = make(map[string]customDraft)
 	v.expanded = make(map[string]bool)
 	v.testStatuses = make(map[string]serviceTestStatus)
 	v.drag.clear()
@@ -348,7 +367,14 @@ func (v *settingsView) loadDeeplUsageAsync() {
 	}()
 }
 
+func (v *settingsView) isServiceConfiguredLocked(name string) bool {
+	return slices.Contains(v.credentials.Configured, name)
+}
+
 func (v *settingsView) serviceOnLocked(name string) bool {
+	if config.IsCustomService(name) {
+		return slices.Contains(v.settings.Services.Enabled, name) && v.isServiceConfiguredLocked(name)
+	}
 	fields := serviceCredentialFields[name]
 	keyless := len(fields) == 0
 	return slices.Contains(v.settings.Services.Enabled, name) &&
@@ -442,6 +468,119 @@ func (v *settingsView) saveCredentials(name string) {
 	})
 }
 
+func (v *settingsView) saveCustomService(id string) {
+	v.mu.Lock()
+	draft, ok := v.customDrafts[id]
+	if v.disposed || !ok || v.credentialBusy[id] || v.testStatuses[id].testing {
+		v.mu.Unlock()
+		return
+	}
+	service := draft.service.Normalized()
+	if !service.IsConfigured() {
+		v.pendingToast = "请完整填写服务名称、Base URL 与模型名称"
+		v.mu.Unlock()
+		v.invalidate()
+		return
+	}
+
+	actualID := id
+	isNew := id == "new"
+	if isNew {
+		actualID = service.ID
+		if !config.IsCustomService(actualID) {
+			actualID = fmt.Sprintf("custom:%d", time.Now().UnixNano())
+			draft.service.ID = actualID
+			v.customDrafts[id] = draft
+		}
+	}
+	service.ID = actualID
+	generation := v.windowGeneration
+	v.credentialBusy[id] = true
+	v.credentialBusy[actualID] = true
+	v.testStatuses[id] = serviceTestStatus{}
+	v.testStatuses[actualID] = serviceTestStatus{}
+	next := cloneSettings(v.settings)
+	found := false
+	for i, cs := range next.Services.Custom {
+		if cs.ID == actualID {
+			next.Services.Custom[i] = service
+			found = true
+			break
+		}
+	}
+	if !found {
+		next.Services.Custom = append(next.Services.Custom, service)
+		if !slices.Contains(next.Services.Order, actualID) {
+			next.Services.Order = append(next.Services.Order, actualID)
+		}
+	}
+	var credential *string
+	if key := strings.TrimSpace(draft.apiKey); key != "" {
+		credential = &key
+	}
+	v.queueSaveLocked(next, func(s config.Settings) error {
+		return v.actions.saveCustomSettings(s, actualID, credential)
+	}, func(err error) {
+		delete(v.credentialBusy, id)
+		delete(v.credentialBusy, actualID)
+		if v.disposed || generation != v.windowGeneration {
+			return
+		}
+		if err != nil {
+			v.testStatuses[id] = serviceTestStatus{result: "配置保存失败：" + err.Error(), isError: true}
+			return
+		}
+		delete(v.customDrafts, id)
+		if isNew {
+			delete(v.expanded, "new")
+		}
+		v.expanded[actualID] = true
+		v.testStatuses[actualID] = serviceTestStatus{result: "配置已保存"}
+	})
+	v.mu.Unlock()
+	v.refreshCredentialsAsync()
+	v.invalidate()
+}
+
+func (v *settingsView) deleteCustomService(id string) {
+	v.mu.Lock()
+	if v.disposed || v.credentialBusy[id] || v.testStatuses[id].testing {
+		v.mu.Unlock()
+		return
+	}
+	if id == "new" {
+		delete(v.customDrafts, "new")
+		delete(v.expanded, "new")
+		v.mu.Unlock()
+		v.invalidate()
+		return
+	}
+	generation := v.windowGeneration
+	v.credentialBusy[id] = true
+	next := cloneSettings(v.settings)
+	next.Services.Custom = slices.DeleteFunc(next.Services.Custom, func(cs config.CustomService) bool { return cs.ID == id })
+	next.Services.Enabled = slices.DeleteFunc(next.Services.Enabled, func(s string) bool { return s == id })
+	next.Services.Order = slices.DeleteFunc(next.Services.Order, func(s string) bool { return s == id })
+	v.queueSaveLocked(next, func(s config.Settings) error {
+		return v.actions.saveCustomSettings(s, id, nil)
+	}, func(err error) {
+		delete(v.credentialBusy, id)
+		if v.disposed || generation != v.windowGeneration {
+			return
+		}
+		if err != nil {
+			v.testStatuses[id] = serviceTestStatus{result: "删除失败：" + err.Error(), isError: true}
+			return
+		}
+		delete(v.customDrafts, id)
+		delete(v.expanded, id)
+		delete(v.testStatuses, id)
+	})
+	v.mu.Unlock()
+	v.refreshCredentialsAsync()
+	v.invalidate()
+}
+
 func (v *settingsView) clearSecret(name, key string) {
 	v.mu.Lock()
 	if v.credentialBusy[name] || v.testStatuses[name].testing {
@@ -484,6 +623,10 @@ func (v *settingsView) clearSecret(name, key string) {
 			} else {
 				if v.serviceDrafts[name] != nil {
 					delete(v.serviceDrafts[name], key)
+				}
+				if d, ok := v.customDrafts[name]; ok {
+					d.apiKey = ""
+					v.customDrafts[name] = d
 				}
 				v.testStatuses[name] = serviceTestStatus{result: "凭证已清除"}
 			}
@@ -573,7 +716,7 @@ func (v *settingsView) applyDragOrderLocked(preview []string) {
 	order := slices.Clone(v.settings.Services.Order)
 	pi := 0
 	for i, s := range order {
-		if _, ok := serviceCredentialFields[s]; ok && v.serviceOnLocked(s) && pi < len(preview) {
+		if _, ok := serviceCredentialFields[s]; (ok || config.IsCustomService(s)) && v.serviceOnLocked(s) && pi < len(preview) {
 			order[i] = preview[pi]
 			pi++
 		}

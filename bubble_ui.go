@@ -1277,6 +1277,9 @@ func (v *bubbleView) renderResults(c *ui.Context, p bubblePalette) {
 func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card *bubbleCard) {
 	collapsed := v.collapsed[svc]
 	title := bubbleServiceName(svc)
+	if cs, ok := v.settings.Services.FindCustom(svc); ok && cs.Name != "" {
+		title = cs.Name
+	}
 	ui.Column(c).Radius(12).Clip().Background(p.cardBody).Children(func() {
 		header := ui.ButtonBase(c.Key("header")).
 			Label("折叠 "+title).

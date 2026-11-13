@@ -442,9 +442,12 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 	loaded := v.credentialsLoaded
 	credErr := v.credentialsErr
 	cfg := cloneSettings(v.settings)
+	_, hasNewCustom := v.customDrafts["new"]
 	var enabledNames, disabledNames []string
 	for _, svc := range cfg.Services.Order {
-		if _, ok := serviceCredentialFields[svc]; !ok {
+		_, isBuiltIn := serviceCredentialFields[svc]
+		_, isCustom := cfg.Services.FindCustom(svc)
+		if !isBuiltIn && !isCustom {
 			continue
 		}
 		if v.serviceOnLocked(svc) {
@@ -452,6 +455,9 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 		} else {
 			disabledNames = append(disabledNames, svc)
 		}
+	}
+	if hasNewCustom {
+		disabledNames = append(disabledNames, "new")
 	}
 	displayEnabled := enabledNames
 	if sameServiceSet(v.drag.preview, enabledNames) {
@@ -461,7 +467,19 @@ func (v *settingsView) renderServices(c *ui.Context, p settingsPalette) {
 	}
 	v.mu.Unlock()
 
-	ui.Text(c, "翻译服务").FontSize(18).FontWeight(600).TextColor(p.fg)
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "翻译服务").FontSize(18).FontWeight(600).TextColor(p.fg).Grow(1)
+		if loaded {
+			v.renderSecondaryButton(c, p, "+ 添加自定义服务", func() {
+				v.mu.Lock()
+				if _, ok := v.customDrafts["new"]; !ok {
+					v.customDrafts["new"] = customDraft{}
+				}
+				v.expanded["new"] = true
+				v.mu.Unlock()
+			})
+		}
+	})
 
 	if !loaded {
 		ui.Row(c).Padding(14).Radius(12).Background(p.card).Border(1, p.border).AlignItems(ui.Center).Gap(12).Children(func() {
@@ -541,26 +559,53 @@ func (v *settingsView) renderServiceGroupHeader(c *ui.Context, p settingsPalette
 }
 
 func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc string, enabled bool, position int, displayEnabled []string) (bool, string) {
-	title := bubbleServiceName(svc)
+	isCustom := svc == "new" || config.IsCustomService(svc)
 	fields := serviceCredentialFields[svc]
-	keyless := len(fields) == 0
+	keyless := !isCustom && len(fields) == 0
 
 	v.mu.Lock()
-	isConfigured := slices.Contains(v.credentials.Configured, svc)
+	title := bubbleServiceName(svc)
+	if isCustom {
+		title = "自定义服务"
+		if draft, ok := v.customDrafts[svc]; ok && strings.TrimSpace(draft.service.Name) != "" {
+			title = strings.TrimSpace(draft.service.Name)
+		} else if cs, ok := v.settings.Services.FindCustom(svc); ok && cs.Name != "" {
+			title = cs.Name
+		}
+	}
+	isConfigured := v.isServiceConfiguredLocked(svc)
+	cs, hasSavedCustom := v.settings.Services.FindCustom(svc)
+	paused := hasSavedCustom && cs.IsConfigured() && !isConfigured
 	isExpanded := v.expanded[svc]
 	busy := v.credentialBusy[svc]
 	dragAnimating := v.drag.preview != nil
+	customHasKey := isCustom && slices.Contains(v.credentials.Stored, keys.CustomAPIKey(svc))
 	v.mu.Unlock()
 
 	stateHint := "填写凭证后可启用"
-	if enabled {
-		if keyless {
-			stateHint = "无需凭据"
-		} else {
-			stateHint = "凭证已保存"
+	if isCustom {
+		stateHint = "填写名称、地址和模型后可启用"
+		if enabled {
+			if customHasKey {
+				stateHint = "已保存密钥"
+			} else {
+				stateHint = "无需密钥"
+			}
+		} else if isConfigured {
+			stateHint = "打开开关后参与翻译"
+		} else if paused {
+			stateHint = "服务已暂停，请重新填写或清除 API Key"
 		}
-	} else if keyless || isConfigured {
-		stateHint = "打开开关后参与翻译"
+	} else {
+		if enabled {
+			if keyless {
+				stateHint = "无需凭据"
+			} else {
+				stateHint = "凭证已保存"
+			}
+		} else if keyless || isConfigured {
+			stateHint = "打开开关后参与翻译"
+		}
 	}
 
 	card := ui.Column(c).
@@ -651,7 +696,15 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 						badgeText := "未配置"
 						badgeBg := p.warningSoft
 						badgeFg := p.warning
-						if keyless {
+						if isCustom {
+							if isConfigured {
+								badgeText = "自定义"
+								badgeBg = p.accentSoft
+								badgeFg = p.accentText
+							} else if paused {
+								badgeText = "已暂停"
+							}
+						} else if keyless {
 							badgeText = "免配置"
 							badgeBg = p.pill
 							badgeFg = p.badgeInk
@@ -676,8 +729,14 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 						cfgLabel = "收起"
 						accessLabel = "收起" + title
 					}
-					v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, func() {
+					v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, isCustom && busy, func() {
 						v.mu.Lock()
+						if svc == "new" && v.expanded["new"] {
+							delete(v.customDrafts, "new")
+							delete(v.expanded, "new")
+							v.mu.Unlock()
+							return
+						}
 						nextExpanded := !v.expanded[svc]
 						if !nextExpanded {
 							v.flushTextDraftsLocked()
@@ -691,47 +750,53 @@ func (v *settingsView) renderServiceCard(c *ui.Context, p settingsPalette, svc s
 					})
 				}
 
-				v.mu.Lock()
-				handle := v.switchHandles[svc]
-				if handle == nil {
-					handle = &ui.Handle{}
-					v.switchHandles[svc] = handle
-				}
-				// A rollback can move the same switch back to its old parent.
-				focus := v.focusService == svc || handle.Focused(c)
-				if focus {
-					v.focusService = ""
-				}
-				v.mu.Unlock()
-				if focus {
-					handle.Focus(c)
-				}
-				on := enabled
-				sw := ui.Switch(c, &on).
-					Label("启用" + title).
-					Bind(handle).
-					Disabled(busy || (!keyless && !isConfigured))
-				if sw.Changed() {
+				if svc != "new" {
 					v.mu.Lock()
-					v.focusService = svc
-					next := cloneSettings(v.settings)
-					next.Services.Enabled = slices.DeleteFunc(slices.Clone(next.Services.Enabled), func(s string) bool {
-						return s == svc
-					})
-					if on {
-						next.Services.Enabled = append(next.Services.Enabled, svc)
-					} else {
-						v.flushTextDraftsLocked()
-						v.expanded[svc] = false
+					handle := v.switchHandles[svc]
+					if handle == nil {
+						handle = &ui.Handle{}
+						v.switchHandles[svc] = handle
 					}
-					v.enqueueSaveLocked(next)
+					// A rollback can move the same switch back to its old parent.
+					focus := v.focusService == svc || handle.Focused(c)
+					if focus {
+						v.focusService = ""
+					}
 					v.mu.Unlock()
+					if focus {
+						handle.Focus(c)
+					}
+					on := enabled
+					sw := ui.Switch(c, &on).
+						Label("启用" + title).
+						Bind(handle).
+						Disabled(busy || (!keyless && !isConfigured))
+					if sw.Changed() {
+						v.mu.Lock()
+						v.focusService = svc
+						next := cloneSettings(v.settings)
+						next.Services.Enabled = slices.DeleteFunc(slices.Clone(next.Services.Enabled), func(s string) bool {
+							return s == svc
+						})
+						if on {
+							next.Services.Enabled = append(next.Services.Enabled, svc)
+						} else {
+							v.flushTextDraftsLocked()
+							v.expanded[svc] = false
+						}
+						v.enqueueSaveLocked(next)
+						v.mu.Unlock()
+					}
 				}
 			})
 		})
 
-		if !keyless && isExpanded {
-			v.renderServiceDrawer(c, p, svc, fields, isConfigured)
+		if isExpanded {
+			if isCustom {
+				v.renderCustomServiceDrawer(c, p, svc, isConfigured)
+			} else if !keyless {
+				v.renderServiceDrawer(c, p, svc, fields, isConfigured)
+			}
 		}
 	})
 	return dragging, overTarget
@@ -841,53 +906,19 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 			}
 			val := draftMap[f.name]
 			field := f
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Column(c).Width(136).Gap(2).Children(func() {
-					ui.Text(c, field.label).FontSize(13).FontWeight(500).TextColor(p.fg)
-					if sub != "" {
-						ui.Text(c, sub).FontSize(12).TextColor(p.muted)
+			v.renderSecretInputRow(c, p, field.label, sub, &val, ph, locked, isStored,
+				func(val string) {
+					v.mu.Lock()
+					if v.serviceDrafts[svc] == nil {
+						v.serviceDrafts[svc] = make(map[string]string)
 					}
-				})
-				ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(8).Children(func() {
-					inp := ui.TextInput(c, &val).
-						Label("编辑"+field.label).
-						Password().
-						Placeholder(ph).
-						Disabled(locked).
-						Grow(1).
-						Padding(7, 10).
-						Radius(8).
-						FontSize(13)
-					if inp.Changed() {
-						v.mu.Lock()
-						if v.serviceDrafts[svc] == nil {
-							v.serviceDrafts[svc] = make(map[string]string)
-						}
-						v.serviceDrafts[svc][field.name] = val
-						v.testStatuses[svc] = serviceTestStatus{}
-						v.mu.Unlock()
-					}
-					if inp.Submitted() {
-						v.saveCredentials(svc)
-					}
-					if isStored {
-						clr := ui.ButtonBase(c).Label("清除"+field.label).Disabled(locked).Cursor(ui.CursorPointer).Padding(4, 6)
-						if clr.Clicked() {
-							v.clearSecret(svc, field.name)
-						}
-						clr.Children(func() {
-							col := p.accentText
-							if locked {
-								col = p.muted.Alpha(0.5)
-							}
-							txt := ui.Text(c, "清除").FontSize(12).TextColor(col)
-							if !locked && clr.Hovered() {
-								txt.Underline()
-							}
-						})
-					}
-				})
-			})
+					v.serviceDrafts[svc][field.name] = val
+					v.testStatuses[svc] = serviceTestStatus{}
+					v.mu.Unlock()
+				},
+				func() { v.saveCredentials(svc) },
+				func() { v.clearSecret(svc, field.name) },
+			)
 		}
 
 		if note, ok := serviceNotes[svc]; ok {
@@ -903,55 +934,246 @@ func (v *settingsView) renderServiceDrawer(c *ui.Context, p settingsPalette, svc
 
 		// Footer
 		ui.Row(c).FillWidth().Padding(4, 0, 0, 0).AlignItems(ui.Center).Gap(8).Children(func() {
-			statusText := "未测试"
-			statusColor := p.muted
-			dotColor := p.muted.Alpha(0.5)
-			if testStatus.result != "" {
-				statusText = testStatus.result
-				if testStatus.isError {
-					statusColor = p.error
-					dotColor = p.error
-				} else if !testStatus.testing {
-					statusColor = p.success
-					dotColor = p.success
-				} else {
-					dotColor = p.accent
-				}
-			}
-			ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Box(c).Size(6, 6).Radius(999).Background(dotColor)
-				ui.Text(c, statusText).FontSize(12).TextColor(statusColor)
-			})
+			v.renderServiceTestStatus(c, p, testStatus)
 
 			testDisabled := !isConfigured || locked || hasDraft
 			v.renderSecondaryButtonDisabled(c, p, "测试连接", "测试连接", testDisabled, func() {
 				v.testConnection(svc)
 			})
 
-			saveDisabled := !hasDraft || locked
-			saveBtn := ui.ButtonBase(c).
-				Label("保存凭证").
-				Disabled(saveDisabled).
-				Cursor(ui.CursorPointer).
-				Padding(6, 14).
-				Radius(8).
-				Background(p.primaryBg)
-			if saveDisabled {
-				saveBtn.Opacity(0.45)
-			} else if saveBtn.Hovered() {
-				if p.dark {
-					saveBtn.Background(p.accent.Alpha(0.88))
-				} else {
-					saveBtn.Background(p.accent)
-				}
-			}
-			if saveBtn.Clicked() {
+			v.renderDrawerSaveButton(c, p, "保存凭证", !hasDraft || locked, func() {
 				v.saveCredentials(svc)
-			}
-			saveBtn.Children(func() {
-				ui.Text(c, "保存凭证").FontSize(12).FontWeight(600).TextColor(p.onAccent).SingleLine()
 			})
 		})
+	})
+}
+
+func (v *settingsView) renderCustomServiceDrawer(c *ui.Context, p settingsPalette, svc string, isConfigured bool) {
+	v.mu.Lock()
+	busy := v.credentialBusy[svc]
+	testStatus := v.testStatuses[svc]
+	locked := busy || testStatus.testing
+
+	draft, ok := v.customDrafts[svc]
+	saved, hasSaved := v.settings.Services.FindCustom(svc)
+	if !ok {
+		draft = customDraft{service: saved}
+		v.customDrafts[svc] = draft
+	}
+
+	keyName := keys.CustomAPIKey(svc)
+	isStored := svc != "new" && keyName != "" && slices.Contains(v.credentials.Stored, keyName)
+	v.mu.Unlock()
+
+	nameVal := draft.service.Name
+	baseURLVal := draft.service.BaseURL
+	modelVal := draft.service.Model
+	apiKeyVal := draft.apiKey
+
+	service := draft.service.Normalized()
+	hasUnsaved := !hasSaved || service != saved || strings.TrimSpace(apiKeyVal) != ""
+	canSave := !locked && service.IsConfigured()
+	confirmingDelete := time.Now().Before(draft.deleteUntil)
+
+	updateDraft := func(fn func(*customDraft)) {
+		v.mu.Lock()
+		d := v.customDrafts[svc]
+		fn(&d)
+		v.customDrafts[svc] = d
+		v.testStatuses[svc] = serviceTestStatus{}
+		v.mu.Unlock()
+	}
+
+	ui.Box(c).FillWidth().Height(1).Background(p.border)
+	ui.Column(c).FillWidth().Background(p.card).Padding(14, 16).Gap(12).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
+			ui.Column(c).Width(136).Gap(2).Children(func() {
+				ui.Text(c, "接口格式").FontSize(13).FontWeight(500).TextColor(p.fg)
+			})
+			ui.Row(c).Padding(4, 10).Radius(6).Background(p.field).Children(func() {
+				ui.Text(c, "OpenAI 兼容（Chat Completions）").FontSize(12).TextColor(p.muted).SingleLine()
+			})
+		})
+
+		v.renderDrawerInputRow(c, p, "服务名称", "显示在译文卡片标题", &nameVal, "例如：DeepSeek、Ollama", locked, false,
+			func(val string) { updateDraft(func(d *customDraft) { d.service.Name = val }) },
+			nil,
+		)
+		v.renderDrawerInputRow(c, p, "Base URL", "填到 /v1 即可", &baseURLVal, "https://api.openai.com/v1", locked, false,
+			func(val string) { updateDraft(func(d *customDraft) { d.service.BaseURL = val }) },
+			nil,
+		)
+		v.renderDrawerInputRow(c, p, "模型名称", "目标推理模型 ID", &modelVal, "例如：gpt-4o-mini、qwen2.5:7b", locked, false,
+			func(val string) { updateDraft(func(d *customDraft) { d.service.Model = val }) },
+			nil,
+		)
+
+		ph := "可选，本地模型可留空"
+		if isStored {
+			ph = "已保存，留空不变"
+		}
+		canClear := isStored || (hasSaved && saved.IsConfigured() && !isConfigured)
+		v.renderSecretInputRow(c, p, "API Key", "可选，存入系统密钥环", &apiKeyVal, ph, locked, canClear,
+			func(val string) { updateDraft(func(d *customDraft) { d.apiKey = val }) },
+			nil,
+			func() { v.clearSecret(svc, keyName) },
+		)
+
+		// Footer
+		ui.Row(c).FillWidth().Padding(4, 0, 0, 0).AlignItems(ui.Center).Gap(8).Children(func() {
+			v.renderServiceTestStatus(c, p, testStatus)
+
+			if !confirmingDelete {
+				delBtn := ui.ButtonBase(c).Label("删除服务").Disabled(locked).Cursor(ui.CursorPointer).Padding(5, 8)
+				if delBtn.Clicked() {
+					if svc == "new" {
+						v.deleteCustomService("new")
+					} else {
+						v.mu.Lock()
+						d := v.customDrafts[svc]
+						d.deleteUntil = time.Now().Add(4 * time.Second)
+						v.customDrafts[svc] = d
+						v.mu.Unlock()
+					}
+				}
+				delBtn.Children(func() {
+					col := p.error
+					if locked {
+						col = p.muted.Alpha(0.5)
+					}
+					txt := ui.Text(c, "删除").FontSize(12).TextColor(col)
+					if !locked && delBtn.Hovered() {
+						txt.Underline()
+					}
+				})
+			} else {
+				confirmBtn := ui.ButtonBase(c).
+					Label("确认删除").
+					Disabled(locked).
+					Cursor(ui.CursorPointer).
+					Padding(5, 10).
+					Radius(8).
+					Background(p.error)
+				if confirmBtn.Clicked() {
+					v.deleteCustomService(svc)
+				}
+				confirmBtn.Children(func() {
+					ui.Text(c, "确认删除").FontSize(12).FontWeight(600).TextColor(p.onAccent).SingleLine()
+				})
+				v.renderSecondaryButtonDisabled(c, p, "取消", "取消删除", locked, func() {
+					v.mu.Lock()
+					d := v.customDrafts[svc]
+					d.deleteUntil = time.Time{}
+					v.customDrafts[svc] = d
+					v.mu.Unlock()
+				})
+			}
+
+			if svc != "new" {
+				testDisabled := !isConfigured || locked || hasUnsaved
+				v.renderSecondaryButtonDisabled(c, p, "测试连接", "测试连接", testDisabled, func() {
+					v.testConnection(svc)
+				})
+			}
+
+			v.renderDrawerSaveButton(c, p, "保存", !canSave, func() {
+				v.saveCustomService(svc)
+			})
+		})
+	})
+}
+
+func (v *settingsView) renderSecretInputRow(
+	c *ui.Context, p settingsPalette, label, sub string, val *string, placeholder string,
+	disabled, canClear bool, onDraft func(string), onSubmit, onClear func(),
+) {
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
+		ui.Column(c).Width(136).Gap(2).Children(func() {
+			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(p.fg)
+			if sub != "" {
+				ui.Text(c, sub).FontSize(12).TextColor(p.muted)
+			}
+		})
+		ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(8).Children(func() {
+			inp := ui.TextInput(c, val).
+				Label("编辑"+label).
+				Password().
+				Placeholder(placeholder).
+				Disabled(disabled).
+				Grow(1).
+				Padding(7, 10).
+				Radius(8).
+				FontSize(13)
+			if inp.Changed() && onDraft != nil {
+				onDraft(*val)
+			}
+			if inp.Submitted() && onSubmit != nil {
+				onSubmit()
+			}
+			if canClear {
+				clr := ui.ButtonBase(c).Label("清除"+label).Disabled(disabled).Cursor(ui.CursorPointer).Padding(4, 6)
+				if clr.Clicked() && onClear != nil {
+					onClear()
+				}
+				clr.Children(func() {
+					col := p.accentText
+					if disabled {
+						col = p.muted.Alpha(0.5)
+					}
+					txt := ui.Text(c, "清除").FontSize(12).TextColor(col)
+					if !disabled && clr.Hovered() {
+						txt.Underline()
+					}
+				})
+			}
+		})
+	})
+}
+
+func (v *settingsView) renderServiceTestStatus(c *ui.Context, p settingsPalette, testStatus serviceTestStatus) {
+	statusText := "未测试"
+	statusColor := p.muted
+	dotColor := p.muted.Alpha(0.5)
+	if testStatus.result != "" {
+		statusText = testStatus.result
+		if testStatus.isError {
+			statusColor = p.error
+			dotColor = p.error
+		} else if !testStatus.testing {
+			statusColor = p.success
+			dotColor = p.success
+		} else {
+			dotColor = p.accent
+		}
+	}
+	ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(6).Children(func() {
+		ui.Box(c).Size(6, 6).Radius(999).Background(dotColor)
+		ui.Text(c, statusText).FontSize(12).TextColor(statusColor)
+	})
+}
+
+func (v *settingsView) renderDrawerSaveButton(c *ui.Context, p settingsPalette, label string, disabled bool, onClick func()) {
+	btn := ui.ButtonBase(c).
+		Label(label).
+		Disabled(disabled).
+		Cursor(ui.CursorPointer).
+		Padding(6, 14).
+		Radius(8).
+		Background(p.primaryBg)
+	if disabled {
+		btn.Opacity(0.45)
+	} else if btn.Hovered() {
+		if p.dark {
+			btn.Background(p.accent.Alpha(0.88))
+		} else {
+			btn.Background(p.accent)
+		}
+	}
+	if btn.Clicked() && onClick != nil {
+		onClick()
+	}
+	btn.Children(func() {
+		ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(p.onAccent).SingleLine()
 	})
 }
 

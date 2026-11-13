@@ -230,6 +230,75 @@ func TestSiliconFlowZhipuCredentials(t *testing.T) {
 	}
 }
 
+func TestCustomOpenAITranslator(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint, key string
+		nilKeys             bool
+	}{
+		{name: "authenticated", endpoint: "/v1", key: "custom-secret"},
+		{name: "keyless", endpoint: "/v1"},
+		{name: "full endpoint without keystore", endpoint: "/v1/chat/completions", nilKeys: true},
+		{name: "full endpoint with trailing slash", endpoint: "/v1/chat/completions/", key: "custom-secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/chat/completions" {
+					t.Errorf("path = %q, want /v1/chat/completions", r.URL.Path)
+				}
+				wantAuth := ""
+				if tc.key != "" {
+					wantAuth = "Bearer " + tc.key
+				}
+				if auth := r.Header.Get("Authorization"); auth != wantAuth {
+					t.Errorf("authorization = %q, want %q", auth, wantAuth)
+				}
+				var payload struct {
+					Model  string
+					Stream bool
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Errorf("decode: %v", err)
+					return
+				}
+				if payload.Model != "custom-llm" || payload.Stream {
+					t.Errorf("payload = %+v, want model custom-llm without streaming", payload)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{"message": map[string]any{"content": "自定义译文"}}},
+				})
+			}))
+			defer srv.Close()
+
+			cfg := config.Default()
+			cfg.Services.Custom = []config.CustomService{
+				{ID: "custom:123", Name: "MyLLM", BaseURL: srv.URL + tc.endpoint, Model: "custom-llm"},
+			}
+			cfg.Services.Enabled = []string{"custom:123"}
+			cfg.Services.Order = []string{"custom:123"}
+
+			var creds KeyStore = fakeKeys{keys.CustomAPIKey("custom:123"): tc.key}
+			if tc.nilKeys {
+				creds = nil
+			}
+			if avail := Available(cfg, fakeKeys{keys.CustomAPIKey("custom:123"): tc.key}); !slices.Contains(avail, "custom:123") {
+				t.Fatalf("custom:123 not available in %v", avail)
+			}
+			translators := AllTranslators(cfg)
+			i := slices.IndexFunc(translators, func(tr Translator) bool { return tr.Name() == "custom:123" })
+			if i < 0 {
+				t.Fatal("custom:123 translator not instantiated")
+			}
+			res, err := translators[i].Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"}, creds, cfg)
+			if err != nil {
+				t.Fatalf("translate: %v", err)
+			}
+			if res.Service != "custom:123" || res.Text != "自定义译文" {
+				t.Errorf("result = %+v", res)
+			}
+		})
+	}
+}
+
 func TestSiliconFlowZhipuErrors(t *testing.T) {
 	for _, service := range []struct {
 		name, label, key string

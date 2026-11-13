@@ -18,17 +18,58 @@ import (
 // ServiceSettings configures which translation services run, and the order
 // the bubble shows their cards in.
 type ServiceSettings struct {
-	Enabled     []string      `json:"enabled"`
-	Order       []string      `json:"order"`
-	OpenAI      OpenAIOptions `json:"openai"`
-	SiliconFlow ModelOptions  `json:"siliconflow"`
-	Zhipu       ModelOptions  `json:"zhipu"`
+	Enabled     []string        `json:"enabled"`
+	Order       []string        `json:"order"`
+	OpenAI      OpenAIOptions   `json:"openai"`
+	SiliconFlow ModelOptions    `json:"siliconflow"`
+	Zhipu       ModelOptions    `json:"zhipu"`
+	Custom      []CustomService `json:"custom,omitempty"`
 }
 
 const (
 	DefaultSiliconFlowModel = "tencent/Hunyuan-MT-7B"
 	DefaultZhipuModel       = "glm-4.7-flash"
+	CustomServicePrefix     = "custom:"
 )
+
+// CustomService configures a user-defined OpenAI-compatible translation service.
+// Its optional API key is stored in the keyring, not in settings.json.
+type CustomService struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	BaseURL string `json:"baseURL"`
+	Model   string `json:"model"`
+}
+
+// Normalized trims user-entered service fields without changing the original.
+func (s CustomService) Normalized() CustomService {
+	s.ID = strings.TrimSpace(s.ID)
+	s.Name = strings.TrimSpace(s.Name)
+	s.BaseURL = strings.TrimSpace(s.BaseURL)
+	s.Model = strings.TrimSpace(s.Model)
+	return s
+}
+
+// IsConfigured reports whether the required fields are filled, including in drafts.
+func (s CustomService) IsConfigured() bool {
+	s = s.Normalized()
+	return s.Name != "" && s.BaseURL != "" && s.Model != ""
+}
+
+// IsCustomService reports whether id names a user-defined custom service.
+func IsCustomService(id string) bool {
+	return strings.HasPrefix(id, CustomServicePrefix) && len(id) > len(CustomServicePrefix)
+}
+
+// FindCustom returns the custom service with id, if configured.
+func (s ServiceSettings) FindCustom(id string) (CustomService, bool) {
+	for _, cs := range s.Custom {
+		if cs.ID == id {
+			return cs, true
+		}
+	}
+	return CustomService{}, false
+}
 
 // ModelOptions configure a service whose API endpoint is fixed.
 // Credentials remain in the keyring.
@@ -154,8 +195,20 @@ func Save(path string, s Settings) error {
 // enabled service given a position in the card order.
 func Normalize(s Settings) Settings {
 	d := Default()
-	s.Services.Enabled = dedupe(s.Services.Enabled)
-	s.Services.Order = dedupe(s.Services.Order)
+	s.Services.Custom = normalizeCustomServices(s.Services.Custom)
+	customIDs := make(map[string]bool, len(s.Services.Custom))
+	for _, cs := range s.Services.Custom {
+		customIDs[cs.ID] = true
+	}
+	keepService := func(name string) bool {
+		return !strings.HasPrefix(name, CustomServicePrefix) || customIDs[name]
+	}
+	s.Services.Enabled = slices.DeleteFunc(dedupe(s.Services.Enabled), func(name string) bool {
+		return !keepService(name)
+	})
+	s.Services.Order = slices.DeleteFunc(dedupe(s.Services.Order), func(name string) bool {
+		return !keepService(name)
+	})
 	for _, name := range s.Services.Enabled {
 		if !slices.Contains(s.Services.Order, name) {
 			s.Services.Order = append(s.Services.Order, name)
@@ -164,6 +217,11 @@ func Normalize(s Settings) Settings {
 	for _, name := range d.Services.Order {
 		if !slices.Contains(s.Services.Order, name) {
 			s.Services.Order = append(s.Services.Order, name)
+		}
+	}
+	for _, cs := range s.Services.Custom {
+		if !slices.Contains(s.Services.Order, cs.ID) {
+			s.Services.Order = append(s.Services.Order, cs.ID)
 		}
 	}
 	s.Services.OpenAI.BaseURL = strings.TrimSpace(s.Services.OpenAI.BaseURL)
@@ -204,6 +262,23 @@ func Normalize(s Settings) Settings {
 		s.Hotkeys = d.Hotkeys
 	}
 	return s
+}
+
+func normalizeCustomServices(list []CustomService) []CustomService {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]CustomService, 0, len(list))
+	seen := make(map[string]bool, len(list))
+	for _, cs := range list {
+		cs = cs.Normalized()
+		if !IsCustomService(cs.ID) || seen[cs.ID] {
+			continue
+		}
+		seen[cs.ID] = true
+		out = append(out, cs)
+	}
+	return out
 }
 
 func validFormats(formats []string) []string {

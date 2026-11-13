@@ -84,18 +84,27 @@ func DefaultTranslators() []Translator {
 	}
 }
 
+// AllTranslators lists the built-in services followed by user-configured custom services.
+func AllTranslators(cfg config.Settings) []Translator {
+	all := DefaultTranslators()
+	for _, cs := range cfg.Services.Custom {
+		all = append(all, CustomOpenAI{Service: cs})
+	}
+	return all
+}
+
 // Run translates req with every enabled and available service, calling
 // emit for each result as it arrives. It blocks until all have reported,
 // so callers run it on a goroutine of its own.
 func Run(ctx context.Context, cfg config.Settings, k KeyStore, req Request, emit func(Result)) {
-	RunWith(ctx, DefaultTranslators(), cfg, k, req, emit)
+	RunWith(ctx, AllTranslators(cfg), cfg, k, req, emit)
 }
 
 // Available lists the enabled services that are ready to run, in card
 // order, so the UI can tell a slow service from an unconfigured one.
 func Available(cfg config.Settings, k KeyStore) []string {
 	out := []string{}
-	for _, t := range orderTranslators(DefaultTranslators(), cfg.Services.Order) {
+	for _, t := range orderTranslators(AllTranslators(cfg), cfg.Services.Order) {
 		if contains(cfg.Services.Enabled, t.Name()) && t.Available(k, cfg) {
 			out = append(out, t.Name())
 		}
@@ -106,7 +115,7 @@ func Available(cfg config.Settings, k KeyStore) []string {
 // Configured includes services the user can turn on with the current credentials.
 func Configured(cfg config.Settings, k KeyStore) []string {
 	out := []string{}
-	for _, t := range DefaultTranslators() {
+	for _, t := range AllTranslators(cfg) {
 		if t.Available(k, cfg) {
 			out = append(out, t.Name())
 		}
@@ -117,7 +126,7 @@ func Configured(cfg config.Settings, k KeyStore) []string {
 // Test checks a fixed, non-streaming translation, including disabled services.
 // A successful probe does not establish streaming support.
 func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
-	for _, t := range DefaultTranslators() {
+	for _, t := range AllTranslators(cfg) {
 		if t.Name() == name {
 			if !t.Available(k, cfg) {
 				return ErrNotConfigured

@@ -54,6 +54,8 @@ var hotkeyLabels = map[string]string{
 type application struct {
 	cfgPath       string
 	configWriteMu sync.Mutex
+	// A failed rollback pauses the affected service until its key is reconfigured.
+	blockedCredentials map[string]bool
 
 	mu           sync.Mutex
 	cfg          config.Settings
@@ -66,7 +68,7 @@ type application struct {
 	bubbles *bubbleManager
 	snip    *snipManager
 	tray    *mygo.Tray // main thread only
-	keys    keys.Store
+	keys    credentialStore
 }
 
 func newApplication() *application {
@@ -156,6 +158,9 @@ func (a *application) updateSettings(s config.Settings) error {
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
 
+	// Only SetCustom may change custom definitions. Later UI snapshots must not
+	// publish metadata from a custom update whose credential write failed.
+	s.Services.Custom = slices.Clone(a.settings().Services.Custom)
 	s = config.Normalize(s)
 	s.Services.Enabled = translate.Available(s, a.keys)
 	return a.saveSettings(s)
@@ -509,14 +514,15 @@ func (a *application) showSettings(services bool) {
 	svc := ConfigSvc{a}
 	if sv == nil {
 		sv = newSettingsView(tab, a.settings(), settingsActions{
-			getSettings:  svc.Get,
-			saveSettings: svc.Set,
-			credentials:  func() (CredentialStatus, error) { return svc.Credentials(), nil },
-			setSecret:    svc.SetSecret,
-			testService:  svc.TestService,
-			openKeyPage:  svc.OpenKeyPage,
-			deeplUsage:   svc.DeeplUsage,
-			hotkeyBusy:   HotkeySvc{}.Busy,
+			getSettings:        svc.Get,
+			saveSettings:       svc.Set,
+			saveCustomSettings: svc.SetCustom,
+			credentials:        func() (CredentialStatus, error) { return svc.Credentials(), nil },
+			setSecret:          svc.SetSecret,
+			testService:        svc.TestService,
+			openKeyPage:        svc.OpenKeyPage,
+			deeplUsage:         svc.DeeplUsage,
+			hotkeyBusy:         HotkeySvc{}.Busy,
 			invalidate: func() {
 				a.mu.Lock()
 				w := a.settingsWin
@@ -567,13 +573,37 @@ type RunReq struct {
 	TargetLang string `json:"targetLang"` // "" uses the default
 }
 
+func (a *application) keysSnapshot(cfg config.Settings) keys.Snapshot {
+	extra := make([]string, 0, len(cfg.Services.Custom))
+	for _, cs := range cfg.Services.Custom {
+		if k := keys.CustomAPIKey(cs.ID); k != "" {
+			extra = append(extra, k)
+		}
+	}
+	return a.keys.Snapshot(extra...)
+}
+
+// settingsSnapshot is called by workers, never by a UI callback: a writer may
+// wait for the main thread while applying its committed settings.
+func (a *application) settingsSnapshot() (config.Settings, keys.Snapshot) {
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+	cfg := a.settings()
+	if len(a.blockedCredentials) > 0 {
+		cfg.Services.Custom = slices.DeleteFunc(slices.Clone(cfg.Services.Custom), func(cs config.CustomService) bool {
+			return a.blockedCredentials[keys.CustomAPIKey(cs.ID)]
+		})
+	}
+	return cfg, a.keysSnapshot(cfg)
+}
+
 // runTranslation resolves the languages, fans the request out to the
 // services and pushes every result to win.
 func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 	if req.ReqID == "" {
 		req.ReqID = newRequestID()
 	}
-	cfg := a.settings()
+	cfg, credentials := a.settingsSnapshot()
 
 	text := translate.PrepareSource(req.Text, cfg.Identifier)
 	// Identifiers translate better as words: getUserInfo goes to the
@@ -599,7 +629,6 @@ func (a *application) runTranslation(win *mygo.Window, req RunReq) {
 	if !accepted {
 		return
 	}
-	credentials := a.keys.Snapshot()
 	services := translate.Available(cfg, credentials)
 	if req.Service != "" {
 		cfg.Services.Enabled = nil

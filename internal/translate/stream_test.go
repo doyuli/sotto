@@ -16,16 +16,23 @@ import (
 )
 
 func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
-	for _, name := range []string{"openai", "index-translate", "siliconflow", "zhipu"} {
+	for _, name := range []string{"openai", "index-translate", "siliconflow", "zhipu", "custom:stream"} {
 		t.Run(name, func(t *testing.T) {
 			first := make(chan Result, 3)
 			release := make(chan struct{})
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var input struct{ Stream bool }
+				var input struct {
+					Stream bool
+					Model  string
+				}
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil || !input.Stream {
 					t.Errorf("stream not requested: %+v, %v", input, err)
+				}
+				if name == "custom:stream" && (r.URL.Path != "/v1/chat/completions" ||
+					r.Header.Get("Authorization") != "" || input.Model != "local-model") {
+					t.Errorf("unexpected keyless custom request: path=%q auth=%q model=%q", r.URL.Path, r.Header.Get("Authorization"), input.Model)
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, ": heartbeat\r\n\r\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\r\n\r\n")
@@ -52,6 +59,12 @@ func TestChatStreamArrivesBeforeCompletion(t *testing.T) {
 			}
 			if name == "zhipu" {
 				translator = Zhipu{Client: server.Client(), Endpoint: server.URL}
+			}
+			if name == "custom:stream" {
+				cfg.Services.Custom = []config.CustomService{
+					{ID: name, Name: "Local", BaseURL: server.URL + "/v1/chat/completions", Model: "local-model"},
+				}
+				translator = CustomOpenAI{Client: server.Client(), Service: cfg.Services.Custom[0]}
 			}
 			var updates []Result
 			done := make(chan struct{})

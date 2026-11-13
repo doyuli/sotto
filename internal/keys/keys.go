@@ -2,7 +2,12 @@
 // keyring, so they never land in settings.json.
 package keys
 
-import "github.com/egoist/mygo"
+import (
+	"errors"
+	"strings"
+
+	"github.com/egoist/mygo"
+)
 
 // The keyring entries, by service.
 const (
@@ -23,7 +28,7 @@ const (
 	VolcSecretKey    = "volcengine-secret-key"
 )
 
-// Names lists every keyring entry, so the settings page can enumerate them.
+// Names lists the built-in keyring entries.
 var Names = []string{
 	DeeplKey, OpenAIKey, SiliconFlowKey, ZhipuKey, BaiduAppID, BaiduKey,
 	TencentSecretID, TencentSecretKey, YoudaoAppKey, YoudaoSecret, AzureKey, AzureRegion,
@@ -36,12 +41,21 @@ var Names = []string{
 type Store struct{}
 
 // Get returns the stored value, or "" when there is none.
-func (Store) Get(name string) string {
-	value, err := mygo.Secrets.Get(name)
+func (s Store) Get(name string) string {
+	value, err := s.Read(name)
 	if err != nil {
 		return ""
 	}
-	return string(value)
+	return value
+}
+
+// Read distinguishes a missing credential from a keyring failure before an update.
+func (Store) Read(name string) (string, error) {
+	value, err := mygo.Secrets.Get(name)
+	if errors.Is(err, mygo.ErrSecretNotFound) {
+		return "", nil
+	}
+	return string(value), err
 }
 
 // Set stores the value; an empty value deletes the entry.
@@ -52,17 +66,37 @@ func (Store) Set(name, value string) error {
 	return mygo.Secrets.Set(name, []byte(value))
 }
 
+// CustomAPIKey returns the keyring entry name for a custom service ID.
+func CustomAPIKey(serviceID string) string {
+	suffix := strings.TrimPrefix(serviceID, "custom:")
+	if suffix == "" || suffix == serviceID {
+		return ""
+	}
+	return "custom-" + suffix + "-key"
+}
+
+// IsCustomKey reports whether name is a keyring entry for a custom service.
+func IsCustomKey(name string) bool {
+	return strings.HasPrefix(name, "custom-") && strings.HasSuffix(name, "-key") && len(name) > len("custom--key")
+}
+
 // Snapshot lets a settings operation evaluate the same set of credentials
 // throughout, including checking the effect of removing a credential.
 type Snapshot map[string]string
 
 func (s Snapshot) Get(name string) string { return s[name] }
 
-func (s Store) Snapshot() Snapshot {
+// Snapshot reads the built-in keyring entries plus any extra custom keys.
+func (s Store) Snapshot(extra ...string) Snapshot {
 	out := make(Snapshot)
-	for _, name := range Names {
-		if value := s.Get(name); value != "" {
-			out[name] = value
+	for _, names := range [][]string{Names, extra} {
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			if value := s.Get(name); value != "" {
+				out[name] = value
+			}
 		}
 	}
 	return out

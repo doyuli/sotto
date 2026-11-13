@@ -1405,3 +1405,187 @@ func TestSettingsTargetLanguageSelectAlignmentAndToggle(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsViewCustomServiceLifecycle(t *testing.T) {
+	var mu sync.Mutex
+	saved := []config.Settings{}
+	writtenSecrets := make(map[string]string)
+	current := testSettingsConfig()
+
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		saveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			saved = append(saved, cloneSettings(s))
+			return nil
+		},
+		saveCustomSettings: func(s config.Settings, id string, credential *string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if _, exists := s.Services.FindCustom(id); !exists {
+				writtenSecrets[keys.CustomAPIKey(id)] = ""
+			} else if credential != nil {
+				writtenSecrets[keys.CustomAPIKey(id)] = *credential
+			}
+			current = s
+			saved = append(saved, cloneSettings(s))
+			return nil
+		},
+		setSecret: func(name, value string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			writtenSecrets[name] = value
+			return nil
+		},
+		credentials: func() (CredentialStatus, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			stored := []string{}
+			for k, v := range writtenSecrets {
+				if v != "" {
+					stored = append(stored, k)
+				}
+			}
+			configured := []string{"openai"}
+			for _, cs := range current.Services.Custom {
+				if cs.IsConfigured() {
+					configured = append(configured, cs.ID)
+				}
+			}
+			return CredentialStatus{Stored: stored, Configured: configured}, nil
+		},
+	})
+	defer v.dispose()
+	waitSettingsIdle(t, v)
+
+	tt := ui.NewTester(v.render, 780, 900)
+
+	// 1. Click "+ 添加自定义服务" to show inline draft card in unconfigured group.
+	if err := tt.Click("+ 添加自定义服务"); err != nil {
+		t.Fatalf("Click + 添加自定义服务: %v", err)
+	}
+	tt.Frame()
+
+	if !tt.HasText("服务名称") || !tt.HasText("Base URL") || !tt.HasText("模型名称") {
+		t.Fatal("new custom service drawer not opened")
+	}
+
+	// 2. Fill in the fields.
+	settingsClick(t, tt, "编辑服务名称")
+	tt.Type("DeepSeek Local")
+	settingsClick(t, tt, "编辑Base URL")
+	tt.Type("https://api.deepseek.com/v1")
+	settingsClick(t, tt, "编辑模型名称")
+	tt.Type("deepseek-chat")
+	settingsClick(t, tt, "编辑API Key")
+	tt.Type("sk-secret-123")
+	tt.Frame()
+
+	// 3. Save the new custom service via bottom Save button.
+	if err := tt.Click("保存"); err != nil {
+		t.Fatalf("Click 保存: %v", err)
+	}
+	waitSettingsIdle(t, v)
+	tt.Frame()
+
+	mu.Lock()
+	if len(current.Services.Custom) != 1 {
+		mu.Unlock()
+		t.Fatalf("custom services count = %d, want 1", len(current.Services.Custom))
+	}
+	cs := current.Services.Custom[0]
+	secretVal := writtenSecrets[keys.CustomAPIKey(cs.ID)]
+	mu.Unlock()
+
+	if cs.Name != "DeepSeek Local" || cs.BaseURL != "https://api.deepseek.com/v1" || cs.Model != "deepseek-chat" {
+		t.Fatalf("saved custom service mismatch: %+v", cs)
+	}
+	if secretVal != "sk-secret-123" {
+		t.Fatalf("saved custom secret = %q, want sk-secret-123", secretVal)
+	}
+
+	// 4. Verify enablement toggle.
+	settingsClick(t, tt, "启用"+cs.Name)
+	waitSettingsIdle(t, v)
+	tt.Frame()
+
+	mu.Lock()
+	enabled := slices.Contains(current.Services.Enabled, cs.ID)
+	mu.Unlock()
+	if !enabled {
+		t.Fatal("custom service not enabled after switch click")
+	}
+
+	// 5. Delete service with confirmation.
+	if err := tt.Click("删除"); err != nil {
+		t.Fatalf("Click 删除: %v", err)
+	}
+	tt.Frame()
+	if err := tt.Click("确认删除"); err != nil {
+		t.Fatalf("Click 确认删除: %v", err)
+	}
+	waitSettingsIdle(t, v)
+	tt.Frame()
+
+	mu.Lock()
+	deleted := len(current.Services.Custom) == 0 && !slices.Contains(current.Services.Enabled, cs.ID)
+	clearedSecret := writtenSecrets[keys.CustomAPIKey(cs.ID)] == ""
+	mu.Unlock()
+
+	if !deleted {
+		t.Fatalf("custom service was not deleted: %+v", current.Services.Custom)
+	}
+	if !clearedSecret {
+		t.Fatal("custom service secret was not deleted")
+	}
+}
+
+func TestSettingsViewCustomServiceDetachCleansDrafts(t *testing.T) {
+	current := testSettingsConfig()
+	v := newSettingsView(tabServices, current, settingsActions{
+		getSettings:  func() config.Settings { return current },
+		saveSettings: func(s config.Settings) error { current = s; return nil },
+		credentials: func() (CredentialStatus, error) {
+			return CredentialStatus{Configured: []string{"openai"}}, nil
+		},
+	})
+	defer v.dispose()
+	waitSettingsIdle(t, v)
+
+	tt := ui.NewTester(v.render, 780, 900)
+	if err := tt.Click("+ 添加自定义服务"); err != nil {
+		t.Fatalf("Click + 添加自定义服务: %v", err)
+	}
+	tt.Frame()
+	settingsClick(t, tt, "编辑服务名称")
+	tt.Type("Unsaved Draft")
+	tt.Frame()
+
+	v.mu.Lock()
+	if len(v.customDrafts) == 0 {
+		v.mu.Unlock()
+		t.Fatal("custom draft not present")
+	}
+	v.mu.Unlock()
+
+	// Simulate closing the window.
+	v.detachWindow()
+
+	v.mu.Lock()
+	draftCount := len(v.customDrafts)
+	v.mu.Unlock()
+	if draftCount != 0 {
+		t.Fatalf("detachWindow did not clean customDrafts: %d left", draftCount)
+	}
+
+	tt.Frame()
+	if tt.HasText("Unsaved Draft") {
+		t.Fatal("re-rendered window still has unsaved draft")
+	}
+}

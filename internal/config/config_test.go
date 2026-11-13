@@ -233,3 +233,47 @@ func TestOpenAIOptionsNormalizeWhitespace(t *testing.T) {
 		t.Errorf("blank OpenAI options = %+v, want defaults", got.Services.OpenAI)
 	}
 }
+
+func TestCustomServiceNormalization(t *testing.T) {
+	cfg := Default()
+	cfg.Services.Custom = []CustomService{
+		{ID: " custom:1 ", Name: " DeepSeek ", BaseURL: " https://api.deepseek.com/v1/ ", Model: " deepseek-chat "},
+		{ID: "invalid-id", Name: "Bad", BaseURL: "http://bad", Model: "bad"},
+		{ID: "custom:1", Name: "Duplicate", BaseURL: "http://dup", Model: "dup"},
+		{ID: "custom:2", Name: "Ollama", BaseURL: "http://localhost:11434/v1", Model: "qwen2.5:7b"},
+	}
+	cfg.Services.Enabled = []string{"custom:1", "custom:nonexistent", "google"}
+	got := Normalize(cfg)
+	if len(got.Services.Custom) != 2 {
+		t.Fatalf("custom count = %d, want 2", len(got.Services.Custom))
+	}
+	if got.Services.Custom[0] != (CustomService{ID: "custom:1", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1/", Model: "deepseek-chat"}) {
+		t.Errorf("custom 0 = %+v", got.Services.Custom[0])
+	}
+	if slices.Contains(got.Services.Enabled, "custom:nonexistent") {
+		t.Errorf("orphaned custom service was kept in enabled: %v", got.Services.Enabled)
+	}
+	if !slices.Contains(got.Services.Order, "custom:1") || !slices.Contains(got.Services.Order, "custom:2") {
+		t.Errorf("custom services missing in order: %v", got.Services.Order)
+	}
+}
+
+func TestCustomServiceRequiredFields(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		service CustomService
+		want    bool
+	}{
+		{"draft without ID", CustomService{Name: "Local", BaseURL: "http://localhost/v1", Model: "m"}, true},
+		{"surrounding whitespace", CustomService{Name: " Local ", BaseURL: " http://localhost/v1 ", Model: " m "}, true},
+		{"blank name", CustomService{Name: " \t", BaseURL: "http://localhost/v1", Model: "m"}, false},
+		{"blank URL", CustomService{Name: "Local", BaseURL: " \n", Model: "m"}, false},
+		{"missing model", CustomService{Name: "Local", BaseURL: "http://localhost/v1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.service.IsConfigured(); got != tc.want {
+				t.Errorf("IsConfigured() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
