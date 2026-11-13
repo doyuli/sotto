@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -68,7 +69,7 @@ type BubbleSettings struct {
 	AutoHide bool `json:"autoHide"`
 }
 
-// Settings is everything the user can configure.
+// Settings contains the app's persisted preferences.
 type Settings struct {
 	Services       ServiceSettings    `json:"services"`
 	TargetLanguage string             `json:"targetLanguage"`
@@ -93,12 +94,8 @@ func Default() Settings {
 		TargetLanguage: "zh-HANS",
 		Identifier:     IdentifierSettings{AutoSplit: true},
 		CopyFormats:    slices.Clone(naming.Styles),
-		Hotkeys: HotkeySettings{
-			Panel:     "Ctrl+Alt+A",
-			Ocr:       "Ctrl+Alt+S",
-			Selection: "Ctrl+Alt+D",
-		},
-		Bubble: BubbleSettings{AutoHide: true},
+		Hotkeys:        defaultHotkeys(runtime.GOOS),
+		Bubble:         BubbleSettings{AutoHide: true},
 	}
 }
 
@@ -198,12 +195,14 @@ func Normalize(s Settings) Settings {
 	if s.Hotkeys.Selection == "" {
 		s.Hotkeys.Selection = d.Hotkeys.Selection
 	}
-	// A config still holding the first defaults exactly moves to the
-	// current Ctrl+Alt set; any hand-picked combination is kept.
-	if s.Hotkeys.Panel == "Alt+A" && s.Hotkeys.Ocr == "Alt+S" && s.Hotkeys.Selection == "Alt+D" {
-		s.Hotkeys = d.Hotkeys
-	}
 	return s
+}
+
+func defaultHotkeys(goos string) HotkeySettings {
+	if goos == "darwin" {
+		return HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D"}
+	}
+	return HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}
 }
 
 func validFormats(formats []string) []string {

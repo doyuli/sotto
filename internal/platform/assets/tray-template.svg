@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="142 162 740 740">
+  <!-- Geometry from resources/icon.svg; the S is transparent in the template. -->
+  <defs>
+    <mask id="cutout" maskUnits="userSpaceOnUse" x="142" y="162" width="740" height="740">
+      <rect x="142" y="162" width="740" height="740" fill="white"/>
+      <path d="M604.7 383.6C580.1 342.6 514.5 334.4 473.5 359C424.3 388.5 416.1 436.9 461.2 467.2C502.2 495.1 555.5 495.1 580.1 523C612.9 559.9 592.4 629.6 535 650.1C489.9 666.5 440.7 650.1 412 617.3" fill="none" stroke="black" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g fill="black" mask="url(#cutout)">
+    <rect x="232" y="226" width="560" height="518" rx="150"/>
+    <polygon points="330,700 470,720 352,812"/>
+    <circle cx="352" cy="812" r="28"/>
+  </g>
+</svg>

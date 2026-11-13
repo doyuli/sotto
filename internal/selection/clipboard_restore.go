@@ -20,6 +20,7 @@ type clipboardFormat struct {
 type clipboardSnapshot struct {
 	sequence uint32
 	formats  []clipboardFormat
+	mac      *macClipboardSnapshot
 }
 
 type restoreOutcome uint8

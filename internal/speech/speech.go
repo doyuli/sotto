@@ -31,7 +31,7 @@ type Speaker struct {
 	open    func() (engine, error)
 }
 
-// New does not load COM or any voices until the first nonempty request.
+// New does not load system speech or voices until the first nonempty request.
 func New() *Speaker { return newSpeaker(newEngine) }
 
 func newSpeaker(open func() (engine, error)) *Speaker {
@@ -61,7 +61,8 @@ func (s *Speaker) Speak(text, lang string, onError func(error)) {
 	}
 }
 
-// Close stops playback and releases the engine on its owning thread.
+// Close rejects new requests and shuts down the worker. Native cleanup follows
+// the platform's thread policy without a reverse wait on the UI thread.
 func (s *Speaker) Close() {
 	s.mu.Lock()
 	s.closed = true
@@ -81,8 +82,8 @@ func (s *Speaker) Close() {
 
 func (s *Speaker) run() {
 	defer close(s.done)
-	// The platform wrapper keeps engine creation, use and release on one
-	// initialized OS thread; no COM pointers escape this callback.
+	// Blocking engines stay on their initialized OS thread; asynchronous
+	// engines dispatch to their native queue without blocking this worker.
 	runThread(func() {
 		var e engine
 		defer func() {
@@ -113,7 +114,13 @@ func (s *Speaker) run() {
 				continue
 			}
 			if err == nil {
-				err = e.speak(r.text, r.lang)
+				if async, ok := e.(interface {
+					speakAsync(string, string, func(error))
+				}); ok {
+					async.speakAsync(r.text, r.lang, r.onError)
+				} else {
+					err = e.speak(r.text, r.lang)
+				}
 			}
 			if err != nil && r.onError != nil {
 				r.onError(err)

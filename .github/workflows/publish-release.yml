@@ -35,6 +35,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      SOTTO_MACOS_RELEASE: ${{ vars.SOTTO_MACOS_RELEASE }}
     steps:
       - name: Verify draft and synchronize update notes
         shell: bash
@@ -59,10 +60,19 @@ jobs:
           manifests=$(mktemp -d)
           trap 'rm -rf "$manifests"' EXIT
           changed=()
-          for arch in amd64 arm64; do
-            archive="sotto-$version-windows-$arch.tar.gz"
-            manifest="update-windows-$arch.json"
-            for asset in "sotto-setup-$version-$arch.exe" "$archive" "$manifest"; do
+          targets=(windows-amd64 windows-arm64)
+          if [[ "$SOTTO_MACOS_RELEASE" == true ]]; then
+            targets+=(darwin-arm64)
+          fi
+          for target in "${targets[@]}"; do
+            archive="sotto-$version-$target.tar.gz"
+            manifest="update-$target.json"
+            if [[ "$target" == windows-* ]]; then
+              installer="sotto-setup-$version-${target#windows-}.exe"
+            else
+              installer="sotto-$version-arm64.dmg"
+            fi
+            for asset in "$installer" "$archive" "$manifest"; do
               if ! jq -e --arg name "$asset" 'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$release" > /dev/null; then
                 echo "Missing or incomplete asset $asset." >&2
                 exit 1

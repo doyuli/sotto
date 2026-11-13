@@ -1,2 +1,2 @@
 # The OCR manifest verifies the dictionary's original bytes on every platform.
-resources/ocr/ppocr_keys.txt text eol=lf
+resources/windows/ocr/ppocr_keys.txt text eol=lf

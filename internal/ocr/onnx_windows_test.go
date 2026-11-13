@@ -14,6 +14,45 @@ import (
 	"sotto/internal/ocr/pipeline"
 )
 
+func TestOCRResourcePaths(t *testing.T) {
+	for _, checkout := range []bool{false, true} {
+		name := "packaged"
+		if checkout {
+			name = "checkout"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			t.Setenv("SOTTO_OCR_DIR", "")
+			models := filepath.Join(root, "ocr")
+			runtimeDir := models
+			if checkout {
+				models = filepath.Join(root, "resources", "windows", "ocr")
+				runtimeDir = filepath.Join(root, "resources", "windows-"+runtime.GOARCH, "ocr")
+			}
+			for _, dir := range []string{models, runtimeDir} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantDLL := filepath.Join(runtimeDir, "onnxruntime.dll")
+			if err := os.WriteFile(wantDLL, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if gotModels, gotDLL := ocrResourcePaths(); gotModels != models || gotDLL != wantDLL {
+				t.Fatalf("resources = (%q, %q), want (%q, %q)", gotModels, gotDLL, models, wantDLL)
+			}
+		})
+	}
+	t.Run("override", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("SOTTO_OCR_DIR", dir)
+		if models, dll := ocrResourcePaths(); models != dir || dll != filepath.Join(dir, "onnxruntime.dll") {
+			t.Fatalf("override ignored: (%q, %q)", models, dll)
+		}
+	})
+}
+
 // This opt-in probe checks native model loading and tensor contracts.
 // It does not measure real screenshot accuracy. Enable with SOTTO_OCR_PREFLIGHT=1.
 func TestV6SmallRuntimePreflight(t *testing.T) {
@@ -24,7 +63,7 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 		t.Fatal("preflight requires a fresh process before the shared runtime initializes")
 	}
 	root := filepath.Join("..", "..")
-	modelDir := filepath.Join(root, "resources", "ocr")
+	modelDir := filepath.Join(root, "resources", "windows", "ocr")
 	m, err := readManifest()
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +228,7 @@ func BenchmarkV6SmallRecognitionOutput(b *testing.B) {
 		b.Fatal(err)
 	}
 	spec := m.Models[1]
-	session, err := newORTSession(filepath.Join(root, "resources", "ocr", spec.File), spec.InputName, spec.OutputName)
+	session, err := newORTSession(filepath.Join(root, "resources", "windows", "ocr", spec.File), spec.InputName, spec.OutputName)
 	if err != nil {
 		b.Fatal(err)
 	}

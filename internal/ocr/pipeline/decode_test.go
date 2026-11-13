@@ -41,7 +41,7 @@ func TestDictionaryContract(t *testing.T) {
 }
 
 func TestPackagedDictionaryContract(t *testing.T) {
-	data, err := os.ReadFile("../../../resources/ocr/ppocr_keys.txt")
+	data, err := os.ReadFile("../../../resources/windows/ocr/ppocr_keys.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

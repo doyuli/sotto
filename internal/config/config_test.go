@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestDefault(t *testing.T) {
 	if s.TargetLanguage != "zh-HANS" {
 		t.Errorf("default target = %q, want zh-HANS", s.TargetLanguage)
 	}
-	if s.Hotkeys.Panel != "Ctrl+Alt+A" || s.Hotkeys.Ocr != "Ctrl+Alt+S" || s.Hotkeys.Selection != "Ctrl+Alt+D" {
+	if s.Hotkeys != defaultHotkeys(runtime.GOOS) {
 		t.Errorf("default hotkeys = %+v", s.Hotkeys)
 	}
 	if !s.Identifier.AutoSplit || !s.Bubble.AutoHide {
@@ -30,6 +31,49 @@ func TestDefault(t *testing.T) {
 	}
 	if !reflect.DeepEqual(s.Services.Enabled, []string{"index-translate"}) {
 		t.Errorf("enabled = %v, want only Index-Translate", s.Services.Enabled)
+	}
+}
+
+func TestPlatformHotkeyDefaults(t *testing.T) {
+	mac := HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D"}
+	windows := HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}
+	for _, tc := range []struct {
+		platform string
+		want     HotkeySettings
+	}{{"darwin", mac}, {"windows", windows}} {
+		if got := defaultHotkeys(tc.platform); got != tc.want {
+			t.Fatalf("%s defaults=%+v", tc.platform, got)
+		}
+	}
+}
+
+func TestLoadPreservesHotkeysWithoutRewritingFile(t *testing.T) {
+	for _, tc := range []struct {
+		name, hotkeys string
+		want          HotkeySettings
+	}{
+		{"control alt", `{"panel":"Ctrl+Alt+A","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D"}`, HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}},
+		{"alt", `{"panel":"Alt+A","ocr":"Alt+S","selection":"Alt+D"}`, HotkeySettings{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"}},
+		{"custom", `{"panel":"Cmd+Shift+K","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D"}`, HotkeySettings{Panel: "Cmd+Shift+K", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			original := `{"hotkeys":` + tc.hotkeys + `}`
+			if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(path)
+			if err != nil || got.Hotkeys != tc.want {
+				t.Fatalf("loaded %+v: %v", got.Hotkeys, err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != original {
+				t.Fatalf("loading rewrote settings: %s", data)
+			}
+		})
 	}
 }
 
@@ -142,21 +186,46 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "openai", "tencent", "youdao", "azure"}) {
 		t.Errorf("order = %v, want enabled and built-in services appended", got.Services.Order)
 	}
-	if got.Hotkeys.Ocr != "Ctrl+Alt+S" {
+	if got.Hotkeys.Ocr != Default().Hotkeys.Ocr {
 		t.Errorf("ocr hotkey = %q, want default", got.Hotkeys.Ocr)
 	}
 }
 
-func TestNormalizeMigratesFirstHotkeys(t *testing.T) {
-	s := Default()
-	s.Hotkeys = HotkeySettings{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"}
-	if got := Normalize(s); got.Hotkeys != Default().Hotkeys {
-		t.Errorf("old defaults were not migrated: %+v", got.Hotkeys)
+func TestNormalizePreservesExplicitHotkeys(t *testing.T) {
+	for _, h := range []HotkeySettings{
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"},
+		{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D"},
+	} {
+		s := Default()
+		s.Hotkeys = h
+		for range 2 {
+			s = Normalize(s)
+			if s.Hotkeys != h {
+				t.Errorf("explicit hotkeys were rewritten: got %+v, want %+v", s.Hotkeys, h)
+			}
+		}
 	}
-	// A hand-picked combination survives.
-	s.Hotkeys = HotkeySettings{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D"}
-	if got := Normalize(s); got.Hotkeys != s.Hotkeys {
-		t.Errorf("custom hotkeys were rewritten: %+v", got.Hotkeys)
+}
+
+func TestSavePreservesExplicitHotkeysAcrossReloads(t *testing.T) {
+	for _, h := range []HotkeySettings{
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"},
+	} {
+		path := filepath.Join(t.TempDir(), "settings.json")
+		cfg := Default()
+		cfg.Hotkeys = h
+		for range 2 {
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			cfg, err = Load(path)
+			if err != nil || cfg.Hotkeys != h {
+				t.Fatalf("explicit hotkeys changed after reload: got %+v, want %+v, err=%v", cfg.Hotkeys, h, err)
+			}
+		}
 	}
 }
 
@@ -174,7 +243,7 @@ func TestNormalizePartialFile(t *testing.T) {
 	if got.TargetLanguage != "ja" {
 		t.Errorf("target = %q, want ja", got.TargetLanguage)
 	}
-	if got.Hotkeys.Panel != "Ctrl+Alt+A" {
+	if got.Hotkeys.Panel != Default().Hotkeys.Panel {
 		t.Errorf("unrelated fields lost their defaults: %+v", got)
 	}
 	if got.Identifier != (IdentifierSettings{}) {

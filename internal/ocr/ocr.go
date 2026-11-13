@@ -1,5 +1,5 @@
-// Package ocr recognizes screenshots locally with PP-OCRv6 small and a bounded
-// Windows.Media.Ocr fallback. Both engines share one layout and text output.
+// Package ocr recognizes screenshots locally with PP-OCR/Windows.Media.Ocr on
+// Windows and Vision on macOS. All engines share one layout and text output.
 package ocr
 
 import (
@@ -134,6 +134,8 @@ func UserMessage(err error) string {
 		return "文字识别超时，请缩小框选范围后重试。"
 	case errors.Is(err, pipeline.ErrLimit):
 		return "截图内容过大或文字行过长，请缩小框选范围后重试。"
+	case errors.Is(err, errVisionLanguage):
+		return "当前 macOS OCR 不支持所选语言，请切换语言或使用自动识别。"
 	case err != nil && strings.Contains(err.Error(), "language pack"):
 		return "系统 OCR 语言包不可用，请在 Windows 设置中安装所需语言的文字识别功能。"
 	default:

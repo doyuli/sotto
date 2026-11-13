@@ -1,6 +1,6 @@
 // Package capture grabs a rectangle of the screen as an image, for the
-// OCR pipeline. Coordinates follow mygo's DIP screen space; the Windows
-// layer converts them to the physical pixels GDI captures in.
+// OCR pipeline. Coordinates follow mygo's logical screen space; platform
+// layers convert the chosen display's local units to capture pixels.
 package capture
 
 import "image"

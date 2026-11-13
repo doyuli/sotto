@@ -53,6 +53,35 @@ type fakeEngine struct {
 	err    error
 }
 
+type fakeAsyncEngine struct {
+	fakeEngine
+	failure error
+}
+
+func (e *fakeAsyncEngine) speak(string, string) error { panic("async speech used the blocking path") }
+func (e *fakeAsyncEngine) speakAsync(text, lang string, onError func(error)) {
+	e.spoken <- utterance{text, lang}
+	if onError != nil {
+		onError(e.failure)
+	}
+}
+
+func TestAsyncSpeakerReportsNativeErrorsAndClosesWithoutMainDispatch(t *testing.T) {
+	want := errors.New("native voice unavailable")
+	e := &fakeAsyncEngine{fakeEngine: fakeEngine{spoken: make(chan utterance, 1), closed: make(chan struct{})}, failure: want}
+	s := newSpeaker(func() (engine, error) { return e, nil })
+	errs := make(chan error, 1)
+	s.Speak("test", "zh-HANS", func(err error) { errs <- err })
+	if got := receive(t, e.spoken); got != (utterance{"test", "zh-HANS"}) {
+		t.Fatal(got)
+	}
+	if err := receive(t, errs); !errors.Is(err, want) {
+		t.Fatal(err)
+	}
+	s.Close()
+	receive(t, e.closed)
+}
+
 func (e *fakeEngine) speak(text, lang string) error { e.spoken <- utterance{text, lang}; return e.err }
 func (e *fakeEngine) close()                        { close(e.closed) }
 

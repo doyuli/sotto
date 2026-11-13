@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "mygo dev",
     "build": "mygo build",
+    "build:mac": "mygo build -platform darwin/arm64",
     "build:win": "mygo build -platform windows/amd64,windows/arm64",
     "build:win:x64": "mygo build -platform windows/amd64",
     "build:win:arm64": "mygo build -platform windows/arm64",

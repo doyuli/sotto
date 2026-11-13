@@ -1,7 +1,6 @@
 // Package selection reads the text selected in the foreground window of
-// another app. It goes through UI Automation where the app supports it —
-// browsers, Office, Windows Terminal — and otherwise simulates a copy,
-// saving and restoring the clipboard around it.
+// another app. It uses UI Automation on Windows or Accessibility on macOS,
+// falling back to a guarded simulated copy with clipboard preservation.
 package selection
 
 import (
@@ -18,7 +17,7 @@ type Selection struct {
 	Text    string
 	Rect    Rect
 	HasRect bool
-	// Via is the path that produced it: "uia" or "clipboard".
+	// Via is the path that produced it: "uia", "ax", or "clipboard".
 	Via string
 }
 
@@ -36,7 +35,7 @@ var (
 	// selection is not what a hotkey means to grab.
 	ErrSelfWindow = errors.New("the foreground window is the app's own")
 	// ErrUnsupported: this platform has no selection grabbing.
-	ErrUnsupported = errors.New("selection is only supported on Windows")
+	ErrUnsupported = errors.New("selection is not supported on this platform")
 )
 
 // Grab returns the selection of the foreground app: through UI
@@ -46,7 +45,7 @@ func Grab(ctx context.Context) (Selection, error) {
 	return grab(ctx)
 }
 
-// GrabUIA runs only the UI Automation path, for the --grab debug command.
+// GrabUIA runs only the native text path (Windows UIA or macOS AX).
 // An app without text support reports ErrNoSelection.
 func GrabUIA(ctx context.Context) (Selection, error) {
 	return grabUIA(ctx)

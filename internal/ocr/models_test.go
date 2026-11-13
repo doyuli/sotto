@@ -50,7 +50,7 @@ func TestPackagedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, asset := range m.Assets {
-		if err := verifyAsset(context.Background(), "../../resources/ocr", asset); err != nil {
+		if err := verifyAsset(context.Background(), "../../resources/windows/ocr", asset); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -143,7 +143,7 @@ func loadORT() (*ortRuntime, error) {
 
 // ocrResourcePaths returns the model directory and runtime DLL path.
 // MyGo merges both into ocr/ when packaging. A source checkout keeps
-// the DLLs separate so each build gets only its own architecture.
+// the Windows models and architecture-specific DLLs separate.
 func ocrResourcePaths() (modelDir, dll string) {
 	if dir := os.Getenv("SOTTO_OCR_DIR"); dir != "" {
 		return dir, filepath.Join(dir, "onnxruntime.dll")
@@ -153,16 +153,16 @@ func ocrResourcePaths() (modelDir, dll string) {
 		base := filepath.Dir(exe)
 		candidates = append(candidates,
 			filepath.Join(base, "ocr"),
-			filepath.Join(base, "resources", "ocr"))
+			filepath.Join(base, "resources", "windows", "ocr"))
 	}
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(wd, "resources", "ocr"),
+			filepath.Join(wd, "resources", "windows", "ocr"),
 			filepath.Join(wd, "ocr"))
 	}
 	for _, dir := range candidates {
-		if root := filepath.Dir(dir); filepath.Base(root) == "resources" {
-			platformDLL := filepath.Join(root, "windows-"+runtime.GOARCH, "ocr", "onnxruntime.dll")
+		if windowsDir := filepath.Dir(dir); filepath.Base(windowsDir) == "windows" && filepath.Base(filepath.Dir(windowsDir)) == "resources" {
+			platformDLL := filepath.Join(filepath.Dir(windowsDir), "windows-"+runtime.GOARCH, "ocr", "onnxruntime.dll")
 			if _, err := os.Stat(platformDLL); err == nil {
 				return dir, platformDLL
 			}

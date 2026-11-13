@@ -30,6 +30,8 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 [Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
 
+Experimental macOS 14+ support is available from source for Apple silicon (arm64) only. It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime. Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Signed Mac releases require the optional release job to be configured and enabled.
+
 ---
 
 ## Features
@@ -68,12 +70,13 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 ## Shortcuts & Quick Guide
 
-| Action | Default Shortcut | Description |
+| Action | Windows Default | Description |
 | --- | --- | --- |
 | **Open Translation Panel** | `Ctrl+Alt+A` | Brings up the translation panel; if already open, focuses it and preserves its contents |
 | **Screen Region Translation (OCR)** | `Ctrl+Alt+S` | Snips any screen area to extract text locally and translate |
 | **Selection Translation** | `Ctrl+Alt+D` | Reads highlighted text in the active app and opens a popup bubble |
 
+- **Mac defaults**: `⌥A` opens the panel, `⌥S` starts OCR, and `⌥D` translates the selection. Customize shortcuts, including Command combinations, in Settings.
 - **In the panel**: Press `Enter` to translate, `Shift+Enter` for a new line, `Esc` to close.
 - **Controls**: Pin (📌) to keep the bubble floating, listen to pronunciation (🔊), fold cards, or retry failed services.
 
@@ -83,8 +86,8 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 - **Operating System**: Windows 10 / Windows 11
 - **Architectures**:
-  - 64-bit x86 PC (Intel / AMD): download `sotto-*-windows-amd64-installer.exe`
-  - 64-bit ARM device (e.g. Surface Pro / Snapdragon X): download `sotto-*-windows-arm64-installer.exe`
+  - 64-bit x86 PC (Intel / AMD): download `sotto-setup-<version>-amd64.exe`
+  - 64-bit ARM device (e.g. Surface Pro / Snapdragon X): download `sotto-setup-<version>-arm64.exe`
 
 👉 [Download the latest release on GitHub Releases](https://github.com/doyuli/sotto/releases/latest)
 
@@ -94,6 +97,8 @@ Combining multi-engine streaming comparison, offline screen OCR, non-intrusive s
 
 Requires Go (>= 1.27.3) and Bun. The MyGo module and `mygo-cli` are pinned to 0.8.3.
 
+The root `main.go` embeds the app icon and calls `internal/app.Run`. Application lifecycle, hotkeys, service assembly and entry orchestration live together in `internal/app`; native UI components and platform implementations remain in their existing packages.
+
 ```bash
 bun install                  # Install dependencies
 bun run dev                  # Run the native app (with hot reload)
@@ -101,9 +106,10 @@ CGO_ENABLED=0 go test ./...   # Run unit tests
 bunx mygo vet .              # Check native UI usage
 bun run build                # Build for current architecture
 bun run build:win            # Build for both x64 and arm64
+bun run build:mac            # Build an Apple silicon macOS app (on macOS)
 ```
 
-> Native UI tests use `ui.NewTester`. Windows integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md).
+> Native UI tests live in `internal/ui/{bubble,settings,snip}` and use `ui.NewTester`. Windows integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md). The default unit suite skips the opt-in OCR runtime probes and desktop e2e tests.
 
 ---
 

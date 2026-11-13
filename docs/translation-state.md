@@ -1,6 +1,6 @@
 # 翻译窗口的状态与生命周期
 
-本文记录当前实现的约束，用于后续拆分 translationSession / presentation 时保持行为。纯逻辑与原生 `ui.NewTester` 测试不代表 Windows 桌面已实机验收；运行方式和待验收项见 `e2e/README.md`。
+本文记录当前实现的约束，用于后续拆分 translationSession / presentation 时保持行为。纯逻辑与原生 `ui.NewTester` 测试不代表桌面已实机验收；Windows 的运行方式和待验收项见 `e2e/README.md`。
 
 ## 状态归属
 
@@ -83,7 +83,7 @@ stateDiagram-v2
 
 - sessionID 不匹配的请求无效；跨会话不能比较 revision。
 - 已收起或关闭的未钉住展示拒绝新的全文、单卡重试、OCR 完成和迟到首显；新的 `replaceContent` 会复位该边界并允许新任务。
-- 新的输入、划词和 OCR 入口在开始展示/采集前立即 `hideTransient`，结束旧未钉住气泡的会话，不等待新内容返回；划词先 `selection.Prepare()` 保存来源，再收起旧气泡。`replaceContent` 再次确保取消全部旧请求（含重试），替换会话与结果身份后才能启动新请求。取词失败也不恢复旧会话；旧 HTTP 完成或元信息迟到不能改写新词。
+- 新的输入、划词和 OCR 入口在开始展示/采集前立即 `HideTransient`，结束旧未钉住气泡的会话，不等待新内容返回；划词先 `selection.Prepare()` 保存来源，再收起旧气泡。`replaceContent` 再次确保取消全部旧请求（含重试），替换会话与结果身份后才能启动新请求。取词失败也不恢复旧会话；旧 HTTP 完成或元信息迟到不能改写新词。
 - `closeClaimed` 封死已收起会话的后续全文请求、单卡重试、OCR 写回和迟到首显，即使迟到命令带更高 revision 也无效。只有开启新会话才复位；钉住窗口不受临时气泡收起影响。
 - 全文请求必须比全局 revision 新。单卡重试只需同时越过 fullRevision 和本服务的重试版本。
 - 不同服务的重试允许乱序到达；接收较早的独立重试不能降低全局 revision。
@@ -112,13 +112,15 @@ stateDiagram-v2
 
 `m.mu` 保护窗口状态，持有时不得调用可能等待主线程的原生窗口方法。主线程回调派发入口工作；窗口复用、创建和销毁由主线程串行提交。
 
-气泡视图状态归 UI 线程，后台结果通过 `Window.Update` 发布，应用前校验会话和请求身份。关闭或隐藏未钉住气泡按展示生命周期取消工作；钉住窗口独立。设置控制器由应用持有，通过互斥锁保护状态；设置保存、凭据写入和状态刷新共享串行任务队列。关闭窗口刷新模型/地址草稿并清理临时 UI 状态，重开复用乐观设置；连接测试取消，额度结果按请求代次丢弃。`dispose` 仅用于最终退出或测试清理，停止接收任务并排空已入队工作。退出监听在任务未排空时暂缓退出，后台等待 `taskDone` 后再次发起 Quit；UI 线程继续处理任务的原生调用，禁止同步等待队列。
+气泡视图状态归 UI 线程，后台结果通过 `Window.Update` 发布，应用前校验会话和请求身份。关闭或隐藏未钉住气泡按展示生命周期取消工作；钉住窗口独立。设置控制器由应用持有，通过互斥锁保护状态；设置保存、凭据写入和状态刷新共享串行任务队列。关闭窗口刷新模型/地址草稿并清理临时 UI 状态，重开复用乐观设置；连接测试取消，额度结果按请求代次丢弃。`Dispose` 仅用于最终退出或测试清理，停止接收任务并排空已入队工作。退出监听在任务未排空时暂缓退出，后台等待 `taskDone` 后再次发起 Quit；UI 线程继续处理任务的原生调用，禁止同步等待队列。
 
 ## 剪贴板恢复边界
 
-恢复失败只保留一个内存快照，后续模拟复制取词暂停，避免覆盖唯一的恢复内容。UIA 成功路径、直接输入和 OCR 仍可用。用户可主动重试恢复或放弃；退出进程后快照不保留。
+恢复失败只保留一个内存快照，后续模拟复制取词暂停，避免覆盖唯一的恢复内容。UIA/AX 成功路径、直接输入和 OCR 仍可用。用户可主动重试恢复或放弃；退出进程后快照不保留。
 
-恢复前分配全部格式，写回时使用有效 HWND。只重试失败格式，排除标记失败不写正文；手动恢复仍要比较剪贴板序列号，新的用户复制优先。
+Windows 恢复前分配全部格式，写回时使用有效 HWND。只重试失败格式，排除标记失败不写正文；手动恢复仍要比较剪贴板序列号，新的用户复制优先。
+
+macOS 按 item 保留所有可读取表示，先准备全部原生替换对象再清空。失败后只保留调用前已验证的版本或本次 `clearContents` 返回的版本，不重新读取并认领当前 `changeCount`；下一次恢复仍要重新比对版本。检测到外部写入、入口变化或所有权不明时保留备份并拒绝覆盖。macOS 没有剪贴板锁或 CAS，版本检查不能使检查与写入成为原子操作。
 
 快照保留 DIB、DIBV5 和其他可读取格式；只有实际备份至少一个 DIB/DIBV5 后，才省略可由 Windows 合成的 CF_BITMAP。两种 DIB 表示均保留，不假设透明度/颜色元数据相同。CF_PALETTE 用 GetObjectW / GetPaletteEntries 保存 LOGPALETTE，再用 CreatePalette 创建恢复句柄；未转移的调色板句柄用 DeleteObject 释放。其他未支持的 GDI/owner/display 格式以及任何未知格式读取失败仍阻断模拟复制，枚举失败也不能视为空剪贴板。[格式转换规则](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
 
@@ -126,14 +128,18 @@ DIB/DIBV5 可以使用 128 MiB 快照总预算，其他格式合计仍限 32 MiB
 
 诊断日志区分 UIA 的 selected、empty、miss、timeout、slot_busy、breaker_open、error 与 canceled，另记录 worker 返回耗时，以识别请求超时后仍在运行的 COM 调用。UIA 800ms 请求超时、150ms 排队和原有熔断规则不变，槽位仍由实际 COM worker 归还。剪贴板日志记录枚举格式 ID/名称、读取字节数/耗时，以及 snapshot、prepare_restore、watch_input、restore 等失败阶段；不记录剪贴板或选区正文。既有 `--grab` 命令的 stdout JSON 仍按设计包含取词文本。
 
-模拟复制期间临时安装键盘和鼠标低级钩子。每次复制的 SendInput 带独立 ExtraInfo 标记，键盘钩子忽略带有本次标记的注入事件。复制前确认鼠标按键已经松开，复制期间单纯移动指针不会取消取词。其他键盘事件、鼠标按键或滚轮事件会取消本次复制事务，日志只记录首个取消原因的类别。结束后卸载钩子，安装失败则拒绝模拟复制。不能再用 GetLastInputInfo 的变化区分用户操作与本次模拟按键。
+Windows 模拟复制期间临时安装键盘和鼠标低级钩子。每次复制的 SendInput 带独立 ExtraInfo 标记，键盘钩子忽略带有本次标记的注入事件。复制前确认鼠标按键已经松开，复制期间单纯移动指针不会取消取词。其他键盘事件、鼠标按键或滚轮事件会取消本次复制事务，日志只记录首个取消原因的类别。结束后卸载钩子，安装失败则拒绝模拟复制。不能再用 GetLastInputInfo 的变化区分用户操作与本次模拟按键。
 
 ## 已有验证与待补证据
 
-- `session_test.go`：请求排序、服务隔离、过期关闭拒绝；没有驱动真实主线程队列和原生窗口。
-- `bubble_ui_test.go`、`bubble_controls_test.go`、`bubble_regression_test.go`：输入、菜单、流式卡片、复制/重试、控件焦点、会话隔离与尺寸；`bubble_scroll_test.go` 覆盖原生滚动。Tester 不能替代 Windows 中文输入法与真实窗口验收。
-- `settings_ui_test.go`：模型与凭证、保存回滚与 FIFO 排空、窗口重开与凭据顺序、分组焦点及过期结果隔离；覆盖详情以实际用例断言为准，系统凭据持久化仍需 Windows 验收。
+- `app_test.go`：入口任务所有权和目标语言解析；`app_darwin_test.go` 补充 workspace 代次与旧入口取消。
+- `internal/ui/bubble/session_test.go`：请求排序、服务隔离、过期关闭拒绝；没有驱动真实主线程队列和原生窗口。
+- `internal/ui/bubble/ui_test.go`、`internal/ui/bubble/controls_test.go`、`internal/ui/bubble/regression_test.go`：输入、菜单、流式卡片、复制/重试、控件焦点、会话隔离与尺寸；`internal/ui/bubble/scroll_test.go` 覆盖原生滚动。Tester 不能替代 Windows 中文输入法与真实窗口验收。
+- `internal/ui/settings/view_test.go`：模型与凭证、保存回滚与 FIFO 排空、窗口重开与凭据顺序、分组焦点及过期结果隔离；覆盖详情以实际用例断言为准，系统凭据持久化仍需 Windows 验收。
+- `internal/ui/settings/hotkeys_test.go`、`internal/ui/settings/platform_test.go`：按键事件在下一帧前提交、录制控件焦点、空格组合键与 macOS 物理键位，以及 Command+Option+A/S/D 的保存和显示、完整 Control+Option+A/S/D 的逐项保存及重新加载；不等于真实全局热键触发验收。
+- `internal/ui/snip/capture_test.go`：取消或入口失效时释放截图租约，使用注入的释放回调，不执行真实截屏。
 - `internal/selection/clipboard_restore_test.go`：清空/格式写入故障注入及保护策略；没有调用 Windows 原生剪贴板。
+- `internal/selection/pasteboard_test.go`：macOS item 快照，以及准备/写入失败、外部复制、取消和安全重试的版本保护；使用注入操作，不修改系统剪贴板。
 - `internal/selection/clipboard_snapshot_test.go`：位图必须有已保存 DIB、保留两种 DIB/其他格式、枚举与私有格式失败、4K 图片和预算边界；使用注入读取，不调用 Windows 剪贴板。
 - `internal/selection/clipboard_snapshot_windows_test.go`：独立 GDI 调色板句柄往返和预算/无效载荷检查；不改动系统剪贴板，需在 Windows 执行，交叉编译不代表已运行。
 - `e2e/README.md` 中的 Windows 桌面手工验收仍待执行；未测不记为通过，交叉编译成功不能替代实机证据。

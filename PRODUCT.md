@@ -2,11 +2,19 @@
 
 ## Platform
 
-Windows desktop
+Windows desktop; experimental macOS 14+ support on Apple silicon (arm64) only.
 
 ## Stack
 
 Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.8.3 native screenshot selection, and native `mygo/ui` bubbles and settings.
+
+The macOS port retains MyGo v0.8.3 and bridges public system APIs through
+`purego` / `purego/objc`: Accessibility selection with a guarded pasteboard
+fallback, ScreenCaptureKit capture, Vision OCR and system speech. It remains
+Accessory for its entire lifetime, with no Dock icon. Nonactivating panels
+appear in the current full-screen Space; only explicit input, settings and
+screenshot actions take keyboard focus. Background results never activate the
+app.
 
 ## Users
 
@@ -22,7 +30,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 
 ## Operating Context
 
-- Global hotkeys default to `Ctrl+Alt+A` (typed input), `Ctrl+Alt+S` (OCR), and `Ctrl+Alt+D` (selection).
+- Global hotkeys default to `Ctrl+Alt+A` (typed input), `Ctrl+Alt+S` (OCR), and `Ctrl+Alt+D` (selection) on Windows; Mac uses `⌥A`, `⌥S`, and `⌥D` respectively.
 - The bubble opens near the selection or screen region, hides on blur, and can be pinned.
 - Settings live in a separate window; API keys live in the OS keyring, never in settings JSON.
 - `Enter` translates; `Shift+Enter` inserts a newline.
@@ -37,7 +45,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 - PP-OCR releases its sessions after 5 minutes idle. Windows OCR stops its worker after 30 seconds idle. Both reload on demand. The shared ONNX runtime stays loaded, and OCR and fallback share one admission gate.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.
-- Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, mygo-only desktop APIs, whitelisted dependencies.
+- Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, pinned mygo desktop/UI APIs and a project-owned purego macOS bridge, whitelisted dependencies.
 - The bubble is frameless, fixed-width (480 px), skips the taskbar, and grows to fit its content.
 
 ## Brand Commitments
@@ -51,7 +59,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 ## Evidence on Hand
 
 - `DESIGN.md` — reusable brand and bubble design tokens.
-- Running implementation: `bubble_ui.go`, `settings_ui.go`, `bubbles.go`.
+- Running implementation: `internal/ui/bubble/view.go`, `internal/ui/settings/view.go`, `internal/ui/bubble/manager.go`.
 
 ## Product Principles
 
