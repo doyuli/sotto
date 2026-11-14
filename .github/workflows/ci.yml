@@ -41,7 +41,7 @@ jobs:
       - name: Verify x64 OCR runtime and models
         env:
           SOTTO_OCR_PREFLIGHT: "1"
-        run: go test ./internal/ocr -run '^TestV6SmallRuntimePreflight$' -count=1 -v
+        run: go test ./internal/ocr -run '^(TestV6SmallRuntimePreflight|TestWinRTNativeRepeatedRequests)$' -count=1 -v
       - name: Check desktop smoke tests
         run: go vet -tags e2e ./e2e
       - name: Verify desktop test DPI initialization

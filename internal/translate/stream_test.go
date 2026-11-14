@@ -186,32 +186,21 @@ func TestStreamingLongTextMergesProgressAndErrors(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &streamChunks{fail: fail}
 		var got []string
-		res, err := translateLong(context.Background(), s, Request{Text: strings.Repeat("字", maxChunkRunes+1)}, nil, config.Default(), func(r Result) {
-			if !r.Streaming {
-				t.Error("progress must be streaming")
+		cfg := config.Default()
+		cfg.Services.Enabled = []string{s.Name()}
+		var res Result
+		RunWith(context.Background(), []Translator{s}, cfg, nil, Request{Text: strings.Repeat("字", maxChunkRunes+1)}, func(r Result) {
+			if r.Streaming {
+				got = append(got, r.Text)
 			}
-			got = append(got, r.Text)
+			res = r
 		})
-		if !reflect.DeepEqual(got, []string{"译文1", "译文1\n译文2"}) || res.Text != "译文1\n译文2" || (err != nil) != fail {
-			t.Errorf("progress=%v result=%+v err=%v", got, res, err)
+		if len(got) == 0 || got[0] != "译文1" || res.Streaming || res.Text != "译文1\n译文2" || (res.Err != "") != fail {
+			t.Errorf("progress=%v result=%+v", got, res)
 		}
-	}
-}
-
-func TestStreamProgressStopsScheduledUpdates(t *testing.T) {
-	updates := make(chan Result, 3)
-	progress, stop := streamProgress(context.Background(), func(r Result) { updates <- r })
-	progress(Result{Text: "first", Streaming: true})
-	progress(Result{Text: "pending", Streaming: true})
-	stop()
-	// Discard updates delivered before stop; none may follow a terminal result.
-	for len(updates) > 0 {
-		<-updates
-	}
-	select {
-	case result := <-updates:
-		t.Fatalf("scheduled partial arrived after stop: %+v", result)
-	case <-time.After(80 * time.Millisecond):
+		if fail && !strings.Contains(res.Err, "offline") {
+			t.Errorf("lost provider error: %s", res.Err)
+		}
 	}
 }
 

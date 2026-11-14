@@ -132,13 +132,15 @@ func TestSplitLongText(t *testing.T) {
 	}
 }
 
-func TestTranslateLongMergesChunks(t *testing.T) {
+func TestRunWithMergesChunks(t *testing.T) {
 	text := strings.Repeat("这是一个很长的段落。", 300) // 3000 runes
 	rec := &recordingTranslator{name: "x"}
-	res, err := translateLong(context.Background(), rec,
-		Request{Text: text, TargetLang: "en"}, fakeKeys{}, config.Default(), nil)
-	if err != nil {
-		t.Fatal(err)
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{rec.Name()}
+	var res Result
+	RunWith(context.Background(), []Translator{rec}, cfg, fakeKeys{}, Request{Text: text, TargetLang: "en"}, func(r Result) { res = r })
+	if res.Err != "" || res.Streaming {
+		t.Fatalf("terminal result = %+v", res)
 	}
 	if len(rec.texts) < 2 {
 		t.Fatalf("sent %d requests, want the text split", len(rec.texts))

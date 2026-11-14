@@ -3,11 +3,12 @@ package translate
 import (
 	"context"
 	"errors"
-	"sotto/internal/config"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"sotto/internal/config"
 )
 
 func TestOversizedInputNeverStartsTranslation(t *testing.T) {
@@ -53,13 +54,17 @@ func (s *limitStream) Stream(ctx context.Context, _ Request, _ KeyStore, _ confi
 func TestCumulativeResultLimitCancelsAndKeepsSafeText(t *testing.T) {
 	// Each chunk can fit the provider limit while their combined output does not.
 	engine := &limitStream{}
-	res, err := translateLong(context.Background(), engine, Request{Text: strings.Repeat("x", maxChunkRunes*2+1)}, nil, config.Default(), func(r Result) {
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{engine.Name()}
+	var res Result
+	RunWith(context.Background(), []Translator{engine}, cfg, nil, Request{Text: strings.Repeat("x", maxChunkRunes*2+1)}, func(r Result) {
 		if len(r.Text) > maxResultBytes {
-			t.Fatal("published over-budget output")
+			t.Error("published over-budget output")
 		}
+		res = r
 	})
-	if !errors.Is(err, ErrResultLimit) || engine.calls != 2 || !strings.HasSuffix(res.Text, "\nok") || len(res.Text) > maxResultBytes {
-		t.Fatalf("calls=%d bytes=%d err=%v", engine.calls, len(res.Text), err)
+	if res.Err != UserMessage(ErrResultLimit) || res.Streaming || engine.calls != 2 || !strings.HasSuffix(res.Text, "\nok") || len(res.Text) > maxResultBytes {
+		t.Fatalf("calls=%d bytes=%d err=%s", engine.calls, len(res.Text), res.Err)
 	}
 }
 

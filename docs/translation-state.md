@@ -159,7 +159,7 @@ Shared state machines and injected operations are not acceptance tests of real N
 
 ## Translation resource budgets
 
-A complete translation accepts at most 18,000 Unicode characters and 32 chunks,
+A complete translation accepts at most 18,000 Unicode characters,
 with at most 256 KiB of cumulative translated UTF-8 text per service. The existing
 1,800-character provider chunks and transport limits still apply. Oversized input
 is rejected explicitly; oversized generated output cancels that service's request

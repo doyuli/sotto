@@ -188,13 +188,8 @@ func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeySt
 	wg.Wait()
 }
 
-// streamProgress publishes the first text immediately and coalesces later
+// streamProgressWithPrefix publishes the first text immediately and coalesces later
 // snapshots at 25 Hz. A timer flushes a burst even if the server then pauses.
-func streamProgress(ctx context.Context, emit func(Result)) (func(Result), func()) {
-	progress, stop := streamProgressWithPrefix(ctx, emit)
-	return func(res Result) { progress("", res) }, stop
-}
-
 func streamProgressWithPrefix(ctx context.Context, emit func(Result)) (func(string, Result), func()) {
 	const interval = 40 * time.Millisecond
 	var mu sync.Mutex
@@ -246,23 +241,8 @@ func streamProgressWithPrefix(ctx context.Context, emit func(Result)) (func(stri
 	return progress, stop
 }
 
-// translateLong sends a long text in sentence/paragraph-sized pieces and
-// joins the answers. Uploading a whole article in one request trips the
-// body limits of Baidu and the free Google endpoint; splitting keeps the
-// text translatable at the cost of a little context.
-func translateLong(ctx context.Context, t Translator, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
-	parts, err := prepareParts(req.Text)
-	if err != nil {
-		return Result{Service: t.Name()}, err
-	}
-	return translateParts(ctx, t, req, k, cfg, parts, func(prefix string, partial Result) {
-		if emit != nil {
-			partial.Text = prefix + partial.Text
-			emit(partial)
-		}
-	})
-}
-
+// translateParts sends the shared source chunks sequentially and joins their
+// results, preserving completed output when a later request fails.
 func translateParts(ctx context.Context, t Translator, req Request, k KeyStore, cfg config.Settings, parts []string, emit func(string, Result)) (Result, error) {
 	var completed strings.Builder
 	result := Result{Service: t.Name()}
@@ -389,8 +369,6 @@ func UserMessage(err error) string {
 	switch {
 	case errors.Is(err, ErrInputLimit):
 		return "原文过长，单次最多翻译 18000 个字符，请分次提交"
-	case errors.Is(err, ErrChunkLimit):
-		return "原文分段过多，请缩短内容后重试"
 	case errors.Is(err, ErrResultLimit):
 		return "译文过长，已停止生成；请缩短原文后重试"
 	case errors.Is(err, keys.ErrUnavailable):
