@@ -24,13 +24,13 @@
   <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
-Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。
+Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具（架构与系统集成说明见 [Windows 专有文档](docs/windows.md)）。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。
 
 集多源流式对比、离线截图 OCR、无感划词保护剪贴板、代码变量命名转换于一体，无需频繁切换应用，助你始终专注当下工作。
 
 [下载 Windows 最新版](https://github.com/doyuli/sotto/releases/latest) · 传统 PC（Intel / AMD）请下载 `amd64` 安装包，Surface Pro 等 ARM 设备请下载 `arm64` 安装包。
 
-macOS 14+ 实验性支持可从源码构建，仅支持 Apple Silicon（arm64）。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别。签名发布需配置并启用可选的 Mac 发布任务。
+macOS 14+ 实验性支持可从源码构建，仅支持 Apple Silicon（arm64）。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别（架构与技术说明见 [macOS 专有文档](docs/macos.md)）。Mac 取词需辅助功能权限，截图需屏幕录制权限（跨平台测试与桌面验收流程见 [验证入口](e2e/README.md)）。签名发布需配置并启用可选的 Mac 发布任务。
 
 ---
 
@@ -76,7 +76,7 @@ macOS 14+ 实验性支持可从源码构建，仅支持 Apple Silicon（arm64）
 | **截图翻译 (OCR)** | `Ctrl+Alt+S` | 框选屏幕任意区域，本地提取文字并翻译 |
 | **选中文本翻译 (划词)** | `Ctrl+Alt+D` | 读取当前焦点程序中选中的文字并就近弹出气泡 |
 
-- **Mac 默认快捷键**：`⌥A` 打开面板，`⌥S` 截图翻译，`⌥D` 划词翻译；可在设置中自定义，也支持 Command 组合键。
+- **Mac 默认快捷键**：`⌥A` 打开面板，`⌥S` 截图翻译，`⌥D` 划词翻译；可在设置中自定义，也支持 Command 组合键。显式保存的快捷键保持原值，缺省值采用当前平台默认组合。
 - **面板内操作**：`Enter` 翻译，`Shift+Enter` 换行，`Esc` 关闭。
 - **更多交互**：支持点击 📌 钉住常驻、🔊 朗读原文/译文、单卡片折叠与出错重试。
 
@@ -109,7 +109,7 @@ bun run build:win            # 同时构建 x64 与 arm64 安装包
 bun run build:mac            # 在 Mac 上构建 Apple Silicon（arm64）应用
 ```
 
-> 原生 UI 测试位于 `internal/ui/{bubble,settings,snip}`，使用 `ui.NewTester`。平台原生测试与桌面手工验收见 [e2e/README.md](e2e/README.md)。默认单测不会运行需显式启用的 OCR 运行时探针和桌面 e2e。
+> 测试分层、可选平台探针与桌面验收流程见 [验证入口 (e2e/README.md)](e2e/README.md)。
 
 ---
 
@@ -118,5 +118,3 @@ bun run build:mac            # 在 Mac 上构建 Apple Silicon（arm64）应用
 感谢 [Easydict](https://github.com/tisfeng/Easydict) 为 Sotto 带来的灵感与启发。
 
 感谢 [Mygo](https://mygo.egoist.dev/) 为 Sotto 提供应用开发框架。
-
-Mac 需辅助功能（划词）和屏幕录制（截图）权限。跨平台测试入口和待验收边界见 [验证入口](e2e/README.md)。显式保存的快捷键保持原值，缺省值采用当前平台默认组合。

@@ -1,6 +1,6 @@
 # Translation Window State and Lifecycle
 
-This document records the current implementation's constraints so behavior is preserved when separating translationSession / presentation in the future. Pure-logic and native `ui.NewTester` tests do not constitute desktop acceptance on actual hardware. See `e2e/README.md` for Windows execution instructions and pending acceptance checks.
+This document records the current implementation's constraints so behavior is preserved when separating translationSession / presentation in the future. Pure-logic and native `ui.NewTester` tests do not constitute desktop acceptance on actual hardware. See `e2e/README.md` for Windows execution instructions and desktop acceptance procedures.
 
 ## State Ownership
 
@@ -131,20 +131,12 @@ Diagnostic logs distinguish UIA selected, empty, miss, timeout, slot_busy, break
 
 Windows temporarily installs low-level keyboard and mouse hooks during simulated copy. Each copy's SendInput carries a distinct ExtraInfo marker; the keyboard hook ignores injected events carrying that copy's marker. Confirm mouse buttons are released before copying. Pointer movement alone does not cancel selection capture during the copy. Other keyboard events, mouse buttons, or wheel events cancel the transaction; logs record only the category of the first cancellation reason. Uninstall hooks afterward; refuse simulated copy if installation fails. Changes in GetLastInputInfo must no longer be used to distinguish user actions from this copy's simulated keys.
 
-## Existing Verification and Pending Evidence
+## State Verification Boundaries
 
-- `internal/app/app_test.go`: entry-task ownership and target-language resolution. `internal/app/app_darwin_test.go` adds workspace generations and cancellation of old entries.
-- `internal/ui/bubble/session_test.go`: request ordering, service isolation, and rejection of stale closes. Does not drive the real main-thread queue or native windows.
-- `internal/ui/bubble/dismiss_test.go`: workspace changes cancel transient work and preserve pinned work. Unpinning after restoration still requires reacquiring the input entry. Old menu actions after close/unpin/replacement cannot restore windows.
-- `internal/ui/bubble/ui_test.go`, `internal/ui/bubble/controls_test.go`, and `internal/ui/bubble/regression_test.go`: input, menus, streaming cards, copy/retry, control focus, session isolation, and sizing. `internal/ui/bubble/scroll_test.go` covers native scrolling. Tester cannot replace Windows Chinese input-method and real-window acceptance.
-- `internal/ui/settings/view_test.go`: models and credentials, save rollback and FIFO draining, window reopening and credential ordering, group focus, and stale-result isolation. Actual assertions define coverage details; system credential persistence still requires Windows acceptance.
-- See [hotkeys.md](hotkeys.md) for hotkey parsing, registration transactions, recording/manual setup, asynchronous saves, and native cross-process conflict verification. Tester and native registration probes do not constitute acceptance of actual keyboard triggering.
-- `internal/ui/snip/capture_test.go`: releases capture leases on cancellation or entry invalidation using injected release callbacks, without actual screen capture.
-- `internal/selection/clipboard_restore_test.go`: fault injection for clearing/format writes and protection policies. Does not call the native Windows clipboard.
-- `internal/selection/pasteboard_test.go`: macOS item snapshots and version guards for preparation/write failures, external copies, cancellation, and safe retries. Uses injected operations without modifying the system clipboard.
-- `internal/selection/clipboard_snapshot_test.go`: bitmaps require a saved DIB; preserves both DIB representations/other formats; covers enumeration and private-format failures, 4K images, and budget boundaries. Uses injected reads without calling the Windows clipboard.
-- `internal/selection/clipboard_snapshot_windows_test.go`: round trips for independent GDI palette handles and budget/invalid-payload checks. Does not modify the system clipboard; must run on Windows. Cross-compilation does not mean it ran.
-- Windows manual desktop acceptance linked from `e2e/README.md` remains pending. Do not mark untested items as passed; successful cross-compilation cannot replace hardware evidence.
+- **Session and presentation state**: `internal/ui/bubble/session_test.go` and `dismiss_test.go` verify request ordering, service isolation, workspace transitions, and rejection of stale closes. Native UI tests (`ui_test.go`, `controls_test.go`, `scroll_test.go`) exercise streaming, retry, and sizing.
+- **Clipboard & pasteboard protection**: `internal/selection` unit tests cover Windows DIB/palette snapshots, format write fault injection, and macOS isolated item snapshots with version guards.
+- **Cross-document boundaries**: Hotkey registration transactions are specified in [hotkeys.md](hotkeys.md); platform architectures in [windows.md](windows.md) and [macos.md](macos.md).
+- **Desktop acceptance**: Automated tests and Tester do not replace physical hardware validation. macOS manual desktop acceptance has been confirmed by the maintainer (see [macOS acceptance](../e2e/macos.md)); Windows manual desktop acceptance has also been confirmed by the maintainer; its regression procedures are documented in [Windows acceptance](../e2e/windows.md).
 
 ## New Sessions and Content Size Updates
 

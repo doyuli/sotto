@@ -1,6 +1,6 @@
 # Windows Desktop Acceptance
 
-The procedures below are Windows-specific.
+Windows manual desktop acceptance has been completed as confirmed by the maintainer. The checklist below remains the procedure for future regression checks. The procedures below are Windows-specific. For the subsystem architecture and Win32/COM platform integration, see [Windows Architecture](../docs/windows.md).
 
 Drive the **built production executable** as a user would: synthesize global hotkeys and inspect windows, focus, and blur. All checks use direct Win32 calls (`x/sys`), without relying on window titles or screenshots.
 
@@ -26,7 +26,7 @@ Hotkey combinations are parsed from the app startup log's "hotkeys in force" lin
 - At startup, tests confirm per-monitor DPI V2 mode. If it cannot be set and the current mode differs, fail explicitly rather than testing virtualized coordinates under mixed scaling.
 - The Windows job in `.github/workflows/ci.yml` runs all ordinary tests, `go vet -tags e2e ./e2e`, and the separate `TestDPIAwarenessAlreadyInitialized`; it does not run desktop smoke cases that interact with windows. ARM64 currently receives compilation checks only; native OCR preflight runs on x64.
 - Hotkeys are synthesized with `SendInput`. The test process first grants the app foreground permission with `AllowSetForegroundWindow`, modeling the foreground rights of real keyboard hotkeys.
-- This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path still requires manual acceptance. `sotto --ocr <png>` can independently check image recognition.
+- This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path is covered by the manual acceptance checklist below. `sotto --ocr <png>` can independently check image recognition.
 
 ## Manual Selection and Clipboard Acceptance
 
@@ -57,7 +57,7 @@ Relevant tests are in `internal/ui/snip/view_test.go`. `internal/ui/snip/capture
 
 Requires a Windows desktop session.
 
-Windows tests in `internal/selection` use hidden windows and `NotifyWinEvent` to cover HWND ownership, foreground-notification filtering, foreground notifications without bubble blur, and shared-hook removal. Native menu activation, dismissal, and cross-app switching still require the manual checks below.
+Windows tests in `internal/selection` use hidden windows and `NotifyWinEvent` to cover HWND ownership, foreground-notification filtering, foreground notifications without bubble blur, and shared-hook removal. Native menu activation, dismissal, and cross-app switching are covered by the manual checks below.
 
 - Trigger selection and OCR at all four screen corners and above the taskbar. Keep margins; expand left when space to the right is insufficient and upward when space below is insufficient.
 - Wait for service results to arrive in sequence, then collapse/expand cards. The window stays within the work area as its height changes; upward expansion preserves the bottom anchor.
@@ -103,7 +103,7 @@ Requires a Windows desktop session.
 
 ## Manual Native Settings Acceptance
 
-`internal/ui/settings/view_test.go` covers settings saves, credential operations, model configuration, ordering, and keyboard interaction. The following still require Windows desktop acceptance:
+`internal/ui/settings/view_test.go` covers settings saves, credential operations, model configuration, ordering, and keyboard interaction. Use the following Windows desktop checks for regression acceptance:
 
 - Open settings from the tray and bubble; confirm singleton reuse, correct reopening after closure, and process exit through tray quit while settings is open.
 - Check all four tabs, long service lists, and minimum window size in both themes at 100% / 125% / 150% / 200% scaling.

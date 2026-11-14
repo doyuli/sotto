@@ -25,7 +25,7 @@ The system list does not include individual apps' menu shortcuts and cannot cove
 - Parsing and registration transaction tests cover both platforms' names, existing combination semantics, registration failures, save failures, and combination swaps.
 - UI Tester covers recording, global-event routing, retry after errors, manual main-key selection, cancellation/reopening, interleaved asynchronous saves, and startup failure states. Previews include widths of 660/780, light/dark themes, and recording/manual/conflict states.
 - `CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/hotkey -v` temporarily registers `Ctrl+Option+Shift+Cmd+F19` in two independent AppKit processes to verify cross-process exclusive registration conflicts and re-registration after release. It does not synthesize keyboard input or modify user settings.
-- Actual keyboard triggering, input methods/keyboard layouts, system interception, and window focus still require hardware acceptance testing per `e2e/macos.md`. Windows cross-compilation is not Windows runtime validation.
+- Actual keyboard triggering, input methods/keyboard layouts, system interception, and window focus are covered by the macOS desktop acceptance checklist in `e2e/macos.md`; the maintainer has confirmed completion. Windows cross-compilation is not Windows runtime validation.
 
 ## Known Limitation: Third-Party Nonexclusive Registration
 

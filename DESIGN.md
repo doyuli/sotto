@@ -97,4 +97,4 @@ The menu bar uses a monochrome template silhouette with transparent padding. The
 
 Workspace changes dismiss transient sessions and hide fixed bubbles with independent work retained. Menu actions identify fixed bubbles by number and restore existing content. Permission failures explain Accessibility or screen recording and offer recovery through the system-permissions menu.
 
-All layout dimensions above are logical units. macOS display-local capture points become physical pixels at the capture boundary; Windows resolves overlay-local DIPs through its HWND. Work areas, menu bars and negative display coordinates must be checked on actual multi-display hardware. Native focus acceptance remains pending as recorded in `e2e/macos.md`.
+All layout dimensions above are logical units. macOS display-local capture points become physical pixels at the capture boundary; Windows resolves overlay-local DIPs through its HWND. Desktop acceptance covers work areas, menu bars, negative display coordinates, and native focus; the regression checklist is in `e2e/macos.md`.

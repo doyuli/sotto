@@ -24,13 +24,13 @@
   <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
-Sotto is a desktop translation utility tailored for Windows. Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
+Sotto is a desktop translation utility tailored for Windows (see [Windows Architecture](docs/windows.md)). Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
 
 Combining multi-engine streaming comparison, offline screen OCR, selection with guarded clipboard preservation, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
 
 [Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
 
-Experimental macOS 14+ support is available from source for Apple silicon (arm64) only. It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime. Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Signed Mac releases require the optional release job to be configured and enabled.
+Experimental macOS 14+ support is available from source for Apple silicon (arm64) only. It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime (see [macOS Architecture](docs/macos.md)). Mac selection requires Accessibility permission; screenshots require screen recording permission (see [verification entry points](e2e/README.md) for platform checks and desktop acceptance procedures). Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Signed Mac releases require the optional release job to be configured and enabled.
 
 ---
 
@@ -76,7 +76,7 @@ Experimental macOS 14+ support is available from source for Apple silicon (arm64
 | **Screen Region Translation (OCR)** | `Ctrl+Alt+S` | Snips any screen area to extract text locally and translate |
 | **Selection Translation** | `Ctrl+Alt+D` | Reads highlighted text in the active app and opens a popup bubble |
 
-- **Mac defaults**: `⌥A` opens the panel, `⌥S` starts OCR, and `⌥D` translates the selection. Customize shortcuts, including Command combinations, in Settings.
+- **Mac defaults**: `⌥A` opens the panel, `⌥S` starts OCR, and `⌥D` translates the selection. Customize shortcuts, including Command combinations, in Settings. Explicitly saved shortcuts are preserved; missing values use platform defaults.
 - **In the panel**: Press `Enter` to translate, `Shift+Enter` for a new line, `Esc` to close.
 - **Controls**: Pin (📌) to keep the bubble floating, listen to pronunciation (🔊), fold cards, or retry failed services.
 
@@ -109,7 +109,7 @@ bun run build:win            # Build for both x64 and arm64
 bun run build:mac            # Build an Apple silicon macOS app (on macOS)
 ```
 
-> Native UI tests live in `internal/ui/{bubble,settings,snip}` and use `ui.NewTester`. Platform integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md). The default unit suite skips the opt-in OCR runtime probes and desktop e2e tests.
+> For test layers, opt-in platform probes, and desktop acceptance, see [e2e/README.md](e2e/README.md).
 
 ---
 
@@ -118,5 +118,3 @@ bun run build:mac            # Build an Apple silicon macOS app (on macOS)
 Thanks to the authors and contributors of [Easydict](https://github.com/tisfeng/Easydict) for inspiring Sotto.
 
 Thanks to [Mygo](https://mygo.egoist.dev/) for the framework that powers Sotto.
-
-Mac selection requires Accessibility permission; screenshots require screen recording permission. See [verification entry points](e2e/README.md) for platform checks and pending desktop acceptance. Explicitly saved shortcuts are preserved; missing values use platform defaults.

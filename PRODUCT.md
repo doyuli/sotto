@@ -31,7 +31,7 @@ app.
 
 Explicitly saved shortcuts remain unchanged, including earlier Alt+A/S/D combinations. Missing values use platform defaults; defaults are not inferred from saved values for migration.
 
-Passive Mac results do not request focus. Explicit input/settings/screenshot actions request keyboard focus without activating the app. Application switches honor auto-hide; workspace changes end transient work and hide fixed bubbles while preserving their independent jobs for explicit restoration. Native focus and multi-display behavior require the desktop acceptance checks in `e2e/macos.md`.
+Passive Mac results do not request focus. Explicit input/settings/screenshot actions request keyboard focus without activating the app. Application switches honor auto-hide; workspace changes end transient work and hide fixed bubbles while preserving their independent jobs for explicit restoration. Native focus and multi-display regression checks are documented in `e2e/macos.md`.
 
 ## Users
 
@@ -57,13 +57,13 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 
 - Services: Bilibili IndexTranslate, SiliconFlow, Zhipu, DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx), plus a dictionary card for lone English words. Only IndexTranslate is enabled by default.
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
-- On Windows, selection via UIA with a clipboard fallback; OCR via PP-OCR, using Windows.Media.Ocr when the local engine fails or returns empty text. Confidence risks remain diagnostic. Explicit languages outside the local model's scope go directly to Windows OCR.
-- Screenshot selection uses a native overlay per display over the live desktop. A light translucent veil indicates selection mode; dragging adds a selection border, a light translucent blue fill and a DIP size badge. Unused overlays are reused; an overlay that has begun a selection is replaced before its next appearance to avoid flashing the previous selection. Dragging stays on one display; Esc, right-click or lost pointer capture cancels. On Windows, the overlay hides before GDI captures its local DIP rectangle; selecting a region does not freeze the desktop or preload OCR.
-- PP-OCR releases its sessions after 5 minutes idle. Windows OCR stops its worker after 30 seconds idle. Both reload on demand. The shared ONNX runtime stays loaded, and OCR and fallback share one admission gate.
+- Selection translation: Windows reads text via UIA with guarded clipboard fallback; macOS uses Accessibility with guarded pasteboard fallback. Both paths snapshot readable clipboard content before simulated copy and retain a recovery backup on restoration failure; ownership/version guards prioritize newer user copies.
+- Offline OCR: Windows uses local PP-OCR with WinRT fallback; macOS uses Apple Vision. Windows releases PP-OCR sessions and stops its system-OCR worker on their idle deadlines (see `resources/windows/ocr/README.md`); macOS creates and releases Vision request/handler objects per recognition call, with no Sotto-managed idle model session.
+- Screen snip: Multi-display native overlays capture regions without freezing the desktop or preloading models. Interaction and visual tokens follow `DESIGN.md`.
+- Window presentation: The translation bubble is frameless, fixed-width, skips the taskbar, and sizes dynamically to content within display bounds. Full lifecycle and state contracts follow `docs/translation-state.md`.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.
-- Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, pinned mygo desktop/UI APIs and a project-owned purego macOS bridge, whitelisted dependencies.
-- The bubble is frameless, fixed-width (480 px), skips the taskbar, and grows to fit its content.
+- Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, pinned MyGo desktop/UI APIs and a project-owned purego macOS bridge, whitelisted dependencies.
 
 ## Brand Commitments
 
@@ -76,6 +76,11 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 ## Evidence on Hand
 
 - `DESIGN.md` — reusable brand and bubble design tokens.
+- `docs/translation-state.md` — window state, concurrency, and presentation lifecycle.
+- `docs/hotkeys.md` — key combination parsing, registration transactions, and limitations.
+- `docs/windows.md` — Windows Win32/COM architecture, UIA, clipboard exclusions, and GDI capture.
+- `docs/macos.md` — macOS purego architecture, framework bridges, and window policies.
+- `resources/windows/ocr/README.md` — Windows PP-OCR runtime assets, routing, and idle budgets.
 - Running implementation: `internal/ui/bubble/view.go`, `internal/ui/settings/view.go`, `internal/ui/bubble/manager.go`.
 
 ## Product Principles

@@ -58,21 +58,26 @@ CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
 ## Project Structure at a Glance
 
 ```
-main.go              # Embeds the app icon and calls app.Run
-internal/app         # Lifecycle, controllers, hotkeys, service assembly, entry tasks, screenshot orchestration
-internal/ui/bubble   # Bubble window pool, native views, layout, and translation sessions
-internal/ui/settings # Native settings view and asynchronous save state
-internal/ui/snip     # Selection overlays, display lifecycle, and capture window leases
-internal/ui/shared   # Display names and icons shared by bubbles and settings
-internal/platform    # URLs, updates, CLI diagnostics, and platform window policies
-internal/config      # Settings + atomic reads/writes (keys use mygo.Secrets, never JSON)
-internal/keys        # Secrets wrapper
-internal/langdetect  # Coarse Unicode-script detection (pure functions)
-internal/naming      # Identifier splitting + five naming styles (pure functions)
-internal/translate   # Translator interface + fan-out + deepl/openai/baidu/tencent/youdao/azure/google/dictionary
-internal/selection   # Windows UIA / macOS AX primary path + simulated-copy fallback; outside-click detection
-internal/capture     # Windows GDI / macOS ScreenCaptureKit capture
-internal/ocr         # Windows PP-OCR + Windows.Media.Ocr fallback; macOS Vision
+main.go               # Embeds the app icon and calls app.Run
+internal/app          # Lifecycle, controllers, hotkeys, service assembly, entry tasks, screenshot orchestration
+internal/ui/bubble    # Bubble window pool, native views, layout, and translation sessions
+internal/ui/settings  # Native settings view and asynchronous save state
+internal/ui/snip      # Selection overlays, display lifecycle, and capture window leases
+internal/ui/shared    # Display names and icons shared by bubbles and settings
+internal/platform     # URLs, updates, CLI diagnostics, and platform window policies
+internal/config       # Settings + atomic reads/writes (keys use mygo.Secrets, never JSON)
+internal/keys         # Secrets wrapper
+internal/hotkey       # Hotkey parsing, normalization, registration transaction; macOS Carbon bridge
+internal/langdetect   # Coarse Unicode-script detection (pure functions)
+internal/languages    # Supported language definitions and tags
+internal/naming       # Identifier splitting + five naming styles (pure functions)
+internal/translate    # Translator interface + fan-out + deepl/openai/baidu/tencent/youdao/azure/google/dictionary
+internal/selection    # Windows UIA / macOS AX primary path + simulated-copy fallback; outside-click detection
+internal/capture      # Windows GDI / macOS ScreenCaptureKit capture
+internal/ocr          # Windows PP-OCR + Windows.Media.Ocr fallback; macOS Vision
+internal/speech       # Text-to-speech synthesis (Windows SAPI / macOS AVFoundation)
+internal/screencoords # Screen coordinate conversions between DIPs and physical pixels
+internal/macnative    # Purego macOS system bridge (workspace, geometry, permissions)
 ```
 
 ## Platform Verification and Coordinate Contracts

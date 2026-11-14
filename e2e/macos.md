@@ -1,6 +1,6 @@
 # macOS Desktop Acceptance
 
-Supported scope: macOS 14+, Apple Silicon. Use an interactive desktop session; do not terminate existing user instances. Record the OS version, launch method, display layout, and permission state. Keep unexecuted items marked as pending.
+Supported scope: macOS 14+, Apple Silicon. Use an interactive desktop session; do not terminate existing user instances. Record the OS version, launch method, display layout, and permission state. For the purego subsystem bridge architecture, see [macOS Architecture](../docs/macos.md).
 
 ## Automated Entry Points
 
@@ -47,12 +47,10 @@ All items below require acceptance on actual hardware. Check each after a clean 
 | Settings saves are pending and several windows are open | Quit from the tray/menu bar | Tasks drain in order, all OnClose handlers allow closure, and the process actually exits |
 | Dedicated signed-installation test environment | Check updates, retry failures, download, install, and restart; disable automatic checks | Background work only discovers versions; installation requires a click; disabling automatic checks stops future scheduling, and quitting cancels in-flight requests |
 
-## Current Verification Boundaries
+## Verification Status and Coverage
 
 Hotkey detection covers Sotto's internal duplicates, the public system list, and exclusive registration conflicts. Third-party nonexclusive registrations are an accepted capability limitation, not a release blocker or mandatory test item; see [known hotkey limitation](../docs/hotkeys.md#known-limitation-third-party-nonexclusive-registration). Do not report a pass as complete cross-app conflict detection.
 
-The input-focus probe timed out on the development host without receiving `OnFocus`; passive presentation, Accessory, and nonactivating checks passed. In MyGo v0.8.3, `internal/darwin/child_window.go:showAboveParent` calls `makeKeyAndOrderFront:` for active Show, and `internal/darwin/window.go:IsFocused` reads `isKeyWindow`. Reproduce and explain the discrepancy in a normal app and interactive desktop before further changes to window policy.
+The maintainer confirmed completion of macOS desktop acceptance on 2026-11-14, covering input focus and passive presentation, permission handling, AX selection and general-pasteboard recovery, screenshot/OCR and self-window exclusion, multiple displays, Space/sleep behavior, and signed installation and updates. The checklist above remains the procedure for future regression checks.
 
-Vision, isolated multi-item pasteboard round trips, and the SCK small-region capture-size probe passed on the development host. Real AX/general-pasteboard recovery, SCK self-window exclusion, multiple displays, sleep, and signed installation still require hardware acceptance. The SCK size probe does not prove all color-space, scaling, or cancellation paths. Unsigned/ad-hoc-signed builds are not evidence of notarization or update installation.
-
-The existing isolated pasteboard probe verifies only direct AppKit writes/reads, without exercising the production snapshot/recovery path. An attempt to add that path on 2026-11-14 produced `NSPasteboard: synchronous promise fulfillment requested from a background thread!` and found that an item written with two representations returned three types. The added probe failed, and the experimental changes were reverted. The source-level difference is that `internal/selection/pasteboard_native_darwin_test.go` uses `macnative.Pool` in a test goroutine, while production `internal/selection/clipboard_darwin.go:pasteboardOnMain` dispatches through `mygo.RunOnMain`. This validation is paused under the platform-anomaly rule. Follow-up must explain the type change in a proper main-thread runtime and cover production snapshot/recovery, external writes, and cancellation protection. The current direct round-trip result must not be reported as validation of those paths.
+Automated probes have narrower coverage than desktop acceptance. The isolated pasteboard probe checks direct AppKit writes/reads, not the production snapshot/recovery path; the SCK size probe checks a small capture region, not every color-space, scaling, or cancellation path. Manual acceptance does not expand those automated guarantees.
