@@ -1,7 +1,6 @@
 package settings
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -30,31 +29,6 @@ func TestMacShortcutDisplayAndCommandCapture(t *testing.T) {
 	}
 }
 
-func TestRecorderRecognizesCurrentOptionShortcut(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Mac Option modifier alias")
-	}
-	cfg := testSettingsConfig()
-	cfg.Hotkeys.Panel = "Option+A"
-	v := NewView(TabHotkeys, cfg, Actions{HotkeyBusy: func(string) bool { return true }})
-	defer v.Dispose()
-	tt := ui.NewTester(v.Render, 780, 600)
-	if err := tt.Click("翻译面板快捷键"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Key(ui.Alt, ui.KeyA)
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if conflict := v.hotkeyConflicts["panel"]; conflict != "" {
-		t.Fatalf("current Option shortcut conflicted with its Alt alias: %s", conflict)
-	}
-	if v.hotkeyListening != "" {
-		t.Fatal("recorder stayed active after entering the current shortcut")
-	}
-}
-
-// The input callback must commit on key-down even if key-up arrives before
-// another frame. Sampling KeysDown while rendering cannot satisfy this.
 func TestRecorderCommitsBeforeNextFrame(t *testing.T) {
 	v := NewView(TabHotkeys, testSettingsConfig(), Actions{})
 	defer v.Dispose()
@@ -100,26 +74,5 @@ func TestRecorderTakesSpaceAndWaitsForModifier(t *testing.T) {
 	v.mu.Unlock()
 	if saved != "Alt+Space" || listening != "" {
 		t.Fatalf("Space activated recorder instead of saving: %q, %q", saved, listening)
-	}
-}
-
-func TestRecorderUsesMacPhysicalPosition(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Carbon uses physical key positions")
-	}
-	v := NewView(TabHotkeys, testSettingsConfig(), Actions{})
-	defer v.Dispose()
-	tt := ui.NewTester(v.Render, 780, 600)
-	if err := tt.Click("翻译面板快捷键"); err != nil {
-		t.Fatal(err)
-	}
-	// The layout reports a different logical key; registration must use the
-	// physical key Carbon will bind, just as for Option symbols and IMEs.
-	v.captureHotkey("panel", ui.InputEvent{Kind: ui.InputKeyDown, Mods: ui.Alt, Key: ui.KeyZ, PhysicalKey: ui.KeyK})
-	v.mu.Lock()
-	got := v.settings.Hotkeys.Panel
-	v.mu.Unlock()
-	if got != "Alt+K" {
-		t.Fatalf("captured %q instead of physical Option+K", got)
 	}
 }

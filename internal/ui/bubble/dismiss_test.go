@@ -294,3 +294,89 @@ func TestBubblePresentationAndCaptureCompletionDoNotDismissJobs(t *testing.T) {
 	// Native Hide during reuse is covered by desktop e2e; a zero Window
 	// cannot establish callback behavior.
 }
+
+// Hiding a stale workspace must also revoke the independent translation jobs.
+func TestWorkspaceDismissStopsTransientJobs(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		m, b := newDismissTestBubble(t, "selection", "")
+		full, retry := startDismissTestJobs(t, m, b)
+		b.pinned = pinned
+		if b.stopStalePresentation(0) {
+			t.Fatal("current entry was hidden")
+		}
+		if !b.stopStalePresentation(1) {
+			t.Fatal("stale presentation was retained")
+		}
+		if pinned {
+			if full.Err() != nil || retry.Err() != nil || b.closeClaimed {
+				t.Fatal("fixed work was canceled")
+			}
+		} else {
+			if full.Err() == nil || retry.Err() == nil {
+				t.Fatal("stale work continued")
+			}
+			if m.RecordResult(b.win, TranslationUpdateMsg{ReqID: "full", Service: "openai", Text: "late"}) || m.RecordMeta(b.win, RunMetaMsg{ReqID: "full"}, "") {
+				t.Fatal("accepted late work")
+			}
+			if b.stopStalePresentation(1) || b.claimShow() {
+				t.Fatal("dismissal repeated or reopened window")
+			}
+		}
+	}
+}
+
+// Workspace restoration must not let an old input consume a new panel entry
+// while an unrelated selection is still pending.
+func TestPinnedRestorePreservesEntryOwnership(t *testing.T) {
+	m, b := newDismissTestBubble(t, "input", "")
+	var gate testGate
+	old := gate.Begin()
+	b.canShow = old.Valid
+	b.pinned = true
+	b.claimShow()
+	full, retry := startDismissTestJobs(t, m, b)
+	pending := gate.Begin()
+	defer pending.Cancel()
+	if !b.stopStalePresentation(1) || !m.claimPinnedRestore(b, 1) {
+		t.Fatal("fixed bubble could not be restored")
+	}
+	if b.stopStalePresentation(1) || b.canShow() || full.Err() != nil || retry.Err() != nil {
+		t.Fatal("restore changed entry ownership or independent translation jobs")
+	}
+	if got, _ := m.changePin(config.Default(), b.win, b.id, b.sessionID, b.showID, false); got != b {
+		t.Fatal("restored bubble could not be unpinned")
+	}
+	// Reject before querying the zero Window: the panel action must acquire
+	// a fresh entry, which will revoke the pending selection.
+	if m.FocusVisibleInput() || !pending.Valid() {
+		t.Fatal("old input bypassed entry acquisition")
+	}
+	fresh := gate.Begin()
+	defer fresh.Cancel()
+	if pending.Valid() || b.canShow() || !fresh.Valid() {
+		t.Fatal("new panel entry failed to reject old acquisition")
+	}
+	if !b.stopStalePresentation(2) || full.Err() == nil || retry.Err() == nil {
+		t.Fatal("unpinned restoration survived a later workspace change")
+	}
+}
+
+func TestPinnedRestoreRejectsObsoleteMenuActions(t *testing.T) {
+	for _, state := range []string{"unpinned", "closed", "replaced"} {
+		t.Run(state, func(t *testing.T) {
+			m, b := newDismissTestBubble(t, "input", "")
+			b.pinned = true
+			switch state {
+			case "unpinned":
+				b.pinned = false
+			case "closed":
+				delete(m.byID, b.id)
+			case "replaced":
+				m.byID[b.id] = &bubble{id: b.id, pinned: true}
+			}
+			if m.claimPinnedRestore(b, 1) || b.workspace != 0 {
+				t.Fatal("obsolete menu action renewed presentation")
+			}
+		})
+	}
+}

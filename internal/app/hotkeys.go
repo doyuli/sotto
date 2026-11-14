@@ -58,49 +58,49 @@ func (a *application) applyHotkeys(cfg config.HotkeySettings) error {
 	}
 	a.mu.Unlock()
 
-	mygo.GlobalShortcut.UnregisterAll()
-	active := map[string]string{}
-	var firstErr error
-	for _, action := range hotkeyActions {
-		candidates := hotkeyCandidates(action, cfg)
-		registered := ""
-		for _, accel := range candidates {
-			if err := mygo.GlobalShortcut.Register(accel, a.onHotkey(action)); err == nil {
-				registered = accel
-				break
-			}
-		}
-		if registered == "" {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("“%s”的候选快捷键（%s）都被占用",
-					hotkeyLabels[action], strings.Join(candidates, "、"))
-			}
-			continue
-		}
-		if registered != candidates[0] {
-			a.notify("Sotto", hotkeyLabels[action]+"的快捷键被占用，已改用 "+registered)
-		}
-		active[action] = registered
-	}
-	if firstErr != nil {
-		// Put back what worked before this attempt.
-		mygo.GlobalShortcut.UnregisterAll()
-		for action, accel := range old {
-			if err := mygo.GlobalShortcut.Register(accel, a.onHotkey(action)); err != nil {
-				log.Printf("rollback hotkey %s: %v", accel, err)
-			}
-		}
-		a.mu.Lock()
-		a.hotkeys = old
-		a.mu.Unlock()
-		a.syncHotkeys(old)
-		return firstErr
-	}
+	active, err := registerHotkeys(cfg, old, func(action, accel string) error { return mygo.GlobalShortcut.Register(accel, a.onHotkey(action)) }, mygo.GlobalShortcut.UnregisterAll)
 	a.mu.Lock()
 	a.hotkeys = active
 	a.mu.Unlock()
 	a.syncHotkeys(active)
-	return nil
+	if err == nil {
+		for action, accel := range active {
+			if accel != hotkeyCandidates(action, cfg)[0] {
+				a.notify("Sotto", hotkeyLabels[action]+"的快捷键被占用，已改用 "+accel)
+			}
+		}
+	}
+	return err
+}
+
+func registerHotkeys(cfg config.HotkeySettings, old map[string]string, register func(string, string) error, clear func()) (map[string]string, error) {
+	clear()
+	active := map[string]string{}
+	var firstErr error
+	for _, action := range hotkeyActions {
+		candidates := hotkeyCandidates(action, cfg)
+		for _, accel := range candidates {
+			if register(action, accel) == nil {
+				active[action] = accel
+				break
+			}
+		}
+		if active[action] == "" && firstErr == nil {
+			firstErr = fmt.Errorf("“%s”的候选快捷键（%s）都被占用", hotkeyLabels[action], strings.Join(candidates, "、"))
+		}
+	}
+	if firstErr != nil {
+		clear()
+		active = map[string]string{}
+		for action, accel := range old {
+			if err := register(action, accel); err == nil {
+				active[action] = accel
+			} else {
+				log.Printf("rollback hotkey %s: %v", accel, err)
+			}
+		}
+	}
+	return active, firstErr
 }
 
 // syncHotkeys writes the accelerators actually in force back into the

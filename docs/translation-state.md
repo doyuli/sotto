@@ -21,6 +21,7 @@
 | 正在运行 | `runCancels[reqID]` | 每个请求的取消函数。一个全文请求可能仍有其他服务未完成，单卡重试不取消它。完成时移除，全文替换/取消/关闭时统一取消。 |
 | 识别阶段 | `cancelCapture`、`phase` | OCR 尚未变成翻译请求时的取消函数和展示阶段。识别结果只能写回原会话且 revision 仍为 -1 的窗口。 |
 | 延迟显示 | `canShow`、`ready`、`presentationShown` | 原生视图应用当前状态、窗口就绪且入口仍有效时首次显示；关闭或入口失效后不得迟到弹窗。 |
+| 工作区展示 | `workspace` | 展示或显式恢复时记录工作区代次；与 `canShow` 的入口所有权独立，恢复固定气泡不能重新认领旧入口。 |
 
 原生 `bubbleView.serviceReqIDs` 对应服务请求身份，`cards` 保存结果，控件通过稳定身份保持编辑、选择和焦点状态。用户失焦、外部点击或新的入口收起未钉住气泡时，都会结束当前展示会话：取消全文、单卡重试和 OCR，清空结果身份，置 `closeClaimed` 并发出 `RunStopped`。隐藏后重新唤起时开启新会话并清空输入草稿、译文和请求身份。当前输入入口仍有效且未钉住面板已可见时，重复打开只聚焦，不撤销入口、不重置内容，也不停止在途翻译；仅递增 showID，使迟到的旧关闭、失焦和外部点击回调失效。钉住的窗口保留独立会话。
 
@@ -132,8 +133,9 @@ Windows 模拟复制期间临时安装键盘和鼠标低级钩子。每次复制
 
 ## 已有验证与待补证据
 
-- `app_test.go`：入口任务所有权和目标语言解析；`app_darwin_test.go` 补充 workspace 代次与旧入口取消。
+- `internal/app/app_test.go`：入口任务所有权和目标语言解析；`internal/app/app_darwin_test.go` 补充 workspace 代次与旧入口取消。
 - `internal/ui/bubble/session_test.go`：请求排序、服务隔离、过期关闭拒绝；没有驱动真实主线程队列和原生窗口。
+- `internal/ui/bubble/dismiss_test.go`：工作区变化取消临时工作、保留固定工作；恢复后取消固定仍须重新获取输入入口，关闭/取消固定/替换后的旧菜单动作不能恢复窗口。
 - `internal/ui/bubble/ui_test.go`、`internal/ui/bubble/controls_test.go`、`internal/ui/bubble/regression_test.go`：输入、菜单、流式卡片、复制/重试、控件焦点、会话隔离与尺寸；`internal/ui/bubble/scroll_test.go` 覆盖原生滚动。Tester 不能替代 Windows 中文输入法与真实窗口验收。
 - `internal/ui/settings/view_test.go`：模型与凭证、保存回滚与 FIFO 排空、窗口重开与凭据顺序、分组焦点及过期结果隔离；覆盖详情以实际用例断言为准，系统凭据持久化仍需 Windows 验收。
 - `internal/ui/settings/hotkeys_test.go`、`internal/ui/settings/platform_test.go`：按键事件在下一帧前提交、录制控件焦点、空格组合键与 macOS 物理键位，以及 Command+Option+A/S/D 的保存和显示、完整 Control+Option+A/S/D 的逐项保存及重新加载；不等于真实全局热键触发验收。
@@ -153,3 +155,11 @@ Windows 模拟复制期间临时安装键盘和鼠标低级钩子。每次复制
 - OCR 完成只更新仍属于该 sessionID、未关闭且 revision 仍为 -1 的展示；不替换 generation 或 showID，也不重新打开窗口。异步快照经 `Window.Update` 回到 UI 线程，由视图的会话和请求身份检查拒绝过期工作。
 - 剪贴板恢复和放弃恢复在工作 goroutine 执行，完成回调通过 `Window.Update` 回到 UI 线程；视图负责 busy 状态、过期回调和提示的检查。
 - 本地依据：mygo v0.8.3 `ui/doc.go` 规定视图构建在主线程执行，异步状态通过 `Window.Update` 发布；窗口尺寸由 `window.go` 的 `SetContentSize` 使用原生逻辑单位更新。
+
+## macOS 应用与工作区事件
+
+被动结果没有获得焦点，不能只靠 blur 收起。外部点击与 NSWorkspace 应用激活通知共同检测离开，监听归属于当前 presentation；目标应用必须仍为前台，旧监听与旧 showID 不得关闭新展示。普通应用切换不推进 workspace generation，固定气泡及关闭自动隐藏时保留原有语义。
+
+Space/睡眠变化推进 workspace generation。过期临时展示必须语义关闭：取消全文、单卡重试和识别，清空结果身份并结算视图，不能只 Hide。固定气泡仅隐藏并保留独立请求；菜单显式恢复仍存活且仍固定的编号窗口，恢复后仅更新 `workspace` 展示边界，保留原 `canShow` 入口校验。恢复后取消固定并再次打开输入面板时，旧入口若已失效就必须获取新入口，撤销仍在采集的其他入口。
+
+共享状态机和注入操作不等同于真实 NSWorkspace、AX、SCK 或 pasteboard 验收。平台测试与桌面验证入口见 `../e2e/README.md`。

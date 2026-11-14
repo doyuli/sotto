@@ -68,6 +68,8 @@ type bubble struct {
 	serviceRequests        map[string]string
 	cancelCapture          context.CancelFunc
 	canShow                func() bool
+	// Restoring a fixed bubble renews its workspace, never its entry ownership.
+	workspace uint64
 	// trigger and text of the last query, for a page that mounts late.
 	trigger, text string
 	// Native readiness gates first presentation; the view owns content measurement.
@@ -169,6 +171,7 @@ func (m *Manager) ShowTask(cfg config.Settings, trigger, text string, anchor *An
 		b.replaceContent(cfg, trigger, text, phase, message, cancel)
 		b.present()
 		b.canShow = valid
+		b.workspace = platform.WorkspaceGeneration()
 		m.mu.Unlock()
 		// Reset geometry and native view state before presenting the reused window.
 		b.win.Hide()
@@ -709,17 +712,44 @@ func (m *Manager) hideTransientBubble(b *bubble) {
 // HideStale hides presentations revoked by the current workspace generation.
 // It runs on the UI thread; no lock is held across native window operations.
 func (m *Manager) HideStale() {
+	workspace := platform.WorkspaceGeneration()
 	m.mu.Lock()
-	var windows []*mygo.Window
+	var stale []*bubble
 	for _, b := range m.byID {
-		if b.canShow == nil || !b.canShow() {
-			windows = append(windows, b.win)
+		if b.stopStalePresentation(workspace) {
+			stale = append(stale, b)
 		}
 	}
 	m.mu.Unlock()
-	for _, w := range windows {
-		w.Hide()
+	for _, b := range stale {
+		if !b.pinned && b.view != nil {
+			b.view.onStopped(RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision})
+			b.win.Invalidate()
+		}
+		b.win.Hide()
 	}
+}
+
+// Fixed bubbles retain their independent jobs across workspace changes.
+func (b *bubble) stopStalePresentation(workspace uint64) bool {
+	if b.workspace == workspace {
+		return false
+	}
+	if !b.pinned {
+		return b.dismiss()
+	}
+	return true
+}
+
+// A retained menu action must not revive a closed or unpinned window.
+func (m *Manager) claimPinnedRestore(b *bubble, workspace uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byID[b.id] != b || !b.pinned {
+		return false
+	}
+	b.workspace = workspace
+	return true
 }
 
 // HiddenPinnedMenuItems returns restore actions in creation order.
@@ -736,7 +766,11 @@ func (m *Manager) HiddenPinnedMenuItems() []*mygo.MenuItem {
 	var items []*mygo.MenuItem
 	for _, b := range pinned {
 		if !b.win.IsVisible() {
-			items = append(items, &mygo.MenuItem{Label: "恢复固定气泡", Click: func(*mygo.MenuItem, *mygo.Window) { b.win.Show() }})
+			items = append(items, &mygo.MenuItem{Label: fmt.Sprintf("恢复固定气泡 %d", b.id+1), Click: func(*mygo.MenuItem, *mygo.Window) {
+				if m.claimPinnedRestore(b, platform.WorkspaceGeneration()) {
+					b.win.Show()
+				}
+			}})
 		}
 	}
 	return items

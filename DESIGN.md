@@ -2,13 +2,13 @@
 
 ## Brand
 
-Sotto is a quiet, precise Windows utility: it stays out of the way, shows the answer immediately, and makes comparison effortless. The reusable brand system is a neutral surface ladder with a single blue signal color, system UI type, soft 12–14 px corners, and one speech-bubble S mark.
+Sotto is a quiet, precise desktop utility: it stays out of the way, shows the answer immediately, and makes comparison effortless. The reusable brand system is a neutral surface ladder with a single blue signal color, system UI type, soft 12–14 DIP corners, and one speech-bubble S mark.
 
-- **Mark**: the app icon is an ink rounded tile holding a blue speech bubble and a white S; the in-app mark repeats that bubble and S at 20 px. It is the only decorative brand element; do not pair it with a wordmark inside the panel. Icon colors: ink `#1B2436`, blue `#4C7DF0`, S `#F7FAFF`; the in-app mark uses the accent for the bubble and the panel color for the S.
+- **Mark**: the app icon is an ink rounded tile holding a blue speech bubble and a white S; the in-app mark repeats that bubble and S at 20 DIP. It is the only decorative brand element; do not pair it with a wordmark inside the panel. Icon colors: ink `#1B2436`, blue `#4C7DF0`, S `#F7FAFF`; the in-app mark uses the accent for the bubble and the panel color for the S.
 - **Color**: the blue accent belongs to the mark, the detected-language word, and focus rings. Everything else is a neutral: panel, recessed control, card title strip, card body. Never use flags, third-party service logos, or a browser-opening icon.
-- **Type**: one system sans. Compact steps only: 15 px result text, 14 px input, 13 px labels, 12 px metadata. Line height 1.55–1.65 for Chinese.
-- **Shape**: panel 14 px, controls and cards 12 px, icon buttons 6 px. Elevation is one soft panel shadow; nested borders are not part of the language.
-- **Icons**: 2 px stroke, 16 px in controls, muted by default, stronger on hover. No emoji substitute for an icon.
+- **Type**: one system sans. Compact steps only: 15 DIP result text, 14 DIP input, 13 DIP labels, 12 DIP metadata. Line height 1.55–1.65 for Chinese.
+- **Shape**: panel 14 DIP, controls and cards 12 DIP, icon buttons 6 DIP. Elevation is one soft panel shadow; nested borders are not part of the language.
+- **Icons**: 2 DIP stroke, 16 DIP in controls, muted by default, stronger on hover. No emoji substitute for an icon.
 - **Voice**: direct Simplified Chinese; controls name their action; errors name the problem and the recovery.
 
 ### Applying the brand
@@ -16,7 +16,7 @@ Sotto is a quiet, precise Windows utility: it stays out of the way, shows the an
 - Start from the shared panel and use each window's surface ladder to separate controls from content.
 - Use the speech-bubble S as the only brand ornament. Do not add a wordmark or a second decorative icon inside app chrome.
 - Give the accent one job per surface: brand mark, selected/detected state, or focus. Never tint a whole region with it.
-- Use 2 px stroke icons at 16 px; never substitute emoji or third-party service marks.
+- Use 2 DIP stroke icons at 16 DIP; never substitute emoji or third-party service marks.
 - Ship light and dark from the same token names, not two hand-tuned palettes.
 
 ## Shared tokens
@@ -35,7 +35,7 @@ The bubble and settings share these tokens. Both follow the OS color scheme. The
 
 ## Bubble surface
 
-Operate. The translation bubble is a frameless 480 px Windows panel with a recessed composer and language bar. The result card title strip is darker than its body in both schemes.
+Operate. The translation bubble is a frameless 480-DIP desktop panel with a recessed composer and language bar. The result card title strip is darker than its body in both schemes.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Operate. The translation bubble is a frameless 480 px Windows panel with a reces
 
 ## Settings surface
 
-The settings window adds a navigation rail, service cards, and recessed fields. These tokens are scoped to `body[data-route="settings"]`.
+The settings window adds a navigation rail, service cards, and recessed fields. These semantic tokens map to the native settings palette; they are not CSS variables.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
@@ -59,22 +59,22 @@ The settings window adds a navigation rail, service cards, and recessed fields. 
 | `--badge-ink` | `#5c5c5c` | `#b4b7bb` | quiet badge and order-number text |
 | `--success` | `#15803d` | `#4ade80` | connection-test success text |
 | `--warning` / `--warning-soft` | `#b45309` / 12% | `#fbbf24` / 14% | unconfigured badge |
-| `--primary-bg` | `#1a5fae` | `var(--accent)` | primary button background |
+| `--primary-bg` | `#1a5fae` | accent token | primary button background |
 | `--on-accent` | `#ffffff` | `#0d1b2b` | label on an accent button |
 
 The service title strip is darker than the card in light mode and lighter in dark mode. Badges use a borderless tint.
 
 ## Type and shape
 
-- System UI sans; input 14 px / 1.55, card text 15 px / 1.65, labels 13 px, badge 12 px.
-- Radii: bubble 14 px, composer/language bar/cards 12 px, icons 6 px.
+- System UI sans; input 14 DIP / 1.55, card text 15 DIP / 1.65, labels 13 DIP, badge 12 DIP.
+- Radii: bubble 14 DIP, composer/language bar/cards 12 DIP, icons 6 DIP.
 - Elevation: one soft panel shadow; cards use the surface ladder instead of borders.
-- Icons: 2 px stroke, 16 px in controls, muted by default, `--icon-strong` on hover.
+- Icons: 2 DIP stroke, 16 DIP in controls, muted by default, `--icon-strong` on hover.
 
 ## Components
 
-- **Top bar**: small brand sparkle at the left; pin/close at the right. Pinned bubbles drag by the whole bar.
-- **Composer**: textarea plus an inline row of speak, copy, detected-language badge, and clear. The textarea grows to 112 px, capped further at 18% of the bubble height on short work areas, then scrolls internally. The badge is hidden until a concrete language is known.
+- **Top bar**: speech-bubble S mark at the left; pin/close at the right. Pinned bubbles drag by the whole bar.
+- **Composer**: textarea plus an inline row of speak, copy, detected-language badge, and clear. The textarea grows to 112 DIP, capped further at 18% of the bubble height on short work areas, then scrolls internally. The badge is hidden until a concrete language is known.
 - **Language bar**: one control with source select, swap, target select. Carets are drawn; source supports automatic detection or a manual language. No flags.
 - **Result cards**: deeper title strip, lighter body, collapse chevron (down expanded, left collapsed), full-height translation text with no card scrollbar, tools row with naming-style icons then speak/copy.
 - **Overflow and placement**: the bubble grows to 760 DIPs or the display work area minus 12 DIPs on each edge, whichever is smaller. The header is outside the scroll region; the composer, language bar, and results scroll together below it. Content and composer scrollbar gutters always occupy space; thumbs appear during scrolling and fade after 900 ms of inactivity. Prefer an opening side with reading space, keep that side while results grow, and stay inside the work area. Pinned windows retain their dragged position.
@@ -90,3 +90,11 @@ The service title strip is darker than the card in light mode and lighter in dar
 ## Motion
 
 150 ms state transitions only: hover, collapse, badge/state changes, and a subtle fade-in on newly appended translation text. Previously displayed text stays still; streaming never adds an artificial typing delay. Shimmer runs only while loading. OCR uses three muted dots beside “正在识别文字…” with a one-second opacity cycle; they stop when hidden and disappear on completion, failure or cancellation. The system’s reduced-motion preference keeps the dots static, disables reveal and shimmer animations and reduces transitions.
+
+## macOS behavior
+
+The menu bar uses a monochrome template silhouette with transparent padding. The app remains Accessory with no Dock icon. Passive selection/OCR results use inactive presentation; explicit input/settings actions request keyboard focus. Background results never activate an application or move Spaces.
+
+Workspace changes dismiss transient sessions and hide fixed bubbles with independent work retained. Menu actions identify fixed bubbles by number and restore existing content. Permission failures explain Accessibility or screen recording and offer recovery through the system-permissions menu.
+
+All layout dimensions above are logical units. macOS display-local capture points become physical pixels at the capture boundary; Windows resolves overlay-local DIPs through its HWND. Work areas, menu bars and negative display coordinates must be checked on actual multi-display hardware. Native focus acceptance remains pending as recorded in `e2e/macos.md`.

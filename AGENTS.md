@@ -6,12 +6,16 @@
 ## 开发循环
 
 ```bash
-export PATH="/c/Program Files/Go/bin:$PATH"   # go 不在 Git Bash 默认 PATH
+export PATH="/c/Program Files/Go/bin:$PATH"   # 仅 Windows Git Bash，Go 不在默认 PATH 时使用
 bun run dev            # 开发运行（Go + 原生 UI）
 CGO_ENABLED=0 go test ./...
 bunx mygo vet .
 bun run build          # 生产构建（编译 + 出包）
-CGO_ENABLED=0 go test -tags e2e ./e2e/ -v   # e2e 冒烟（需先 build，需桌面会话，见 e2e/README.md）
+# Windows：生产包与桌面会话
+CGO_ENABLED=0 go test -tags e2e ./e2e/ -v
+# macOS：不制作 DMG/公证；桌面探针须交互式会话
+bun run build:mac -skip-dmg -skip-notarize
+CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
 ```
 
 ## 硬规则
@@ -70,3 +74,10 @@ internal/selection # Windows UIA / macOS AX 主路径 + 模拟复制兜底；气
 internal/capture   # Windows GDI / macOS ScreenCaptureKit 截屏
 internal/ocr       # Windows PP-OCR + Windows.Media.Ocr 兜底；macOS Vision
 ```
+
+## 平台验证与坐标契约
+
+- 共享逻辑与 Tester 用例放普通 `_test.go`；平台 API 放 `_windows_test.go` / `_darwin_test.go`。接收平台参数的纯函数在所有宿主覆盖两平台，不复制测试。
+- 真实抓屏、权限和桌面交互必须显式启用。Windows 抓屏使用 `SOTTO_CAPTURE_NATIVE=1`；Mac 原生引擎/隔离 pasteboard 使用 `SOTTO_MACOS_NATIVE=1`，桌面测试另需 `SOTTO_DESKTOP=1`。入口及验证边界见 `e2e/README.md`。
+- 符号加载、编译、Tester、真实系统调用和桌面验收分别记录；交叉编译不得写为平台测试已通过。
+- UI/global screen 坐标采用 MyGo 逻辑空间；snip 手势是 overlay-local。`capture.GrabDisplayWindow` 在 Windows 接收 overlay-local DIPs，在 Mac 接收 display-local points 与稳定 display ID；输出图像及 OCR 四边形使用 physical pixels。

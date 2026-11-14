@@ -204,17 +204,6 @@ func captureDisplay(ctx context.Context, displayID int64, r macnative.Rect) (img
 	return img, err
 }
 
-func grabWindow(handle uintptr, r Rect) (image.Image, error) {
-	var displayID int64
-	mygo.RunOnMain(func() {
-		// This compatibility entry is only called with a live overlay handle.
-		frame := objc.Send[macnative.Rect](objc.ID(handle), macnative.Sel("frame"))
-		bounds := macnative.CocoaRect(frame, float64(mygo.Screen.PrimaryDisplay().Bounds.Height))
-		displayID = mygo.Screen.DisplayMatching(mygo.Rectangle{X: int(bounds.Origin.X), Y: int(bounds.Origin.Y), Width: int(bounds.Size.Width), Height: int(bounds.Size.Height)}).ID
-	})
-	return grabDisplayWindow(context.Background(), handle, displayID, r)
-}
-
 func grab(r Rect) (image.Image, error) {
 	d := mygo.Screen.DisplayMatching(mygo.Rectangle{X: r.X, Y: r.Y, Width: r.W, Height: r.H})
 	return grabDisplayWindow(context.Background(), 0, d.ID, Rect{r.X - d.Bounds.X, r.Y - d.Bounds.Y, r.W, r.H})

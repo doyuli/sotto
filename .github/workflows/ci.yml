@@ -85,6 +85,10 @@ jobs:
         env:
           SOTTO_MACOS_NATIVE: "1"
         run: go test ./internal/ocr -run '^TestVisionNativeSmoke$' -count=1 -v
+      - name: Verify isolated pasteboard item round trip
+        env:
+          SOTTO_MACOS_NATIVE: "1"
+        run: go test ./internal/selection -run '^TestMacIsolatedPasteboardItems$' -count=1 -v
       - name: Build the Apple silicon app
         run: bun run build:mac -skip-dmg -skip-notarize
       - name: Verify Windows OCR assets are excluded

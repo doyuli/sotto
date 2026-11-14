@@ -37,10 +37,10 @@ macOS 14+ 实验性支持可从源码构建，仅支持 Apple Silicon（arm64）
 ## 核心特性
 
 - ⚡ **多引擎并发对比**：一次查询，多个翻译源同屏流式返回，先到先看；支持独立折叠与重试。
-- 🖱️ **无感划词，不破剪贴板**：优先通过 UIA 读取选中文本；回退模拟复制时自动还原剪贴板，不污染剪贴板历史。
-- 📷 **离线双引擎截图 OCR**：框选屏幕即刻本地识别翻译，内置 PP-OCR 与原生 WinRT OCR，不上传图片更私密。
+- 🖱️ **无感划词，不破剪贴板**：Windows 优先通过 UIA 读取选中文本；回退模拟复制时自动还原剪贴板，Sotto 自身的恢复写入带历史排除标记；目标应用的临时复制不受此保证约束。
+- 📷 **离线截图 OCR**：框选屏幕即刻本地识别翻译，Windows 内置 PP-OCR 与原生 WinRT OCR；Mac 使用 Vision，不上传图片更私密。
 - 💻 **变量命名一键转换**：一键将英文译文转换为 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE`、`kebab-case` 命名格式。
-- 🔒 **凭据安全与零遥测**：纯本地运行、零埋点；API 密钥存入 Windows 凭据管理器加密保护，不存明文配置。
+- 🔒 **凭据安全与零遥测**：纯本地运行、零埋点；API 密钥存入 Windows 凭据管理器或 macOS 钥匙串保护，不存明文配置。
 - 🎨 **轻量克制，融入系统**：纯 Go 后端 + 原生 `mygo/ui` 窗口；无边框设计，跟随深浅主题，失焦收起或一键钉住常驻。
 
 ---
@@ -109,7 +109,7 @@ bun run build:win            # 同时构建 x64 与 arm64 安装包
 bun run build:mac            # 在 Mac 上构建 Apple Silicon（arm64）应用
 ```
 
-> 原生 UI 测试位于 `internal/ui/{bubble,settings,snip}`，使用 `ui.NewTester`。Windows 集成测试与桌面手工验收见 [e2e/README.md](e2e/README.md)。默认单测不会运行需显式启用的 OCR 运行时探针和桌面 e2e。
+> 原生 UI 测试位于 `internal/ui/{bubble,settings,snip}`，使用 `ui.NewTester`。平台原生测试与桌面手工验收见 [e2e/README.md](e2e/README.md)。默认单测不会运行需显式启用的 OCR 运行时探针和桌面 e2e。
 
 ---
 
@@ -118,3 +118,5 @@ bun run build:mac            # 在 Mac 上构建 Apple Silicon（arm64）应用
 感谢 [Easydict](https://github.com/tisfeng/Easydict) 为 Sotto 带来的灵感与启发。
 
 感谢 [Mygo](https://mygo.egoist.dev/) 为 Sotto 提供应用开发框架。
+
+Mac 需辅助功能（划词）和屏幕录制（截图）权限。跨平台测试入口和待验收边界见 [验证入口](e2e/README.md)。显式保存的快捷键保持原值，缺省值采用当前平台默认组合。

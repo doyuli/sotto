@@ -15,7 +15,7 @@ import (
 
 // The stock updater opens an activating NSWindow even for accessory apps.
 // Keep the signed download/install engine and publish status in our tray.
-var macUpdates struct {
+type macUpdateController struct {
 	sync.Mutex
 	ctx             context.Context
 	stop            context.CancelFunc
@@ -25,25 +25,36 @@ var macUpdates struct {
 	status          string
 	failed          bool
 	refresh         func()
+	check           func(context.Context) (*mygo.Update, error)
+	install         func(context.Context, *mygo.Update) error
+	changed         func()
 }
 
+var macUpdates macUpdateController
+
 func InitUpdates(_ []byte) {
+	macUpdates.check = mygo.Updater.Check
+	macUpdates.install = func(ctx context.Context, up *mygo.Update) error { return up.Install(ctx, nil) }
+	macUpdates.changed = refreshMacUpdateMenu
 	macUpdates.ctx, macUpdates.stop = context.WithCancel(context.Background())
 	mygo.App.OnQuit(func() { macUpdates.stop() })
 }
 
-func SetAutomaticUpdates(on bool) {
-	macUpdates.Lock()
-	defer macUpdates.Unlock()
-	if macUpdates.automatic != nil {
-		macUpdates.automatic()
-		macUpdates.automatic = nil
+func SetAutomaticUpdates(on bool) { macUpdates.setAutomatic(on && mygo.Updater.Enabled()) }
+
+// Disabling automatic checks stops scheduling; quit cancels in-flight work.
+func (u *macUpdateController) setAutomatic(on bool) {
+	u.Lock()
+	defer u.Unlock()
+	if u.automatic != nil {
+		u.automatic()
+		u.automatic = nil
 	}
-	if !on || macUpdates.ctx == nil || !mygo.Updater.Enabled() {
+	if !on || u.ctx == nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(macUpdates.ctx)
-	macUpdates.automatic = cancel
+	ctx, cancel := context.WithCancel(u.ctx)
+	u.automatic = cancel
 	go func() {
 		timer := time.NewTimer(10 * time.Second)
 		defer timer.Stop()
@@ -52,7 +63,10 @@ func SetAutomaticUpdates(on bool) {
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				runMacUpdate(false)
+				if ctx.Err() != nil {
+					return
+				}
+				u.run(false)
 				timer.Reset(24 * time.Hour)
 			}
 		}
@@ -102,49 +116,57 @@ func refreshMacUpdateMenu() {
 	}
 }
 
-func runMacUpdate(user bool) {
-	macUpdates.Lock()
-	if macUpdates.busy || macUpdates.installed || macUpdates.ctx.Err() != nil {
-		macUpdates.Unlock()
+func runMacUpdate(user bool) { macUpdates.run(user) }
+
+func (u *macUpdateController) run(user bool) {
+	u.Lock()
+	if u.busy || u.installed || u.ctx == nil || u.ctx.Err() != nil {
+		u.Unlock()
 		return
 	}
-	up := macUpdates.update
+	up := u.update
 	// Background checks only discover updates; installation requires a click.
 	if !user && up != nil {
-		macUpdates.Unlock()
+		u.Unlock()
 		return
 	}
-	macUpdates.busy, macUpdates.status = true, "正在检查更新…"
+	u.busy, u.status = true, "正在检查更新…"
 	if user && up != nil {
-		macUpdates.status = "正在下载更新…"
+		u.status = "正在下载更新…"
 	}
-	root := macUpdates.ctx
-	macUpdates.Unlock()
-	refreshMacUpdateMenu()
+	root := u.ctx
+	u.Unlock()
+	u.notify()
 	ctx, cancel := context.WithTimeout(root, 20*time.Minute)
 	defer cancel()
 	var err error
 	install := user && up != nil
 	if install {
-		err = up.Install(ctx, nil)
+		err = u.install(ctx, up)
 	} else {
-		up, err = mygo.Updater.Check(ctx)
+		up, err = u.check(ctx)
 	}
-	macUpdates.Lock()
-	macUpdates.busy = false
-	macUpdates.failed = err != nil
+	u.Lock()
+	u.busy = false
+	u.failed = err != nil
 	switch {
 	case err != nil:
-		macUpdates.status = "更新失败，点击重试…"
+		u.status = "更新失败，点击重试…"
 	case install:
-		macUpdates.installed = true
+		u.installed = true
 	default:
-		macUpdates.update = up
-		macUpdates.status = "已是最新版本，点击重新检查"
+		u.update = up
+		u.status = "已是最新版本，点击重新检查"
 	}
-	macUpdates.Unlock()
+	u.Unlock()
 	if err != nil {
 		log.Printf("update: %v", err)
 	}
-	refreshMacUpdateMenu()
+	u.notify()
+}
+
+func (u *macUpdateController) notify() {
+	if u.changed != nil {
+		u.changed()
+	}
 }

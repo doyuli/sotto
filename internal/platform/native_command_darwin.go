@@ -27,9 +27,12 @@ func HandleNativeCommand() bool {
 		MainQueueDispatched                                      bool
 		Error                                                    string `json:"error,omitempty"`
 	}{}
+	var initialPID int32
+	var initialGeneration uint64
 	mygo.App.OnWindowAllClosed(func() {})
 	mygo.App.WhenReady(func() {
 		initial := macnative.FrontmostPID()
+		initialPID = initial
 		stop, err := macnative.WatchWorkspace(func() {})
 		if err != nil {
 			report.Error = err.Error()
@@ -38,6 +41,7 @@ func HandleNativeCommand() bool {
 		}
 		mygo.App.OnQuit(stop)
 		generation := macnative.WorkspaceGeneration()
+		initialGeneration = generation
 		macnative.PostMain(func() { report.MainQueueDispatched = true })
 		w := mygo.NewWindow(SettingsWindow(mygo.WindowOptions{Title: "Sotto 原生验证", Hidden: true, Width: 360, Height: 180, Content: ui.View(func(c *ui.Context) { ui.Text(c, "Sotto macOS 面板验证") })}))
 		w.OnReadyToShow(func() {
@@ -47,25 +51,28 @@ func HandleNativeCommand() bool {
 			report.Nonactivating = objc.Send[uint64](native, macnative.Sel("styleMask"))&(1<<7) != 0
 			report.FullscreenAuxiliary = objc.Send[uint64](native, macnative.Sel("collectionBehavior"))&(1<<8) != 0
 			ShowBubbleWindow(w, "selection")
-			time.AfterFunc(100*time.Millisecond, func() {
-				mygo.RunOnMain(func() {
-					report.PassiveVisible, report.PassiveUnfocused = w.IsVisible(), !w.IsFocused()
-					report.PassiveKeptApplication = macnative.FrontmostPID() == initial
-					ShowBubbleWindow(w, "input")
-					time.AfterFunc(100*time.Millisecond, func() {
-						mygo.RunOnMain(func() {
-							report.InputFocused = w.IsFocused()
-							report.InputKeptApplication = macnative.FrontmostPID() == initial
-							report.SpaceUnchanged = macnative.WorkspaceGeneration() == generation
-							w.Hide()
-							mygo.App.Quit()
-						})
-					})
+			waitNativeState(func() bool { return w.IsVisible() }, func() {
+				report.PassiveVisible, report.PassiveUnfocused = w.IsVisible(), !w.IsFocused()
+				report.PassiveKeptApplication = macnative.FrontmostPID() == initial
+				w.OnFocus(func() {
+					report.InputFocused = w.IsFocused()
+					report.InputKeptApplication = macnative.FrontmostPID() == initial
+					report.SpaceUnchanged = macnative.WorkspaceGeneration() == generation
+					w.Hide()
+					mygo.App.Quit()
 				})
+				ShowBubbleWindow(w, "input")
 			})
 		})
 	})
-	timer := time.AfterFunc(10*time.Second, func() { mygo.RunOnMain(func() { report.Error = "native readiness timed out"; mygo.App.Quit() }) })
+	timer := time.AfterFunc(10*time.Second, func() {
+		mygo.RunOnMain(func() {
+			report.InputKeptApplication = macnative.FrontmostPID() == initialPID
+			report.SpaceUnchanged = macnative.WorkspaceGeneration() == initialGeneration
+			report.Error = "native focus/readiness timed out"
+			mygo.App.Quit()
+		})
+	})
 	defer timer.Stop()
 	if err := mygo.App.Run(); err != nil {
 		report.Error = err.Error()
@@ -75,4 +82,13 @@ func HandleNativeCommand() bool {
 		os.Exit(1)
 	}
 	return true
+}
+
+// Poll only the visible-state boundary; input completion uses the focus event.
+func waitNativeState(ready func() bool, next func()) {
+	if ready() {
+		next()
+		return
+	}
+	time.AfterFunc(10*time.Millisecond, func() { mygo.RunOnMain(func() { waitNativeState(ready, next) }) })
 }

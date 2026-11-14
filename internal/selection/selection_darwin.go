@@ -84,21 +84,28 @@ func (s macSource) check(ctx context.Context) error {
 func Prepare() func(context.Context) (Selection, error) {
 	s := prepareMacSource()
 	return func(ctx context.Context) (Selection, error) {
-		if err := s.check(ctx); err != nil {
-			return Selection{}, err
-		}
-		if err := macnative.RequireAccessibility(true); err != nil {
-			return Selection{}, err
-		}
-		sel, err := readAX(ctx, s)
-		if err == nil && sel.Text != "" {
-			return sel, s.check(ctx)
-		}
-		if err != nil && !errors.Is(err, ErrNoSelection) {
-			return Selection{}, err
-		}
-		return copyMacSelection(ctx, s)
+		return readMacSelection(ctx, s.check, macnative.RequireAccessibility, func(ctx context.Context) (Selection, error) { return readAX(ctx, s) }, func(ctx context.Context) (Selection, error) { return copyMacSelection(ctx, s) })
 	}
+}
+
+func readMacSelection(ctx context.Context, check func(context.Context) error, permission func(bool) error, read, copy func(context.Context) (Selection, error)) (Selection, error) {
+	if err := check(ctx); err != nil {
+		return Selection{}, err
+	}
+	if err := permission(true); err != nil {
+		return Selection{}, err
+	}
+	sel, err := read(ctx)
+	if err == nil && sel.Text != "" {
+		return sel, check(ctx)
+	}
+	if err != nil && !errors.Is(err, ErrNoSelection) {
+		return Selection{}, err
+	}
+	if err := check(ctx); err != nil {
+		return Selection{}, err
+	}
+	return copy(ctx)
 }
 
 func grab(ctx context.Context) (Selection, error) { return Prepare()(ctx) }
@@ -220,7 +227,7 @@ func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
 }
 
 func WatchWindowLeave(handle uintptr, changed func()) (stop func(), err error) {
-	var global, local func()
+	var global, local, activation func()
 	mygo.RunOnMain(func() {
 		const mask uint64 = 1<<1 | 1<<3 | 1<<25
 		global, err = macnative.Monitor(mask, false, func(objc.ID) { go changed() })
@@ -235,12 +242,18 @@ func WatchWindowLeave(handle uintptr, changed func()) (stop func(), err error) {
 		})
 		if err != nil {
 			global()
+			return
+		}
+		activation, err = macnative.WatchActivation(func() { go changed() })
+		if err != nil {
+			global()
+			local()
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
-	return sync.OnceFunc(func() { mygo.RunOnMain(func() { global(); local() }) }), nil
+	return sync.OnceFunc(func() { mygo.RunOnMain(func() { global(); local(); activation() }) }), nil
 }
 
 func WindowOwnsForeground(handle uintptr) bool {

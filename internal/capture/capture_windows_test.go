@@ -24,6 +24,9 @@ func TestBitBltRejectsOversizedInput(t *testing.T) {
 //
 // and inspect the file — its corner must match the screen's top-left.
 func TestGrabSmoke(t *testing.T) {
+	if os.Getenv("SOTTO_CAPTURE_NATIVE") != "1" {
+		t.Skip("set SOTTO_CAPTURE_NATIVE=1 for desktop capture")
+	}
 	img, err := Grab(Rect{X: 0, Y: 0, W: 320, H: 200})
 	if err != nil {
 		t.Fatalf("Grab: %v", err)

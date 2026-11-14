@@ -20,10 +20,6 @@ type Rect struct {
 	Origin Point
 	Size   Size
 }
-type Range struct {
-	_                structs.HostLayout
-	Location, Length uint64
-}
 
 func NewRect(x, y, w, h float64) Rect {
 	return Rect{Origin: Point{X: x, Y: y}, Size: Size{Width: w, Height: h}}

@@ -13,6 +13,3 @@ func Grab(rect Rect) (image.Image, error) {
 
 // Rect is a rectangle in DIP screen coordinates.
 type Rect struct{ X, Y, W, H int }
-
-// GrabWindow captures a rectangle in the overlay's local DIP coordinates.
-func GrabWindow(hwnd uintptr, rect Rect) (image.Image, error) { return grabWindow(hwnd, rect) }

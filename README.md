@@ -26,7 +26,7 @@
 
 Sotto is a desktop translation utility tailored for Windows. Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
 
-Combining multi-engine streaming comparison, offline screen OCR, non-intrusive selection without clipboard pollution, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
+Combining multi-engine streaming comparison, offline screen OCR, selection with guarded clipboard preservation, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
 
 [Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
 
@@ -37,10 +37,10 @@ Experimental macOS 14+ support is available from source for Apple silicon (arm64
 ## Features
 
 - ⚡ **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold or retry cards independently.
-- 🖱️ **Non-Intrusive Selection**: Reads text via UI Automation (UIA) without copying; fallback simulated copy automatically restores your clipboard without polluting history.
-- 📷 **Offline Dual-Engine OCR**: Snip any screen region to translate locally. Powered by on-device PP-OCR and native WinRT OCR—no images uploaded to the cloud.
+- 🖱️ **Non-Intrusive Selection**: Windows reads text via UI Automation (UIA); Mac uses Accessibility. Guarded simulated copy preserves readable clipboard content. Sotto’s own Windows restore writes carry history exclusion markers; temporary copies made by the source app are outside this guarantee.
+- 📷 **Offline Screen OCR**: Snip any screen region to translate locally. Windows uses on-device PP-OCR and native WinRT OCR; Mac uses Vision. Images stay local.
 - 💻 **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
-- 🔒 **Secure Credentials & Zero Telemetry**: Strictly local with no tracking. API keys are safely encrypted in Windows Credential Manager (DPAPI) rather than plain-text configs.
+- 🔒 **Secure Credentials & Zero Telemetry**: Strictly local with no tracking. API keys are safely encrypted in Windows Credential Manager or macOS Keychain rather than plain-text configs.
 - 🎨 **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects themes, hides on blur, or pins in place.
 
 ---
@@ -109,7 +109,7 @@ bun run build:win            # Build for both x64 and arm64
 bun run build:mac            # Build an Apple silicon macOS app (on macOS)
 ```
 
-> Native UI tests live in `internal/ui/{bubble,settings,snip}` and use `ui.NewTester`. Windows integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md). The default unit suite skips the opt-in OCR runtime probes and desktop e2e tests.
+> Native UI tests live in `internal/ui/{bubble,settings,snip}` and use `ui.NewTester`. Platform integration tests and desktop acceptance steps are documented in [e2e/README.md](e2e/README.md). The default unit suite skips the opt-in OCR runtime probes and desktop e2e tests.
 
 ---
 
@@ -118,3 +118,5 @@ bun run build:mac            # Build an Apple silicon macOS app (on macOS)
 Thanks to the authors and contributors of [Easydict](https://github.com/tisfeng/Easydict) for inspiring Sotto.
 
 Thanks to [Mygo](https://mygo.egoist.dev/) for the framework that powers Sotto.
+
+Mac selection requires Accessibility permission; screenshots require screen recording permission. See [verification entry points](e2e/README.md) for platform checks and pending desktop acceptance. Explicitly saved shortcuts are preserved; missing values use platform defaults.
