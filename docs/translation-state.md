@@ -1,6 +1,8 @@
 # Translation Window State and Lifecycle
 
-This document records the current implementation's constraints so behavior is preserved when separating translationSession / presentation in the future. Pure-logic and native `ui.NewTester` tests do not constitute desktop acceptance on actual hardware. See `e2e/README.md` for Windows execution instructions and pending acceptance checks. ## State Ownership
+This document records the current implementation's constraints so behavior is preserved when separating translationSession / presentation in the future. Pure-logic and native `ui.NewTester` tests do not constitute desktop acceptance on actual hardware. See `e2e/README.md` for Windows execution instructions and pending acceptance checks.
+
+## State Ownership
 
 | Scope | Fields | Meaning and Update Conditions |
 |---|---|---|

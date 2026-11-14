@@ -23,7 +23,9 @@ The window probe uses `TestMacPanelFocus` above: compile a temporary binary firs
 
 ## Manual Checklist
 
-All items below require acceptance on actual hardware. Check each after a clean start and during warm operation. Do not report unit-test results as desktop passes. | Preconditions | Action | Expected Result |
+All items below require acceptance on actual hardware. Check each after a clean start and during warm operation. Do not report unit-test results as desktop passes.
+
+| Preconditions | Action | Expected Result |
 | --- | --- | --- |
 | Settings is recording a hotkey | Press another Sotto action's combination, then an available one; try arrow-key, punctuation, and Tab combinations | In-app conflicts appear on the current row without triggering translation; recording can continue, and a successful combination takes effect |
 | A combination is intercepted by the system or another app | Choose it in "手动设置" and save | Detectable conflicts produce an explicit error; the old binding remains usable without automatic substitution; missing key events alone must not be classified as a conflict |
