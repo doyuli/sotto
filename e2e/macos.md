@@ -19,7 +19,7 @@ The isolated pasteboard test does not touch the general pasteboard. The SCK prob
 CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/capture -run '^TestMacCaptureNative$' -count=1 -v
 ```
 
-The window probe uses `TestMacPanelFocus` above: compile a temporary binary first (2-minute limit), then launch the probe directly (30-second limit). JSON and the exit code report check results; input completion is determined by an actual focus event, with a separate 10-second in-app timeout. The outer process directly owns and reaps the probe process, so it can terminate it even if the native main thread blocks; it does not launch indirectly through `go run`. `TestMacProbeCancellationReapsProcess` verifies cancellation and process reaping without a desktop. Record missing permissions, missing desktop sessions, and assertion failures separately; do not obtain a pass by skipping failed assertions.
+The window probe uses `TestMacPanelFocus` above: compile a temporary binary first (2-minute limit), then launch the probe directly (30-second limit). JSON and the exit code report check results. The probe waits for both an actual input-focus event and the independently posted main-queue callback before quitting, with a separate 10-second in-app timeout; focus alone does not establish dispatch completion. The outer process directly owns and reaps the probe process, so it can terminate it even if the native main thread blocks; it does not launch indirectly through `go run`. `TestMacProbeCancellationReapsProcess` verifies cancellation and process reaping without a desktop. Record missing permissions, missing desktop sessions, and assertion failures separately; do not obtain a pass by skipping failed assertions.
 
 ## Manual Checklist
 
