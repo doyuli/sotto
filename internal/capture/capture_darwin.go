@@ -3,11 +3,9 @@
 package capture
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"image"
-	"image/png"
 	"os"
 	"sync"
 	"time"
@@ -23,9 +21,6 @@ var (
 	imageRetain             func(uintptr) uintptr
 	imageRelease            func(uintptr)
 	imageWidth, imageHeight func(uintptr) uint64
-	imageDestination        func(objc.ID, objc.ID, uint64, uintptr) uintptr
-	addImage                func(uintptr, uintptr, uintptr)
-	finalizeImage           func(uintptr) bool
 )
 
 var loadCapture = sync.OnceValue(func() error {
@@ -41,7 +36,7 @@ var loadCapture = sync.OnceValue(func() error {
 	if err := macnative.Bind("CoreFoundation", macnative.Symbol{Target: &imageRetain, Name: "CFRetain"}, macnative.Symbol{Target: &imageRelease, Name: "CFRelease"}); err != nil {
 		return err
 	}
-	return macnative.Bind("ImageIO", macnative.Symbol{Target: &imageDestination, Name: "CGImageDestinationCreateWithData"}, macnative.Symbol{Target: &addImage, Name: "CGImageDestinationAddImage"}, macnative.Symbol{Target: &finalizeImage, Name: "CGImageDestinationFinalize"})
+	return nil
 })
 
 var captureAdmission = make(chan struct{}, 1)
@@ -179,27 +174,9 @@ func captureDisplay(ctx context.Context, displayID int64, r macnative.Rect) (img
 		if err = ctx.Err(); err != nil {
 			return
 		}
-		// ImageIO handles the native color space, alpha and row orientation.
-		// Copy out before releasing the CGImage; no borrowed native pixels
-		// escape into the asynchronous OCR or UI pipeline.
-		data := macnative.Class("NSMutableData").Send(macnative.Sel("data"))
-		dest := imageDestination(data, macnative.String("public.png"), 1, 0)
-		if dest == 0 {
-			err = fmt.Errorf("create screenshot encoder")
-			return
-		}
-		defer imageRelease(dest)
-		addImage(dest, shot.image, 0)
-		if !finalizeImage(dest) {
-			err = fmt.Errorf("encode screenshot")
-			return
-		}
-		payload, dataErr := macnative.Bytes(data, limits.MaxImagePixels*5)
-		if dataErr != nil {
-			err = dataErr
-			return
-		}
-		img, err = png.Decode(bytes.NewReader(payload))
+		// Convert while the retained CGImage is alive; only owned Go pixels
+		// escape into OCR. CoreGraphics performs the source-to-sRGB conversion.
+		img, err = macnative.CopyNativeImage(shot.image)
 	})
 	return img, err
 }

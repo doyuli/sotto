@@ -81,10 +81,10 @@ jobs:
         run: go test ./...
       - name: Check native UI usage
         run: bunx mygo vet .
-      - name: Verify native Vision recognition
+      - name: Verify native image conversion and Vision recognition
         env:
           SOTTO_MACOS_NATIVE: "1"
-        run: go test ./internal/ocr -run '^TestVisionNativeSmoke$' -count=1 -v
+        run: go test ./internal/macnative ./internal/ocr -run '^(TestNativeImagePixelsAndLifetime|TestVisionNativeSmoke)$' -count=1 -v
       - name: Verify isolated pasteboard item round trip
         env:
           SOTTO_MACOS_NATIVE: "1"

@@ -53,40 +53,97 @@ func pasteboardChange() (n int64) {
 	return
 }
 
-func savePasteboard() (saved *clipboardSnapshot, err error) {
-	pasteboardOnMain(func() {
-		board := pasteboard()
-		n := objc.Send[int64](board, macnative.Sel("changeCount"))
-		array := board.Send(macnative.Sel("pasteboardItems"))
+func savePasteboard(ctx context.Context) (*clipboardSnapshot, error) {
+	return snapshotMacPasteboard(ctx, pasteboard, pasteboardOnMain)
+}
+
+// Yield the main thread between representations and copy immutable NSData on
+// the caller's background goroutine. A promised dataForType call is still
+// synchronous; cancellation is checked before and after each AppKit turn.
+func snapshotMacPasteboard(ctx context.Context, getBoard func() objc.ID, onMain func(func())) (*clipboardSnapshot, error) {
+	var board, array objc.ID
+	var items []objc.ID
+	var types [][]string
+	var change int64
+	err := ErrSourceChanged // RunOnMain may drop work during shutdown.
+	onMain(func() {
+		if err = ctx.Err(); err != nil {
+			return
+		}
+		board = getBoard().Send(macnative.Sel("retain"))
+		change = objc.Send[int64](board, macnative.Sel("changeCount"))
+		array = board.Send(macnative.Sel("pasteboardItems")).Send(macnative.Sel("retain"))
 		if objc.Send[uint64](array, macnative.Sel("count")) > 1024 {
 			err = ErrClipboardUnsafe
 			return
 		}
-		items := macnative.Items(array)
+		items = macnative.Items(array)
 		if len(items) == 0 && objc.Send[uint64](board.Send(macnative.Sel("types")), macnative.Sel("count")) != 0 {
 			err = ErrClipboardUnsafe
 			return
 		}
-		types := make([][]string, len(items))
+		types = make([][]string, len(items))
 		for i, item := range items {
-			for _, name := range macnative.Items(item.Send(macnative.Sel("types"))) {
+			names := item.Send(macnative.Sel("types"))
+			if objc.Send[uint64](names, macnative.Sel("count")) > 256 {
+				err = ErrClipboardUnsafe
+				return
+			}
+			for _, name := range macnative.Items(names) {
 				types[i] = append(types[i], macnative.GoString(name))
 			}
 		}
-		data, readErr := snapshotPasteboard(types, func(i int, name string, budget int) ([]byte, error) {
-			return macnative.Bytes(items[i].Send(macnative.Sel("dataForType:"), macnative.String(name)), budget)
-		})
-		if readErr != nil {
-			err = readErr
-			return
-		}
-		if objc.Send[int64](board, macnative.Sel("changeCount")) != n {
-			err = ErrSourceChanged
-			return
-		}
-		saved = &clipboardSnapshot{mac: &macClipboardSnapshot{items: data, change: n}}
 	})
-	return
+	defer onMain(func() {
+		array.Send(macnative.Sel("release"))
+		board.Send(macnative.Sel("release"))
+	})
+	if err != nil {
+		return nil, err
+	}
+	check := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if objc.Send[int64](board, macnative.Sel("changeCount")) != change {
+			return ErrSourceChanged
+		}
+		return nil
+	}
+	data, err := snapshotPasteboard(types, func(i int, name string, budget int) ([]byte, error) {
+		var value objc.ID
+		readErr := ErrSourceChanged
+		onMain(func() {
+			if readErr = check(); readErr != nil {
+				return
+			}
+			value = items[i].Send(macnative.Sel("dataForType:"), macnative.String(name))
+			if value == 0 || objc.Send[uint64](value, macnative.Sel("length")) > uint64(max(budget, 0)) {
+				value, readErr = 0, ErrClipboardUnsafe
+				return
+			}
+			// copy returns an immutable object whose lifetime spans this pool.
+			value = value.Send(macnative.Sel("copy"))
+			readErr = check()
+		})
+		defer value.Send(macnative.Sel("release"))
+		if readErr != nil {
+			return nil, readErr
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return macnative.Bytes(value, budget)
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = ErrSourceChanged
+	onMain(func() { err = check() })
+	if err != nil {
+		return nil, err
+	}
+	return &clipboardSnapshot{mac: &macClipboardSnapshot{items: data, change: change}}, nil
 }
 
 // Materialize the native replacement before clearing anything. There is no
@@ -237,7 +294,7 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 		case <-tick.C:
 		}
 	}
-	saved, err := savePasteboard()
+	saved, err := savePasteboard(ctx)
 	if err != nil {
 		return Selection{}, fmt.Errorf("%w: %w", ErrClipboardUnsafe, err)
 	}
