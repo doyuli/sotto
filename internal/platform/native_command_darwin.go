@@ -29,6 +29,14 @@ func HandleNativeCommand() bool {
 	}{}
 	var initialPID int32
 	var initialGeneration uint64
+	var focusObserved bool
+	// Focus can arrive before the independently queued AppKit operation.
+	// Keep the native loop running until both observations have completed.
+	finish := func() {
+		if focusObserved && report.MainQueueDispatched {
+			mygo.App.Quit()
+		}
+	}
 	mygo.App.OnWindowAllClosed(func() {})
 	mygo.App.WhenReady(func() {
 		initial := macnative.FrontmostPID()
@@ -42,7 +50,10 @@ func HandleNativeCommand() bool {
 		mygo.App.OnQuit(stop)
 		generation := macnative.WorkspaceGeneration()
 		initialGeneration = generation
-		macnative.PostMain(func() { report.MainQueueDispatched = true })
+		macnative.PostMain(func() {
+			report.MainQueueDispatched = true
+			finish()
+		})
 		w := mygo.NewWindow(SettingsWindow(mygo.WindowOptions{Title: "Sotto 原生验证", Hidden: true, Width: 360, Height: 180, Content: ui.View(func(c *ui.Context) { ui.Text(c, "Sotto macOS 面板验证") })}))
 		w.OnReadyToShow(func() {
 			native := objc.ID(w.NativeHandle())
@@ -58,8 +69,9 @@ func HandleNativeCommand() bool {
 					report.InputFocused = w.IsFocused()
 					report.InputKeptApplication = macnative.FrontmostPID() == initial
 					report.SpaceUnchanged = macnative.WorkspaceGeneration() == generation
+					focusObserved = true
 					w.Hide()
-					mygo.App.Quit()
+					finish()
 				})
 				ShowBubbleWindow(w, "input")
 			})
@@ -69,7 +81,7 @@ func HandleNativeCommand() bool {
 		mygo.RunOnMain(func() {
 			report.InputKeptApplication = macnative.FrontmostPID() == initialPID
 			report.SpaceUnchanged = macnative.WorkspaceGeneration() == initialGeneration
-			report.Error = "native focus/readiness timed out"
+			report.Error = "native focus/readiness or main-queue dispatch timed out"
 			mygo.App.Quit()
 		})
 	})
