@@ -2,7 +2,7 @@
 
 ## Platform
 
-Windows desktop; experimental macOS 14+ support on Apple silicon (arm64) only.
+Windows 10/11 (amd64 and arm64) and macOS 14+ on Apple silicon (arm64). Both platforms are supported release targets.
 
 ## Stack
 
@@ -18,7 +18,7 @@ app.
 
 ## Platform capabilities
 
-| Capability | Windows | macOS (experimental) |
+| Capability | Windows | macOS |
 | --- | --- | --- |
 | Selection | UIA, guarded simulated copy | Accessibility, guarded simulated copy |
 | Clipboard | Format snapshots and exclusion markers | All readable representations per item; uncertain ownership retains a recovery backup |
@@ -63,7 +63,7 @@ A local Windows utility that combines selection capture, OCR, and multi-provider
 - Window presentation: The translation bubble is frameless, fixed-width, skips the taskbar, and sizes dynamically to content within display bounds. Full lifecycle and state contracts follow `docs/translation-state.md`.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.
-- Hard technical constraints: Windows first, pure Go, `CGO_ENABLED=0`, pinned MyGo desktop/UI APIs and a project-owned purego macOS bridge, whitelisted dependencies.
+- Hard technical constraints: Windows and macOS, pure Go, `CGO_ENABLED=0`, pinned MyGo desktop/UI APIs and a project-owned purego macOS bridge, whitelisted dependencies.
 
 ## Brand Commitments
 

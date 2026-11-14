@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"sotto/internal/config"
+	"sotto/internal/keys"
 )
 
 // Request is one translation to fan out to every enabled service.
@@ -119,6 +120,9 @@ func Configured(cfg config.Settings, k KeyStore) []string {
 func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
 	for _, t := range DefaultTranslators() {
 		if t.Name() == name {
+			if err := credentialError(k, name); err != nil {
+				return err
+			}
 			if !t.Available(k, cfg) {
 				return ErrNotConfigured
 			}
@@ -139,7 +143,19 @@ const maxChunkRunes = 1800
 func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeyStore, req Request, emit func(Result)) {
 	var wg sync.WaitGroup
 	for _, t := range orderTranslators(all, cfg.Services.Order) {
-		if !contains(cfg.Services.Enabled, t.Name()) || !t.Available(k, cfg) {
+		if !contains(cfg.Services.Enabled, t.Name()) {
+			continue
+		}
+		if err := credentialError(k, t.Name()); err != nil {
+			if ctx.Err() == nil {
+				emit(Result{Service: t.Name(), Err: UserMessage(err)})
+			}
+			continue
+		}
+		if !t.Available(k, cfg) {
+			if ctx.Err() == nil {
+				emit(Result{Service: t.Name(), Err: UserMessage(ErrNotConfigured)})
+			}
 			continue
 		}
 		t := t
@@ -331,6 +347,8 @@ func orderTranslators(all []Translator, order []string) []Translator {
 func UserMessage(err error) string {
 	var networkErr *url.Error
 	switch {
+	case errors.Is(err, keys.ErrUnavailable):
+		return "系统凭据暂时无法读取，请解锁钥匙串或检查系统凭据后重试"
 	case errors.Is(err, ErrQuota):
 		return "本月额度已用完"
 	case errors.Is(err, ErrAuth):
@@ -364,4 +382,33 @@ func contains(xs []string, x string) bool {
 // unsupported reports a language the service cannot translate to.
 func unsupported(service, code string) error {
 	return fmt.Errorf("%s: 不支持的目标语言 %q", service, code)
+}
+
+func credentialError(k KeyStore, service string) error {
+	names := keys.ForServices(service)
+	if reader, ok := k.(interface{ Err(...string) error }); ok && len(names) != 0 {
+		return reader.Err(names...)
+	}
+	return nil
+}
+
+// WithoutCredential only disables services requiring this explicitly deleted
+// credential. It never reads unrelated entries from the system keyring.
+func WithoutCredential(cfg config.Settings, name string) []string {
+	var enabled []string
+	for _, t := range orderTranslators(DefaultTranslators(), cfg.Services.Order) {
+		if contains(cfg.Services.Enabled, t.Name()) && t.Available(deletedCredential(name), cfg) {
+			enabled = append(enabled, t.Name())
+		}
+	}
+	return enabled
+}
+
+type deletedCredential string
+
+func (d deletedCredential) Get(name string) string {
+	if name == string(d) {
+		return ""
+	}
+	return "present"
 }

@@ -5,7 +5,7 @@
 <h1 align="center">Sotto</h1>
 
 <p align="center">
-  <strong>A lightweight, unobtrusive desktop translator built for Windows users and developers</strong>
+  <strong>A lightweight, unobtrusive desktop translator for Windows and macOS users and developers</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%2014%2B-blue" alt="Platform">
   <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
   <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
@@ -24,13 +24,13 @@
   <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
-Sotto is a desktop translation utility tailored for Windows (see [Windows Architecture](docs/windows.md)). Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
+Sotto is a desktop translation utility for Windows and macOS (see [Windows Architecture](docs/windows.md) and [macOS Architecture](docs/macos.md)). Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
 
 Combining multi-engine streaming comparison, offline screen OCR, selection with guarded clipboard preservation, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
 
 [Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
 
-Experimental macOS 14+ support is available from source for Apple silicon (arm64) only. It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime (see [macOS Architecture](docs/macos.md)). Mac selection requires Accessibility permission; screenshots require screen recording permission (see [verification entry points](e2e/README.md) for platform checks and desktop acceptance procedures). Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Signed Mac releases require the optional release job to be configured and enabled.
+macOS 14+ is supported on Apple silicon (arm64). Download the arm64 DMG from [Releases](https://github.com/doyuli/sotto/releases/latest). It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime (see [macOS Architecture](docs/macos.md)). Mac selection requires Accessibility permission; screenshots require screen recording permission (see [verification entry points](e2e/README.md) for platform checks and desktop acceptance procedures). Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Every release requires signed and notarized Mac artifacts alongside both Windows architectures.
 
 ---
 

@@ -1,6 +1,6 @@
 # Windows Architecture and Platform Integration
 
-Sotto is built Windows-first as a pure-Go desktop application (`CGO_ENABLED=0`) targeting 64-bit Windows 10 and Windows 11 (both `amd64` and `arm64`). It avoids cgo by interfacing with the Win32 API, Component Object Model (COM), and native system runtimes via `golang.org/x/sys/windows`, `github.com/go-ole/go-ole`, and `ebitengine/purego`.
+Sotto is built as a pure-Go desktop application for Windows and macOS; this document covers Windows (`CGO_ENABLED=0`) targeting 64-bit Windows 10 and Windows 11 (both `amd64` and `arm64`). It avoids cgo by interfacing with the Win32 API, Component Object Model (COM), and native system runtimes via `golang.org/x/sys/windows`, `github.com/go-ole/go-ole`, and `ebitengine/purego`.
 
 This document records the architectural structure, Win32/COM subsystem integrations, memory and clipboard protection disciplines, and runtime models of the Windows platform implementation.
 

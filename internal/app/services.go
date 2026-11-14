@@ -15,6 +15,11 @@ import (
 	"sotto/internal/ui/settings"
 )
 
+type credentialStore interface {
+	Snapshot([]string) keys.Snapshot
+	Set(string, string) error
+}
+
 // ConfigSvc reads and writes the settings and credentials for the native settings UI.
 type ConfigSvc struct{ app *application }
 
@@ -37,9 +42,7 @@ func (s ConfigSvc) SetSecret(name, value string) error {
 	// it, so a failed settings write cannot leave an enabled service behind.
 	if value == "" {
 		cfg := s.app.settings()
-		credentials := s.app.keys.Snapshot()
-		delete(credentials, name)
-		enabled := translate.Available(cfg, credentials)
+		enabled := translate.WithoutCredential(cfg, name)
 		if !slices.Equal(enabled, cfg.Services.Enabled) {
 			cfg.Services.Enabled = enabled
 			if err := s.app.saveSettings(cfg); err != nil {
@@ -56,22 +59,25 @@ func (s ConfigSvc) SetSecret(name, value string) error {
 }
 
 // Credentials reports which credentials are stored and which services can be enabled.
-func (s ConfigSvc) Credentials() settings.CredentialStatus {
-	credentials := s.app.keys.Snapshot()
+func (s ConfigSvc) Credentials() (settings.CredentialStatus, error) {
+	credentials := s.app.keys.Snapshot(keys.Names)
+	if err := credentials.Err(); err != nil {
+		return settings.CredentialStatus{}, errors.New(translate.UserMessage(err))
+	}
 	status := settings.CredentialStatus{Stored: []string{}, Configured: translate.Configured(s.app.settings(), credentials)}
 	for _, name := range keys.Names {
 		if credentials.Get(name) != "" {
 			status.Stored = append(status.Stored, name)
 		}
 	}
-	return status
+	return status, nil
 }
 
 // TestService returns a user-facing error, or an empty string on success.
 func (s ConfigSvc) TestService(ctx context.Context, name string) string {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	return translate.UserMessage(translate.Test(ctx, name, s.app.settings(), s.app.keys.Snapshot()))
+	return translate.UserMessage(translate.Test(ctx, name, s.app.settings(), s.app.keys.Snapshot(keys.ForServices(name))))
 }
 
 // serviceKeyPages maps a service to the console page where its
@@ -99,7 +105,11 @@ func (ConfigSvc) OpenKeyPage(service string) error {
 }
 
 // DeeplUsage reports this month's DeepL character count and limit.
-func (ConfigSvc) DeeplUsage() (settings.DeeplUsage, error) {
-	used, limit, err := translate.DeepL{}.Usage(context.Background(), keys.Store{}.Get(keys.DeeplKey))
+func (s ConfigSvc) DeeplUsage() (settings.DeeplUsage, error) {
+	credentials := s.app.keys.Snapshot([]string{keys.DeeplKey})
+	if err := credentials.Err(); err != nil {
+		return settings.DeeplUsage{}, errors.New(translate.UserMessage(err))
+	}
+	used, limit, err := translate.DeepL{}.Usage(context.Background(), credentials.Get(keys.DeeplKey))
 	return settings.DeeplUsage{Used: used, Limit: limit}, err
 }

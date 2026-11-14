@@ -49,7 +49,7 @@ type application struct {
 	bubbles *bubble.Manager
 	snip    *snip.Manager
 	tray    *mygo.Tray // main thread only
-	keys    keys.Store
+	keys    credentialStore
 }
 
 func newApplication(iconPNG []byte) *application {
@@ -79,7 +79,6 @@ func (a *application) ready() {
 	if err != nil {
 		log.Printf("settings: %v", err)
 	}
-	cfg.Services.Enabled = translate.Available(cfg, a.keys)
 	cfg.Hotkeys = canonicalHotkeys(cfg.Hotkeys)
 	a.cfg = cfg
 
@@ -143,7 +142,6 @@ func (a *application) updateSettings(s config.Settings) error {
 	defer a.configWriteMu.Unlock()
 
 	s = config.Normalize(s)
-	s.Services.Enabled = translate.Available(s, a.keys)
 	return a.saveSettings(s)
 }
 
@@ -366,7 +364,7 @@ func (a *application) showSettings(services bool) {
 		sv = settings.NewView(tab, a.settings(), settings.Actions{
 			GetSettings:  svc.Get,
 			SaveSettings: svc.Set,
-			Credentials:  func() (settings.CredentialStatus, error) { return svc.Credentials(), nil },
+			Credentials:  svc.Credentials,
 			SetSecret:    svc.SetSecret,
 			TestService:  svc.TestService,
 			OpenKeyPage:  svc.OpenKeyPage,
@@ -444,8 +442,12 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 	if !accepted {
 		return
 	}
-	credentials := a.keys.Snapshot()
-	services := translate.Available(cfg, credentials)
+	requestedServices := cfg.Services.Enabled
+	if req.Service != "" {
+		requestedServices = []string{req.Service}
+	}
+	credentials := a.keys.Snapshot(keys.ForServices(requestedServices...))
+	services := cfg.Services.Enabled
 	if req.Service != "" {
 		cfg.Services.Enabled = nil
 		if slices.Contains(services, req.Service) {

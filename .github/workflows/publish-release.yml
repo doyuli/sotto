@@ -35,7 +35,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.version.outputs.tag }}
-      SOTTO_MACOS_RELEASE: ${{ vars.SOTTO_MACOS_RELEASE }}
     steps:
       - name: Verify draft and synchronize update notes
         shell: bash
@@ -60,10 +59,7 @@ jobs:
           manifests=$(mktemp -d)
           trap 'rm -rf "$manifests"' EXIT
           changed=()
-          targets=(windows-amd64 windows-arm64)
-          if [[ "$SOTTO_MACOS_RELEASE" == true ]]; then
-            targets+=(darwin-arm64)
-          fi
+          targets=(windows-amd64 windows-arm64 darwin-arm64)
           for target in "${targets[@]}"; do
             archive="sotto-$version-$target.tar.gz"
             manifest="update-$target.json"

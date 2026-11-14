@@ -2,7 +2,12 @@
 // keyring, so they never land in settings.json.
 package keys
 
-import "github.com/egoist/mygo"
+import (
+	"errors"
+	"fmt"
+	"github.com/egoist/mygo"
+	"slices"
+)
 
 // The keyring entries, by service.
 const (
@@ -30,21 +35,13 @@ var Names = []string{
 	VolcAccessKey, VolcSecretKey,
 }
 
-// Store is the app's KeyStore: a thin wrapper over mygo.Secrets. A missing
-// entry reads as an empty string rather than an error, which is what the
-// translation services check for.
+// ErrUnavailable distinguishes a temporarily inaccessible keyring from an absent key.
+var ErrUnavailable = errors.New("system credentials unavailable")
+
+// Store never caches credentials across operations, so external changes recover
+// on the next request without retaining secrets for the process lifetime.
 type Store struct{}
 
-// Get returns the stored value, or "" when there is none.
-func (Store) Get(name string) string {
-	value, err := mygo.Secrets.Get(name)
-	if err != nil {
-		return ""
-	}
-	return string(value)
-}
-
-// Set stores the value; an empty value deletes the entry.
 func (Store) Set(name, value string) error {
 	if value == "" {
 		return mygo.Secrets.Delete(name)
@@ -52,17 +49,58 @@ func (Store) Set(name, value string) error {
 	return mygo.Secrets.Set(name, []byte(value))
 }
 
-// Snapshot lets a settings operation evaluate the same set of credentials
-// throughout, including checking the effect of removing a credential.
-type Snapshot map[string]string
+// ForServices includes optional request credentials as well as required ones.
+func ForServices(services ...string) []string {
+	var names []string
+	for _, service := range services {
+		for _, name := range serviceKeys[service] {
+			if !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
 
-func (s Snapshot) Get(name string) string { return s[name] }
+var serviceKeys = map[string][]string{
+	"deepl": {DeeplKey}, "openai": {OpenAIKey},
+	"siliconflow": {SiliconFlowKey}, "zhipu": {ZhipuKey},
+	"baidu": {BaiduAppID, BaiduKey}, "tencent": {TencentSecretID, TencentSecretKey},
+	"youdao": {YoudaoAppKey, YoudaoSecret}, "azure": {AzureKey, AzureRegion},
+	"volcengine": {VolcAccessKey, VolcSecretKey},
+}
 
-func (s Store) Snapshot() Snapshot {
-	out := make(Snapshot)
-	for _, name := range Names {
-		if value := s.Get(name); value != "" {
-			out[name] = value
+// Snapshot owns the values and read failures for a single operation. Missing
+// entries are empty; failures remain observable rather than disabling services.
+type Snapshot struct {
+	values   map[string]string
+	failures map[string]error
+}
+
+func (s Snapshot) Get(name string) string { return s.values[name] }
+func (s Snapshot) Err(names ...string) error {
+	var errs []error
+	if len(names) == 0 {
+		names = Names
+	}
+	for _, name := range names {
+		if err := s.failures[name]; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+func (Store) Snapshot(names []string) Snapshot { return snapshot(names, mygo.Secrets.Get) }
+func snapshot(names []string, read func(string) ([]byte, error)) Snapshot {
+	out := Snapshot{values: make(map[string]string), failures: make(map[string]error)}
+	for _, name := range names {
+		value, err := read(name)
+		switch {
+		case errors.Is(err, mygo.ErrSecretNotFound):
+		case err != nil:
+			out.failures[name] = fmt.Errorf("%w: read %s: %w", ErrUnavailable, name, err)
+		default:
+			out.values[name] = string(value)
 		}
 	}
 	return out

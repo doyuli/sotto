@@ -1,6 +1,6 @@
 # Sotto — Agent Working Rules
 
-Translation utility built with mygo v0.8.3 (Go backend, native screenshot overlays, and native `mygo/ui` bubbles and settings). Windows first, pure Go, no cgo.
+Translation utility built with mygo v0.8.3 (Go backend, native screenshot overlays, and native `mygo/ui` bubbles and settings). Windows and macOS, pure Go, no cgo.
 See `PRODUCT.md` for product positioning and `DESIGN.md` for brand and visual guidelines. Local mygo source code is the sole source of truth for its APIs.
 
 ## Development Loop

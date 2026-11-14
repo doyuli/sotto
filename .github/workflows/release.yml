@@ -81,7 +81,7 @@ jobs:
 
   macos:
     needs: windows
-    if: github.repository == 'doyuli/sotto' && vars.SOTTO_MACOS_RELEASE == 'true'
+    if: github.repository == 'doyuli/sotto'
     runs-on: macos-15
     env:
       CGO_ENABLED: "0"
@@ -114,7 +114,7 @@ jobs:
         run: |
           for name in MACOS_CERTIFICATE MACOS_SIGNING_IDENTITY MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
             if [[ -z "${!name}" ]]; then
-              echo "Configure $name before enabling Mac releases." >&2
+              echo "Configure $name before releasing Sotto." >&2
               exit 1
             fi
           done

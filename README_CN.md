@@ -5,7 +5,7 @@
 <h1 align="center">Sotto</h1>
 
 <p align="center">
-  <strong>专为 Windows 用户与开发者打造的轻量桌面翻译工具</strong>
+  <strong>面向 Windows 和 macOS 用户与开发者的轻量桌面翻译工具</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%2014%2B-blue" alt="Platform">
   <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
   <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
@@ -24,13 +24,13 @@
   <img src="docs/banner.png" width="100%" alt="Sotto">
 </p>
 
-Sotto 是一款专注于流畅与克制的 Windows 桌面翻译工具（架构与系统集成说明见 [Windows 专有文档](docs/windows.md)）。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。
+Sotto 是一款专注于流畅与克制的 Windows 和 macOS 桌面翻译工具（架构与系统集成说明见 [Windows 专有文档](docs/windows.md)）。无论是在日常查阅文档、编写代码还是处理多语言内容时，只需选中文字、框选屏幕或按下快捷键呼出面板，多个翻译引擎的译文便会在当前应用旁以独立气泡并排呈现。
 
 集多源流式对比、离线截图 OCR、无感划词保护剪贴板、代码变量命名转换于一体，无需频繁切换应用，助你始终专注当下工作。
 
 [下载 Windows 最新版](https://github.com/doyuli/sotto/releases/latest) · 传统 PC（Intel / AMD）请下载 `amd64` 安装包，Surface Pro 等 ARM 设备请下载 `arm64` 安装包。
 
-macOS 14+ 实验性支持可从源码构建，仅支持 Apple Silicon（arm64）。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别（架构与技术说明见 [macOS 专有文档](docs/macos.md)）。Mac 取词需辅助功能权限，截图需屏幕录制权限（跨平台测试与桌面验收流程见 [验证入口](e2e/README.md)）。签名发布需配置并启用可选的 Mac 发布任务。
+macOS 14+ 正式支持 Apple Silicon（arm64），可从 [Releases](https://github.com/doyuli/sotto/releases/latest) 下载 arm64 DMG。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别（架构与技术说明见 [macOS 专有文档](docs/macos.md)）。Mac 取词需辅助功能权限，截图需屏幕录制权限（跨平台测试与桌面验收流程见 [验证入口](e2e/README.md)）。每次正式发布必须同时包含 Windows 双架构产物和签名、公证后的 Mac 产物。
 
 ---
 
