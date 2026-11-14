@@ -5,6 +5,7 @@ package ocr
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +31,8 @@ const (
 	ortSlotCreateSessionOptions           = 10
 	ortSlotSetGraphOptimizationLevel      = 23
 	ortSlotSetIntraOpNumThreads           = 24
+	ortSlotCreateRunOptions               = 39
+	ortSlotRunOptionsSetTerminate         = 46
 	ortSlotCreateTensorWithDataAsOrtValue = 49
 	ortSlotGetTensorMutableData           = 51
 	ortSlotGetTensorElementType           = 60
@@ -42,6 +45,7 @@ const (
 	ortSlotReleaseStatus                  = 93
 	ortSlotReleaseSession                 = 95
 	ortSlotReleaseValue                   = 96
+	ortSlotReleaseRunOptions              = 97
 	ortSlotReleaseTensorTypeAndShape      = 99
 	ortSlotReleaseSessionOptions          = 100
 
@@ -274,7 +278,7 @@ func (s *ortSession) Run(ctx context.Context, inputTensor pipeline.Tensor, consu
 	if s.ptr == 0 {
 		return fmt.Errorf("ocr: session closed")
 	}
-	out, err := s.infer(inputTensor.Data, inputTensor.Shape)
+	out, err := s.infer(ctx, inputTensor.Data, inputTensor.Shape)
 	if out != 0 {
 		defer s.rt.call(ortSlotReleaseValue, out)
 	}
@@ -350,7 +354,7 @@ func (s *ortSession) Run(ctx context.Context, inputTensor pipeline.Tensor, consu
 // infer releases the input OrtValue before output processing. Run keeps the
 // underlying Go storage alive in case the native output aliases the input.
 // The caller holds mu and owns any returned output, including on Run failure.
-func (s *ortSession) infer(input []float32, shape []int64) (uintptr, error) {
+func (s *ortSession) infer(ctx context.Context, input []float32, shape []int64) (uintptr, error) {
 	n, err := tensorElements(shape)
 	if err != nil {
 		return 0, err
@@ -380,10 +384,23 @@ func (s *ortSession) infer(input []float32, shape []int64) (uintptr, error) {
 	inputs := []uintptr{in}
 	outNames := []uintptr{uintptr(unsafe.Pointer(outName))}
 	outputs := [1]uintptr{}
-	err = s.rt.check(s.rt.call(ortSlotRun, s.ptr, 0,
-		uintptr(unsafe.Pointer(&inNames[0])), uintptr(unsafe.Pointer(&inputs[0])), 1,
-		uintptr(unsafe.Pointer(&outNames[0])), 1,
-		uintptr(unsafe.Pointer(&outputs[0]))), "Run")
+	var options uintptr
+	if err := s.rt.check(s.rt.call(ortSlotCreateRunOptions, uintptr(unsafe.Pointer(&options))), "CreateRunOptions"); err != nil {
+		return 0, err
+	}
+	defer s.rt.call(ortSlotReleaseRunOptions, options)
+	// API 31 permits SetTerminate from another thread. Each invocation has
+	// separate options so a canceled request cannot poison the next one.
+	err = withNativeCancellation(ctx, func() {
+		if err := s.rt.check(s.rt.call(ortSlotRunOptionsSetTerminate, options), "RunOptionsSetTerminate"); err != nil {
+			log.Printf("ocr: interrupt inference: %v", err)
+		}
+	}, func() error {
+		return s.rt.check(s.rt.call(ortSlotRun, s.ptr, options,
+			uintptr(unsafe.Pointer(&inNames[0])), uintptr(unsafe.Pointer(&inputs[0])), 1,
+			uintptr(unsafe.Pointer(&outNames[0])), 1,
+			uintptr(unsafe.Pointer(&outputs[0]))), "Run")
+	})
 	return outputs[0], err
 }
 

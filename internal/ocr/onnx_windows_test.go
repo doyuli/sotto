@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"unsafe"
 
 	"sotto/internal/ocr/pipeline"
 )
@@ -124,6 +125,17 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			// Exercise all run-option ABI slots against the packaged runtime.
+			// An isolated terminated options object must not poison later runs.
+			var options uintptr
+			if err := session.rt.check(session.rt.call(ortSlotCreateRunOptions, uintptr(unsafe.Pointer(&options))), "CreateRunOptions"); err != nil {
+				t.Fatal(err)
+			}
+			terminateErr := session.rt.check(session.rt.call(ortSlotRunOptionsSetTerminate, options), "RunOptionsSetTerminate")
+			session.rt.call(ortSlotReleaseRunOptions, options)
+			if terminateErr != nil {
+				t.Fatal(terminateErr)
 			}
 			checkORTConsumerExits(t, session, pipeline.Tensor{Data: make([]float32, n), Shape: inputShape})
 		})
