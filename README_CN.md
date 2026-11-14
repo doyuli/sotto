@@ -30,7 +30,7 @@ Sotto 是一款专注于流畅与克制的 Windows 和 macOS 桌面翻译工具�
 
 [下载 Windows 最新版](https://github.com/doyuli/sotto/releases/latest) · 传统 PC（Intel / AMD）请下载 `amd64` 安装包，Surface Pro 等 ARM 设备请下载 `arm64` 安装包。
 
-macOS 14+ 正式支持 Apple Silicon（arm64），可从 [Releases](https://github.com/doyuli/sotto/releases/latest) 下载 arm64 DMG。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别（架构与技术说明见 [macOS 专有文档](docs/macos.md)）。Mac 取词需辅助功能权限，截图需屏幕录制权限（跨平台测试与桌面验收流程见 [验证入口](e2e/README.md)）。每次正式发布必须同时包含 Windows 双架构产物和签名、公证后的 Mac 产物。
+macOS 14+ 正式支持 Apple Silicon（arm64），可从 [Releases](https://github.com/doyuli/sotto/releases/latest) 下载 arm64 DMG。Mac 版常驻菜单栏、无 Dock 图标，通过辅助功能取词，使用 ScreenCaptureKit + Vision 本地截图识别（架构与技术说明见 [macOS 专有文档](docs/macos.md)）。Mac 取词需辅助功能权限，截图需屏幕录制权限（跨平台测试与桌面验收流程见 [验证入口](e2e/README.md)）。每次正式发布都包含 Windows 双架构与 Mac 产物。目前 Mac 下载使用 ad-hoc 签名，未经 Apple 公证。将 Sotto 拖入“应用程序”并尝试打开后，如果你信任本仓库的下载来源，可能需要在 **系统设置 → 隐私与安全性 → 仍要打开** 中允许 Sotto 运行（[Apple 说明](https://support.apple.com/zh-cn/102445)）。更新包仍使用 Sotto 自己的密钥进行签名校验。
 
 ---
 

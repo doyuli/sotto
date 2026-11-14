@@ -89,7 +89,13 @@ jobs:
         env:
           SOTTO_MACOS_NATIVE: "1"
         run: go test ./internal/selection -run '^TestMacIsolatedPasteboardItems$' -count=1 -v
-      - name: Build the Apple silicon app
-        run: bun run build:mac -skip-dmg -skip-notarize
+      - name: Verify macOS release modes
+        run: bun test scripts/macos-release.test.ts
+      - name: Build the ad-hoc Apple silicon app and DMG
+        run: |
+          bun run build:mac -sign - -skip-notarize
+          codesign --verify --deep --strict build/darwin-arm64/Sotto.app
+          version=$(bun -p 'require("./package.json").version')
+          hdiutil verify "build/darwin-arm64/sotto-$version-arm64.dmg"
       - name: Verify Windows OCR assets are excluded
         run: test ! -e build/darwin-arm64/Sotto.app/Contents/Resources/ocr
