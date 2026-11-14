@@ -35,7 +35,7 @@ Passive Mac results do not request focus. Explicit input/settings/screenshot act
 
 ## Users
 
-Chinese-first Windows users who translate while working in another app: selected text, a screen region (OCR), or text typed directly into the bubble. They compare several translation services at once and often need code-friendly identifier forms.
+Chinese-first Windows and macOS users who translate while working in another app: selected text, a screen region (OCR), or text typed directly into the bubble. They compare several translation services at once and often need code-friendly identifier forms.
 
 ## Product Purpose
 
@@ -43,7 +43,7 @@ Sotto puts an always-available translation bubble beside the current task. A hot
 
 ## Positioning
 
-A local Windows utility that combines selection capture, OCR, and multi-provider translation in one transient bubble, including copy formats for camelCase, PascalCase, snake_case, CONSTANT_CASE, and kebab-case.
+A local Windows and macOS utility that combines selection capture, OCR, and multi-provider translation in one transient bubble, including copy formats for camelCase, PascalCase, snake_case, CONSTANT_CASE, and kebab-case.
 
 ## Operating Context
 
