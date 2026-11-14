@@ -109,6 +109,7 @@ Unlike the Windows build, which bundles ONNX Runtime DLLs and PP-OCRv6 neural ne
 - Sotto delegates compute-device selection to Vision and makes no guarantee about CPU, GPU, or Neural Engine usage. OCR makes no network requests and does not upload captured images; recognized text is passed to the configured translation services.
 - Without an explicit language hint, `visionLanguages` selects the available Simplified Chinese (`zh-Hans`), Traditional Chinese (`zh-Hant`), and English (`en-US`) entries and enables automatic language detection. Explicit hints are normalized and matched against the system-supported languages; an unavailable language returns an error.
 - Vision is the only macOS OCR engine; there is no secondary-engine fallback. Recognition results are normalized into Sotto's shared `ocr.Text` pipeline structures.
+- Capture converts CGImage directly into owned sRGB RGBA pixels. Vision receives a native CGImage snapshot of those pixels, avoiding PNG encoding/decoding in both bridges. Native pixel storage is scoped to the synchronous consumer; subimages and premultiplied alpha are supported.
 - Each call creates and releases its own `VNRecognizeTextRequest` and `VNImageRequestHandler`. Sotto does not retain model sessions with a Windows-style idle deadline; Vision manages its internal resources.
 
 ---
@@ -143,7 +144,7 @@ Two macOS system permissions are required:
 1. **Main Thread Confinement**:
    - AppKit window mutations, menu updates, Carbon registration, and `NSEvent` monitors must execute on the OS main thread via `mygo.RunOnMain` / `macnative.PostMain`.
 2. **Background Processing**:
-   - Vision OCR recognition, ScreenCaptureKit image encoding, AX element polling, and HTTP translation streaming execute in background goroutines.
+   - Vision OCR recognition, ScreenCaptureKit pixel conversion, AX element polling, and HTTP translation streaming execute in background goroutines.
 3. **Autorelease Pool Discipline**:
    - Background operations and bridge callbacks wrap Objective-C calls in `macnative.Pool(func())` to drain autoreleased objects on the thread that owns the pool. Objects created with `alloc`/`init` or explicitly retained still require matching releases; a pool does not release those ownership claims.
 4. **Block Lifetimes**:
@@ -159,3 +160,13 @@ Two macOS system permissions are required:
 - **Update authentication**: `mygo.config.ts` enables the GitHub updater when `MYGO_UPDATER_PUBLIC_KEY` is provided. MyGo's download/install engine verifies update archive signatures using the embedded public key. This archive signature is separate from Apple code signing and notarization. Builds without updater configuration show "当前构建未启用更新".
 - **Apple distribution**: The mandatory macOS job in `.github/workflows/release.yml` runs for every release. It requires Developer ID signing and notarization credentials plus updater signing keys, then builds and uploads the arm64 DMG, update archive, and update manifest to the draft release. `.github/workflows/publish-release.yml` requires these macOS assets as well as both Windows architectures before publishing.
 - **Local builds**: `bun run build:mac -skip-dmg -skip-notarize` builds an app for local validation. It does not exercise notarization or the full signed-release workflow.
+
+### Pasteboard snapshot scheduling
+
+All NSPasteboard and NSPasteboardItem access stays on the main thread. Snapshotting
+returns to the event loop between representations, retains an immutable NSData
+copy, and copies its bytes into Go storage on the selection goroutine. Each turn
+checks cancellation and the original change count, including a final check before
+accepting the snapshot. A synchronous promised-data provider can still block its
+individual `dataForType:` call; this is not a hard timeout. Restoration and recovery
+ownership guards remain unchanged.

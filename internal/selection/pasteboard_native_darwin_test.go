@@ -4,6 +4,8 @@ package selection
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"github.com/ebitengine/purego/objc"
 	"os"
 	"sotto/internal/macnative"
@@ -34,6 +36,35 @@ func TestMacIsolatedPasteboardItems(t *testing.T) {
 		if !objc.Send[bool](board, macnative.Sel("writeObjects:"), objects) {
 			t.Fatal("write items")
 		}
+		// Snapshotting used to monopolize one AppKit turn and ignore cancellation.
+		turns := 0
+		dispatch := func(fn func()) { turns++; macnative.Pool(fn) }
+		saved, err := snapshotMacPasteboard(context.Background(), func() objc.ID { return board }, dispatch)
+		if err != nil || saved == nil || len(saved.mac.items) != len(expected) {
+			t.Fatalf("snapshot: %v, %v", saved, err)
+		}
+		for i, payload := range expected {
+			if len(saved.mac.items[i]) != 1 || !bytes.Equal(saved.mac.items[i][0].data, payload) {
+				t.Fatalf("snapshot item %d lost data", i)
+			}
+		}
+		if turns < len(expected)+2 {
+			t.Fatal("did not yield between representations")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		turns = 0
+		_, err = snapshotMacPasteboard(ctx, func() objc.ID { return board }, func(fn func()) {
+			turns++
+			if turns == 2 {
+				cancel()
+			}
+			macnative.Pool(fn)
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation: %v", err)
+		}
+
 		items := macnative.Items(board.Send(macnative.Sel("pasteboardItems")))
 		if len(items) != len(expected) {
 			t.Fatal("lost item boundary")
@@ -44,5 +75,21 @@ func TestMacIsolatedPasteboardItems(t *testing.T) {
 				t.Fatalf("item %d: %v", i, err)
 			}
 		}
+		turns = 0
+		_, err = snapshotMacPasteboard(context.Background(), func() objc.ID { return board }, func(fn func()) {
+			turns++
+			if turns == 2 {
+				board.Send(macnative.Sel("clearContents"))
+			}
+			macnative.Pool(fn)
+		})
+		if !errors.Is(err, ErrSourceChanged) {
+			t.Fatalf("changed clipboard: %v", err)
+		}
+		_, err = snapshotMacPasteboard(context.Background(), func() objc.ID { t.Fatal("dispatch dropped"); return 0 }, func(func()) {})
+		if !errors.Is(err, ErrSourceChanged) {
+			t.Fatalf("shutdown: %v", err)
+		}
+
 	})
 }
