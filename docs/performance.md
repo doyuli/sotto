@@ -47,7 +47,7 @@ replacement nor on-demand asset download is part of these changes.
 
 ```sh
 # Supply the actual application PID. Add --pid again for a known OCR worker.
-python3 -B scripts/performance.py sample --pid 1234 --duration 90 --interval 1 --label idle-after-ocr > idle.jsonl
+python3 -B scripts/performance.py sample --pid 1234 --duration 360 --interval 1 --label idle-after-ocr > idle.jsonl
 ```
 
 The sampler only reads explicitly supplied PIDs. It never starts, changes priority,
@@ -77,7 +77,7 @@ working set: that obscures normal retention and adds reallocation latency.
 | Cold launch, tray idle 60 s | Startup peak; settled memory, idle CPU and wakeups; no periodic growth |
 | Open/close settings and result bubbles 20 times | Peak and retained memory; native windows/handles stop growing |
 | Screenshot → cancel 20 times, then idle 60 s | Overlays disappear; 10 s overlay cleanup; no rising retained surfaces |
-| OCR same fixture 20 times, then idle 60 s | Peak, latency, output correctness; Windows 30 s model/worker idle release |
+| OCR same fixture 20 times, then idle 6 min | Peak, latency, output correctness; Windows worker releases at 30 s, local model sessions at 5 min by default |
 | Cancel during OCR, then immediately retry | Cancellation latency, no stale output, next request succeeds; never free a tensor still in use |
 | Multi-display with mixed DPI/scales and topology changes | Correct crops, placement and native window cleanup |
 | Large clipboard with multiple items/types, cancel, concurrent copy | Responsive input between representations; preserve every type; never overwrite newer content |
