@@ -36,7 +36,7 @@ The models and dictionary live in `resources/windows/ocr`, shared by both Window
 - Sessions initialize on first use and are reused serially until idle release. Detection defaults to `min(4, runtime.NumCPU())` inference threads; recognition uses 2.
 - Detection targets a short side of 448, capped at 1 Mi pixels and a 4,096-pixel side. Recognition crops use the original screenshot.
 - Successful local results with nonempty text after cleanup and layout are returned immediately. Confidence, character, empty-line and geometry risks remain in diagnostics. Local errors or an empty final text trigger one system OCR fallback. Cancellation and request deadlines terminate the request. Explicit language hints outside the local model's scope go directly to system OCR.
-- Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation prevents stale results from being published but cannot interrupt native inference already running.
+- Failed initialization is retried on a later request. A broken system-worker pipe gets one transfer retry. Cancellation sets the current ONNX Runtime run-options termination flag from a background callback. The request waits for native inference and that callback to return before releasing tensors or run options; each new run receives fresh options. This is cooperative native cancellation, not a hard deadline for every kernel.
 
 Source images are limited to 16 Mi pixels and a 16,384-pixel side; detection to 1,000 candidates; recognition inputs to 2,048 pixels wide. Exceeded budgets return an error or use system fallback. Complex tables, vertical/inverted text and exact code indentation are not guaranteed.
 
