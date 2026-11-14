@@ -42,14 +42,29 @@ func TestSettingsPlatformCopyAndShortcutPresentation(t *testing.T) {
 					if err := os.MkdirAll(output, 0755); err != nil {
 						t.Fatal(err)
 					}
-					f, err := os.Create(filepath.Join(output, fmt.Sprintf("settings-%d-dark-%t.png", width, dark)))
-					if err != nil {
+					save := func(state string) {
+						t.Helper()
+						f, err := os.Create(filepath.Join(output, fmt.Sprintf("settings-%d-dark-%t-%s.png", width, dark, state)))
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer f.Close()
+						if err := png.Encode(f, tt.Image()); err != nil {
+							t.Fatal(err)
+						}
+					}
+					save("idle")
+					if err := tt.Click("翻译面板手动设置"); err != nil {
 						t.Fatal(err)
 					}
-					defer f.Close()
-					if err := png.Encode(f, tt.Image()); err != nil {
+					save("manual")
+					if err := tt.Click("翻译面板快捷键"); err != nil {
 						t.Fatal(err)
 					}
+					save("recording")
+					v.CaptureGlobalHotkey(config.Default().Hotkeys.Selection)
+					tt.Frame()
+					save("conflict")
 				}
 			})
 		}

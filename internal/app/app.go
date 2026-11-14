@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
+	"sotto/internal/hotkey"
 	"sotto/internal/keys"
 	"sotto/internal/langdetect"
 	"sotto/internal/naming"
@@ -36,13 +36,15 @@ type application struct {
 	cfgPath       string
 	configWriteMu sync.Mutex
 
-	mu           sync.Mutex
-	cfg          config.Settings
-	hotkeys      map[string]string // action → the accelerator in force
-	entry        entryGate
-	settingsWin  *mygo.Window
-	settingsView *settings.View
-	quitting     bool
+	mu              sync.Mutex
+	cfg             config.Settings
+	hotkeys         map[string]string // action → the accelerator in force
+	hotkeyErrors    map[string]string
+	shortcutBackend hotkey.Backend
+	entry           entryGate
+	settingsWin     *mygo.Window
+	settingsView    *settings.View
+	quitting        bool
 
 	bubbles *bubble.Manager
 	snip    *snip.Manager
@@ -78,6 +80,7 @@ func (a *application) ready() {
 		log.Printf("settings: %v", err)
 	}
 	cfg.Services.Enabled = translate.Available(cfg, a.keys)
+	cfg.Hotkeys = canonicalHotkeys(cfg.Hotkeys)
 	a.cfg = cfg
 
 	// Restore checks without overwriting choices made in the update window.
@@ -116,6 +119,8 @@ func (a *application) ready() {
 	a.snip.Done = a.snipDone
 	mygo.Screen.OnDisplaysChanged(a.snip.RefreshDisplays)
 	a.readyPlatform()
+	a.shortcutBackend = hotkey.NewBackend()
+	mygo.App.OnQuit(a.shortcutBackend.Close)
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
 	}
@@ -144,11 +149,7 @@ func (a *application) updateSettings(s config.Settings) error {
 
 // saveSettings commits settings while the caller holds configWriteMu.
 func (a *application) saveSettings(s config.Settings) error {
-	if err := config.Save(a.cfgPath, s); err != nil {
-		return fmt.Errorf("保存设置：%w", err)
-	}
-	a.applySettings(s)
-	return nil
+	return a.saveSettingsWithHotkeys(s, "")
 }
 
 // applySettings swaps the settings in and follows them: autostart,
@@ -169,16 +170,10 @@ func (a *application) applySettings(s config.Settings) {
 		}
 		a.refreshTrayMenu()
 	}
-	if s.Hotkeys != old.Hotkeys {
-		if err := a.applyHotkeys(s.Hotkeys); err != nil {
-			a.notify("Sotto", err.Error())
-		}
-	}
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
-	// Hotkey fallbacks may have changed a.cfg after s was applied; send
-	// what is actually in force.
+	// Publish only after registration and persistence have succeeded.
 	a.broadcastSettings(a.settings())
 }
 
@@ -376,7 +371,8 @@ func (a *application) showSettings(services bool) {
 			TestService:  svc.TestService,
 			OpenKeyPage:  svc.OpenKeyPage,
 			DeeplUsage:   svc.DeeplUsage,
-			HotkeyBusy:   mygo.GlobalShortcut.IsRegistered,
+			SaveHotkey:   a.updateHotkey,
+			HotkeyErrors: a.shortcutErrors,
 			Invalidate: func() {
 				a.mu.Lock()
 				w := a.settingsWin
@@ -404,6 +400,7 @@ func (a *application) showSettings(services bool) {
 	a.settingsWin = w
 	a.settingsView = sv
 	a.mu.Unlock()
+	w.OnBlur(sv.CancelHotkeyRecording)
 	w.OnClosed(func() {
 		sv.DetachWindow()
 		a.mu.Lock()

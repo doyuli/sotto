@@ -56,7 +56,7 @@ type IdentifierSettings struct {
 	StripMarkdown     bool `json:"stripMarkdown"`
 }
 
-// HotkeySettings are the global shortcuts, in mygo accelerator syntax.
+// HotkeySettings use platform modifier names in accelerator syntax.
 type HotkeySettings struct {
 	Panel     string `json:"panel"`
 	Ocr       string `json:"ocr"`

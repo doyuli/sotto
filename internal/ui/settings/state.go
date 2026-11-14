@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
+	"sotto/internal/hotkey"
 	"sotto/internal/keys"
 )
 
@@ -33,7 +34,8 @@ type Actions struct {
 	TestService  func(ctx context.Context, name string) string
 	OpenKeyPage  func(service string) error
 	DeeplUsage   func() (DeeplUsage, error)
-	HotkeyBusy   func(accel string) bool
+	SaveHotkey   func(action, accel string) error
+	HotkeyErrors func() map[string]string
 	Invalidate   func()
 }
 
@@ -79,6 +81,9 @@ type View struct {
 	drag           settingsDragState
 
 	hotkeyListening string
+	hotkeyPending   string
+	hotkeyEditor    string
+	hotkeyDraft     hotkey.Shortcut
 	hotkeyConflicts map[string]string
 	hotkeyRecorders map[string]*ui.Handle
 }
@@ -144,6 +149,7 @@ func (v *View) SetActiveTab(tab Tab) {
 	v.mu.Lock()
 	if tab != TabHotkeys {
 		v.hotkeyListening = ""
+		v.hotkeyEditor = ""
 	}
 	if tab != TabServices {
 		v.flushTextDraftsLocked()
@@ -213,6 +219,10 @@ func (v *View) enqueueSaveLocked(next config.Settings) {
 	v.enqueueTaskLocked(func() {
 		var err error
 		if v.actions.SaveSettings != nil {
+			// Ordinary settings edits must not restore an older shortcut snapshot.
+			if v.actions.GetSettings != nil {
+				snap.Hotkeys = v.actions.GetSettings().Hotkeys
+			}
 			err = v.actions.SaveSettings(snap)
 		}
 		v.mu.Lock()
@@ -268,6 +278,7 @@ func (v *View) DetachWindow() {
 		delete(v.probeCancels, name)
 	}
 	v.hotkeyListening = ""
+	v.hotkeyEditor = ""
 	v.serviceDrafts = make(map[string]map[string]string)
 	v.expanded = make(map[string]bool)
 	v.testStatuses = make(map[string]serviceTestStatus)

@@ -35,9 +35,9 @@ func TestSettingsCapturesCommandOptionShortcuts(t *testing.T) {
 		label, action, want string
 		key                 ui.Key
 	}{
-		{"翻译面板快捷键", "panel", "Alt+Cmd+A", ui.KeyA},
-		{"截图翻译快捷键", "ocr", "Alt+Cmd+S", ui.KeyS},
-		{"划词翻译快捷键", "selection", "Alt+Cmd+D", ui.KeyD},
+		{"翻译面板快捷键", "panel", "Option+Cmd+A", ui.KeyA},
+		{"截图翻译快捷键", "ocr", "Option+Cmd+S", ui.KeyS},
+		{"划词翻译快捷键", "selection", "Option+Cmd+D", ui.KeyD},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
 			var mu sync.Mutex
@@ -100,7 +100,7 @@ func TestSettingsControlOptionSetSurvivesSaveAndReload(t *testing.T) {
 		}, "shortcut save did not finish")
 		tt.Frame()
 	}
-	want := config.HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}
+	want := config.HotkeySettings{Panel: "Ctrl+Option+A", Ocr: "Ctrl+Option+S", Selection: "Ctrl+Option+D"}
 	mu.Lock()
 	got := current.Hotkeys
 	mu.Unlock()
@@ -124,7 +124,7 @@ func TestSettingsControlOptionSetSurvivesSaveAndReload(t *testing.T) {
 func TestRecorderRecognizesCurrentOptionShortcut(t *testing.T) {
 	cfg := testSettingsConfig()
 	cfg.Hotkeys.Panel = "Option+A"
-	v := NewView(TabHotkeys, cfg, Actions{HotkeyBusy: func(string) bool { return true }})
+	v := NewView(TabHotkeys, cfg, Actions{})
 	defer v.Dispose()
 	tt := ui.NewTester(v.Render, 780, 600)
 	if err := tt.Click("翻译面板快捷键"); err != nil {
@@ -153,10 +153,12 @@ func TestRecorderUsesMacPhysicalPosition(t *testing.T) {
 	// The layout reports a different logical key; registration must use the
 	// physical key Carbon will bind, just as for Option symbols and IMEs.
 	v.captureHotkey("panel", ui.InputEvent{Kind: ui.InputKeyDown, Mods: ui.Alt, Key: ui.KeyZ, PhysicalKey: ui.KeyK})
+	v.Dispose()
+	<-v.taskDone
 	v.mu.Lock()
 	got := v.settings.Hotkeys.Panel
 	v.mu.Unlock()
-	if got != "Alt+K" {
+	if got != "Option+K" {
 		t.Fatalf("captured %q instead of physical Option+K", got)
 	}
 }

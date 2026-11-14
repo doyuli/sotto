@@ -367,6 +367,7 @@ func TestSettingsConsolePageResultsRespectWindowLifetime(t *testing.T) {
 func TestSettingsViewHotkeysTab(t *testing.T) {
 	var mu sync.Mutex
 	current := testSettingsConfig()
+	current.Hotkeys.Selection = capturedHotkey(ui.Ctrl|ui.Alt, "B", runtime.GOOS)
 
 	v := NewView(TabHotkeys, current, Actions{
 		GetSettings: func() config.Settings {
@@ -379,9 +380,6 @@ func TestSettingsViewHotkeysTab(t *testing.T) {
 			defer mu.Unlock()
 			current = s
 			return nil
-		},
-		HotkeyBusy: func(accel string) bool {
-			return accel == "Ctrl+Alt+B"
 		},
 	})
 	defer v.Dispose()
@@ -435,7 +433,7 @@ func TestSettingsViewHotkeysTab(t *testing.T) {
 	tt.Frame()
 	tt.Key(ui.Ctrl|ui.Alt, ui.KeyB)
 	tt.Frame()
-	if !tt.HasText("该组合键已用于 Sotto 的其他操作") {
+	if !tt.HasText("该组合键已用于划词翻译，请换一个组合键") {
 		t.Fatalf("expected hotkey conflict text, texts=%v", tt.Texts())
 	}
 

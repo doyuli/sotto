@@ -6,6 +6,7 @@
 
 ```bash
 CGO_ENABLED=0 go test ./... -count=1
+CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/hotkey -v
 CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/ocr -run '^TestVisionNativeSmoke$' -count=1 -v
 CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/selection -run '^TestMacIsolatedPasteboardItems$' -count=1 -v
 bun run build:mac -skip-dmg -skip-notarize
@@ -26,6 +27,9 @@ CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/capture -run '^TestMacCapt
 
 | 前置条件 | 操作 | 预期结果 |
 | --- | --- | --- |
+| 设置页正在录制快捷键 | 按 Sotto 另一操作的组合，再按一个可用组合；使用方向键、标点和 Tab 组合 | 应用内冲突在当前行显示，不触发翻译；可以继续录制，成功后生效 |
+| 某组合被系统或其他应用拦截 | 在“手动设置”选择该组合并保存 | 可检测的占用明确报错；原组合继续可用，不自动换键；不能把未收到按键事件直接判为冲突 |
+| 保存过快捷键 | 失焦、取消、关闭/重开设置及重启应用；分别使用中英文输入法 | 录制正确取消；保存的组合保持；启动注册失败显示“未生效”；macOS 配置及日志使用 Option/Cmd |
 | 未授予辅助功能/屏幕录制 | 分别触发划词与截图，拒绝后重试，再到系统设置授权 | 说明所需权限与恢复方式；不自动重放旧入口；撤销后再次明确报错 |
 | TextEdit/浏览器可访问文本 | 选中文字触发划词；再用不支持 AX 的目标触发复制回退 | 主路径不修改剪贴板；回退只取得当前来源内容；`--grab ax` 与 `--grab clipboard` 可比较两条路径 |
 | general pasteboard 中存有可辨认的备份内容 | 分别以文本、富文本、图片、文件 URL、多 item 复制后触发回退，再粘贴检查 | 保留 item 边界和全部可读取表示；未知/不可读取类型保守拒绝；不降级成纯文本恢复 |
@@ -44,6 +48,8 @@ CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/capture -run '^TestMacCapt
 | 专用签名安装测试环境 | 检查更新、失败重试、下载、安装、重启；关闭自动检查 | 后台只发现版本，安装需点击；关闭自动检查停止后续排程，在途请求由退出取消 |
 
 ## 当前验证边界
+
+快捷键检测覆盖 Sotto 内部重复、系统公开列表和独占注册冲突。第三方非独占注册属于已接受的能力限制，不作为交付阻塞或必测项；细节见 [快捷键已知限制](../docs/hotkeys.md#已知限制第三方非独占注册)。不得将通过结果记为完整跨应用冲突检测。
 
 输入焦点探针在开发宿主未收到 `OnFocus` 事件并超时；被动显示、Accessory 和 nonactivating 检查通过。MyGo v0.8.3 的 `internal/darwin/child_window.go:showAboveParent` 在主动 Show 时调用 `makeKeyAndOrderFront:`，`internal/darwin/window.go:IsFocused` 读取 `isKeyWindow`。在继续修改窗口策略前，需要在正常应用与可交互桌面中复现并解释差异。
 

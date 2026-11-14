@@ -138,7 +138,7 @@ Windows 模拟复制期间临时安装键盘和鼠标低级钩子。每次复制
 - `internal/ui/bubble/dismiss_test.go`：工作区变化取消临时工作、保留固定工作；恢复后取消固定仍须重新获取输入入口，关闭/取消固定/替换后的旧菜单动作不能恢复窗口。
 - `internal/ui/bubble/ui_test.go`、`internal/ui/bubble/controls_test.go`、`internal/ui/bubble/regression_test.go`：输入、菜单、流式卡片、复制/重试、控件焦点、会话隔离与尺寸；`internal/ui/bubble/scroll_test.go` 覆盖原生滚动。Tester 不能替代 Windows 中文输入法与真实窗口验收。
 - `internal/ui/settings/view_test.go`：模型与凭证、保存回滚与 FIFO 排空、窗口重开与凭据顺序、分组焦点及过期结果隔离；覆盖详情以实际用例断言为准，系统凭据持久化仍需 Windows 验收。
-- `internal/ui/settings/hotkeys_test.go`、`internal/ui/settings/platform_test.go`：按键事件在下一帧前提交、录制控件焦点、空格组合键与 macOS 物理键位，以及 Command+Option+A/S/D 的保存和显示、完整 Control+Option+A/S/D 的逐项保存及重新加载；不等于真实全局热键触发验收。
+- 快捷键解析、注册事务、录制/手动设置、异步保存和跨进程原生冲突验证见 [hotkeys.md](hotkeys.md)；Tester 和原生注册探针不等于真实键盘触发验收。
 - `internal/ui/snip/capture_test.go`：取消或入口失效时释放截图租约，使用注入的释放回调，不执行真实截屏。
 - `internal/selection/clipboard_restore_test.go`：清空/格式写入故障注入及保护策略；没有调用 Windows 原生剪贴板。
 - `internal/selection/pasteboard_test.go`：macOS item 快照，以及准备/写入失败、外部复制、取消和安全重试的版本保护；使用注入操作，不修改系统剪贴板。
