@@ -10,8 +10,10 @@ For subsystem architectures and platform integration details, see [Windows Archi
 
 Tester does not create native windows; symbol loading does not prove actual selection capture or screen capture. Cross-compilation is not platform test execution. Default tests do not synthesize input, modify the general pasteboard, or capture the actual screen.
 
-Regular Windows CI runs noninteractive tests, OCR preflight, e2e vet, and DPI initialization checks. Regular macOS CI runs noninteractive tests and the Vision smoke test. Full desktop acceptance requires an interactive session, the appropriate permissions, and hardware.
+Regular Windows CI runs noninteractive tests, OCR preflight, e2e vet, and DPI initialization checks. Regular macOS CI runs noninteractive tests, native image conversion, Vision, and isolated pasteboard tests. Both platforms verify the read-only performance sampler against its own process and emit per-file package sizes. Full desktop acceptance requires an interactive session, the appropriate permissions, and hardware.
 
 Windows and macOS desktop acceptance have been completed as confirmed by the maintainer; see [Windows acceptance](windows.md) and [macOS acceptance](macos.md) for the covered scenarios and regression procedures.
 
 Environment-variable examples in build and verification commands use POSIX shell syntax. In PowerShell, set `$env:NAME="value"` and run the command separately.
+
+See [Performance measurements](../docs/performance.md) for package inventory, process counters, and the hardware regression matrix.

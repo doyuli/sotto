@@ -34,6 +34,8 @@ jobs:
           go-version-file: go.mod
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Verify performance measurement tools
+        run: python -B -m unittest discover -s scripts -p "test_*.py" -v
       - name: Run all tests
         run: go test ./...
       - name: Check native UI usage
@@ -41,7 +43,7 @@ jobs:
       - name: Verify x64 OCR runtime and models
         env:
           SOTTO_OCR_PREFLIGHT: "1"
-        run: go test ./internal/ocr -run '^TestV6SmallRuntimePreflight$' -count=1 -v
+        run: go test ./internal/ocr -run '^(TestV6SmallRuntimePreflight|TestWinRTNativeRepeatedRequests)$' -count=1 -v
       - name: Check desktop smoke tests
         run: go vet -tags e2e ./e2e
       - name: Verify desktop test DPI initialization
@@ -59,6 +61,8 @@ jobs:
               }
             }
           }
+      - name: Record uncompressed Windows package sizes
+        run: python -B scripts/performance.py sizes build/windows-amd64 build/windows-arm64
 
   macos:
     name: macOS
@@ -77,6 +81,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Verify Apple silicon runner
         run: test "$(uname -m)" = arm64
+      - name: Verify performance measurement tools
+        run: python3 -B -m unittest discover -s scripts -p "test_*.py" -v
       - name: Run all tests
         run: go test ./...
       - name: Check native UI usage
@@ -93,3 +99,5 @@ jobs:
         run: bun run build:mac -skip-dmg -skip-notarize
       - name: Verify Windows OCR assets are excluded
         run: test ! -e build/darwin-arm64/Sotto.app/Contents/Resources/ocr
+      - name: Record uncompressed macOS app size
+        run: python3 -B scripts/performance.py sizes build/darwin-arm64/Sotto.app
