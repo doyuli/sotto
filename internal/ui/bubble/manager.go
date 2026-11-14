@@ -51,7 +51,7 @@ type bubble struct {
 	view                   *bubbleView
 	appliedHeight          int
 	pinned                 bool
-	reqID                  string // the request its native view last showed
+	reqID                  string // request with the highest accepted revision
 	generation             int64
 	showID                 int64
 	closeClaimed           bool
@@ -62,15 +62,13 @@ type bubble struct {
 	serviceRevisions       map[string]int64
 	sourceLang, targetLang string
 	phase, message         string
-	meta                   *RunMetaMsg
-	results                map[string]TranslationUpdateMsg
 	runCancels             map[string]context.CancelFunc
 	serviceRequests        map[string]string
 	cancelCapture          context.CancelFunc
 	canShow                func() bool
 	// Restoring a fixed bubble renews its workspace, never its entry ownership.
 	workspace uint64
-	// trigger and text of the last query, for a page that mounts late.
+	// Source content initializes the view before translation starts.
 	trigger, text string
 	// Native readiness gates first presentation; the view owns content measurement.
 	ready             bool
@@ -205,13 +203,6 @@ func (b *bubble) stopWork() {
 		cancel()
 	}
 	b.runCancels = nil
-	// A later state snapshot must not revive an already canceled stream.
-	for service, result := range b.results {
-		if result.Streaming {
-			result.Streaming, result.Err = false, "翻译已取消，请重试"
-			b.results[service] = result
-		}
-	}
 	if b.cancelCapture != nil {
 		b.cancelCapture()
 		b.cancelCapture = nil
@@ -337,49 +328,6 @@ func (m *Manager) setBlurLocked(b *bubble, on bool) {
 	}
 }
 
-// State returns the bubble's current state for its page.
-func (m *Manager) State(cfg config.Settings, id int64) (BubbleState, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	b, ok := m.byID[id]
-	if !ok {
-		return BubbleState{}, false
-	}
-	return m.state(b, cfg), true
-}
-
-// PushMeta delivers resolved request metadata to the bubble's native UI.
-func (m *Manager) PushMeta(win *mygo.Window, meta RunMetaMsg) {
-	m.mu.Lock()
-	var view *bubbleView
-	for _, b := range m.byID {
-		if b.win == win {
-			view = b.view
-			break
-		}
-	}
-	m.mu.Unlock()
-	if view != nil {
-		win.Update(func() { view.applyMeta(meta) })
-	}
-}
-
-// PushResult delivers one translation chunk/result to the bubble's native UI.
-func (m *Manager) PushResult(win *mygo.Window, msg TranslationUpdateMsg) {
-	m.mu.Lock()
-	var view *bubbleView
-	for _, b := range m.byID {
-		if b.win == win {
-			view = b.view
-			break
-		}
-	}
-	m.mu.Unlock()
-	if view != nil {
-		win.Update(func() { view.applyResult(msg) })
-	}
-}
-
 // ApplySettings updates every open bubble view with new settings.
 func (m *Manager) ApplySettings(s config.Settings) {
 	m.mu.Lock()
@@ -407,13 +355,17 @@ func (m *Manager) state(b *bubble, cfg config.Settings) BubbleState {
 		ShowID:              b.showID,
 		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
 		ReqID:               b.reqID,
-		ServiceRequests:     cloneRequests(b.serviceRequests), Generation: b.generation, SessionID: b.sessionID, Revision: b.revision, Phase: b.phase, Message: b.message, Meta: b.meta, Results: b.resultList(),
-		Trigger:    b.trigger,
-		Text:       b.text,
-		SourceLang: b.sourceLang,
-		TargetLang: b.targetLang,
-		Pinned:     b.pinned,
-		Settings:   cfg,
+		Generation:          b.generation,
+		SessionID:           b.sessionID,
+		Revision:            b.revision,
+		Phase:               b.phase,
+		Message:             b.message,
+		Trigger:             b.trigger,
+		Text:                b.text,
+		SourceLang:          b.sourceLang,
+		TargetLang:          b.targetLang,
+		Pinned:              b.pinned,
+		Settings:            cfg,
 	}
 }
 

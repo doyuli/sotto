@@ -123,7 +123,7 @@ func TestRunOrderingAndIsolation(t *testing.T) {
 	if _, ok := m.StartRun(w1, RunReq{SessionID: "a", ReqID: "late IPC", Revision: 2}); ok {
 		t.Fatal("accepted late run")
 	}
-	if m.RecordResult(w1, TranslationUpdateMsg{ReqID: "first", Service: "google", Text: "stale"}) {
+	if m.PushResult(w1, TranslationUpdateMsg{ReqID: "first", Service: "google", Text: "stale"}) {
 		t.Fatal("accepted stale result")
 	}
 	if _, ok := m.StartRun(w1, RunReq{SessionID: "old session", ReqID: "stale", Revision: 99}); ok {
@@ -149,7 +149,7 @@ func TestSelectionReplacesInputSessionOnSameWindow(t *testing.T) {
 	b.replaceContent(config.Default(), "input", "first", "", "", nil)
 	oldSession := b.sessionID
 	old, ok := m.StartRun(w, RunReq{SessionID: oldSession, ReqID: "first", Revision: 0, Text: "first"})
-	if !ok || !m.RecordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google"}}, "") {
+	if !ok || !m.PushMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google"}}, "") {
 		t.Fatal("could not start first selection")
 	}
 	retry, ok := m.StartRun(w, RunReq{SessionID: oldSession, ReqID: "retry", Revision: 1, Service: "google"})
@@ -172,33 +172,18 @@ func TestSelectionReplacesInputSessionOnSameWindow(t *testing.T) {
 	if !ok || latest.Err() != nil {
 		t.Fatal("new selection could not start immediately")
 	}
-	m.RecordMeta(w, RunMetaMsg{ReqID: "second", Services: []string{"google"}}, "")
+	m.PushMeta(w, RunMetaMsg{ReqID: "second", Services: []string{"google"}}, "")
 	for _, reqID := range []string{"first", "retry"} {
-		if m.RecordMeta(w, RunMetaMsg{ReqID: reqID, Services: []string{"google"}}, "") ||
-			m.RecordResult(w, TranslationUpdateMsg{ReqID: reqID, Service: "google", Text: "stale"}) {
+		if m.PushMeta(w, RunMetaMsg{ReqID: reqID, Services: []string{"google"}}, "") ||
+			m.PushResult(w, TranslationUpdateMsg{ReqID: reqID, Service: "google", Text: "stale"}) {
 			t.Fatal("late old request reclaimed the new selection")
 		}
 		m.FinishRun(w, reqID)
 	}
-	if latest.Err() != nil || !m.RecordResult(w, TranslationUpdateMsg{ReqID: "second", Service: "google", Text: "new"}) {
+	if latest.Err() != nil || !m.PushResult(w, TranslationUpdateMsg{ReqID: "second", Service: "google", Text: "new"}) {
 		t.Fatal("old completion affected the new request")
 	}
 	m.FinishRun(w, "second")
-}
-
-func TestRetryPreservesOtherResultsAndSnapshot(t *testing.T) {
-	m := NewManager(nil, Actions{})
-	w := &mygo.Window{}
-	m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
-	m.StartRun(w, RunReq{SessionID: "s", ReqID: "first", Revision: 0})
-	m.RecordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"google", "baidu"}}, "")
-	m.RecordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "google", Text: "hello"})
-	m.RecordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "baidu", Err: "offline"})
-	m.StartRun(w, RunReq{SessionID: "s", ReqID: "retry", Revision: 1, Service: "baidu"})
-	state, _ := m.State(config.Default(), 1)
-	if len(state.Results) != 1 || state.Results[0].Text != "hello" {
-		t.Fatalf("retry cleared successful result: %+v", state.Results)
-	}
 }
 
 func TestRetryKeepsPendingPeerAlive(t *testing.T) {
@@ -206,16 +191,16 @@ func TestRetryKeepsPendingPeerAlive(t *testing.T) {
 	w := &mygo.Window{}
 	m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
 	original, _ := m.StartRun(w, RunReq{SessionID: "s", ReqID: "original", Revision: 0})
-	m.RecordMeta(w, RunMetaMsg{ReqID: "original", Services: []string{"google", "baidu"}}, "")
+	m.PushMeta(w, RunMetaMsg{ReqID: "original", Services: []string{"google", "baidu"}}, "")
 	m.StartRun(w, RunReq{SessionID: "s", ReqID: "retry", Revision: 1, Service: "baidu"})
-	m.RecordMeta(w, RunMetaMsg{ReqID: "retry", Services: []string{"google", "baidu"}}, "baidu")
+	m.PushMeta(w, RunMetaMsg{ReqID: "retry", Services: []string{"google", "baidu"}}, "baidu")
 	if original.Err() != nil {
 		t.Fatal("retry canceled pending peer")
 	}
-	if !m.RecordResult(w, TranslationUpdateMsg{ReqID: "original", Service: "google", Text: "peer result"}) {
+	if !m.PushResult(w, TranslationUpdateMsg{ReqID: "original", Service: "google", Text: "peer result"}) {
 		t.Fatal("dropped peer's late result")
 	}
-	if m.RecordResult(w, TranslationUpdateMsg{ReqID: "original", Service: "baidu", Text: "old attempt"}) {
+	if m.PushResult(w, TranslationUpdateMsg{ReqID: "original", Service: "baidu", Text: "old attempt"}) {
 		t.Fatal("accepted superseded service attempt")
 	}
 	m.Cancel(w, "s", 2)
@@ -231,7 +216,7 @@ func TestIndependentRetriesSurviveInterleaving(t *testing.T) {
 			w := &mygo.Window{}
 			m.byID[1] = &bubble{win: w, sessionID: "s", revision: -1}
 			m.StartRun(w, RunReq{SessionID: "s", ReqID: "full", Revision: 0})
-			m.RecordMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
+			m.PushMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
 			requests := []RunReq{
 				{SessionID: "s", ReqID: "a", Revision: 1, Service: "google"},
 				{SessionID: "s", ReqID: "b", Revision: 2, Service: "baidu"},
@@ -246,19 +231,19 @@ func TestIndependentRetriesSurviveInterleaving(t *testing.T) {
 					t.Fatalf("independent retry rejected: %s", req.Service)
 				}
 				contexts = append(contexts, ctx)
-				if m.RecordResult(w, TranslationUpdateMsg{ReqID: "full", Service: req.Service}) {
+				if m.PushResult(w, TranslationUpdateMsg{ReqID: "full", Service: req.Service}) {
 					t.Fatal("old attempt reclaimed card before retry metadata")
 				}
 			}
 			for _, req := range requests {
-				if !m.RecordMeta(w, RunMetaMsg{ReqID: req.ReqID, Services: []string{"google", "baidu"}}, req.Service) ||
-					!m.RecordResult(w, TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Text: req.Service}) {
+				if !m.PushMeta(w, RunMetaMsg{ReqID: req.ReqID, Services: []string{"google", "baidu"}}, req.Service) ||
+					!m.PushResult(w, TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Text: req.Service}) {
 					t.Fatalf("lost retry metadata or result: %s", req.Service)
 				}
 			}
-			state, _ := m.State(config.Default(), 1)
-			if len(state.Results) != 2 || state.Revision != 2 || state.ReqID != "b" {
-				t.Fatalf("snapshot regressed: %+v", state)
+			b := m.byID[1]
+			if b.revision != 2 || b.reqID != "b" {
+				t.Fatal("independent retry regressed request ordering")
 			}
 			m.Cancel(w, "s", 3)
 			for _, ctx := range contexts {
@@ -280,17 +265,17 @@ func TestRetryCannotCrossReplacementOrCancellation(t *testing.T) {
 		t.Fatal("older retry of same service accepted")
 	}
 	// Full metadata may finish after a retry, but must not reclaim its card.
-	m.RecordMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
-	if m.RecordResult(w, TranslationUpdateMsg{ReqID: "full", Service: "google"}) ||
-		!m.RecordResult(w, TranslationUpdateMsg{ReqID: "full", Service: "baidu"}) {
+	m.PushMeta(w, RunMetaMsg{ReqID: "full", Services: []string{"google", "baidu"}}, "")
+	if m.PushResult(w, TranslationUpdateMsg{ReqID: "full", Service: "google"}) ||
+		!m.PushResult(w, TranslationUpdateMsg{ReqID: "full", Service: "baidu"}) {
 		t.Fatal("late full metadata overwrote retry ownership or lost peer")
 	}
 	m.StartRun(w, RunReq{SessionID: "s", ReqID: "replacement", Revision: 4})
 	if _, ok := m.StartRun(w, RunReq{SessionID: "s", ReqID: "late peer", Revision: 3, Service: "baidu"}); ok {
 		t.Fatal("retry crossed full replacement")
 	}
-	if m.RecordMeta(w, RunMetaMsg{ReqID: "new retry"}, "google") ||
-		m.RecordResult(w, TranslationUpdateMsg{ReqID: "new retry", Service: "google"}) {
+	if m.PushMeta(w, RunMetaMsg{ReqID: "new retry"}, "google") ||
+		m.PushResult(w, TranslationUpdateMsg{ReqID: "new retry", Service: "google"}) {
 		t.Fatal("old retry published after replacement")
 	}
 	m.Cancel(w, "s", 6)
@@ -365,28 +350,27 @@ func TestDelayedBlurCannotHideANewerSelection(t *testing.T) {
 	}
 }
 
-func TestStreamingSnapshotsAndCancellation(t *testing.T) {
+func TestStreamingCancellationRejectsLateResults(t *testing.T) {
 	m := NewManager(nil, Actions{})
 	w := &mygo.Window{}
 	m.byID[1] = &bubble{win: w, sessionID: "stream", revision: -1}
 	ctx, _ := m.StartRun(w, RunReq{SessionID: "stream", ReqID: "first", Revision: 1})
-	m.RecordMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"openai"}}, "")
+	m.PushMeta(w, RunMetaMsg{ReqID: "first", Services: []string{"openai"}}, "")
 	for _, text := range []string{"你", "你好"} {
-		if !m.RecordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: text, Streaming: true}) {
+		if !m.PushResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: text, Streaming: true}) {
 			t.Fatal("stream update rejected")
 		}
 	}
-	state, _ := m.State(config.Default(), 1)
-	if len(state.Results) != 1 || state.Results[0].Text != "你好" || !state.Results[0].Streaming {
-		t.Fatalf("Ready must hold only the latest cumulative snapshot: %+v", state.Results)
-	}
 	m.Cancel(w, "stream", 2)
-	state, _ = m.State(config.Default(), 1)
-	if ctx.Err() == nil || state.Results[0].Streaming || state.Results[0].Text != "你好" || state.Results[0].Err == "" {
-		t.Fatalf("canceled snapshot must retain text and settle: %+v", state.Results)
+	if ctx.Err() != context.Canceled {
+		t.Fatal("cancellation left stream running")
 	}
-	if m.RecordResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: "stale", Streaming: true}) {
+	if m.PushResult(w, TranslationUpdateMsg{ReqID: "first", Service: "openai", Text: "stale", Streaming: true}) {
 		t.Fatal("canceled stream reclaimed its card")
+	}
+	// An absent map entry must not authorize an update with no request identity.
+	if m.PushResult(w, TranslationUpdateMsg{Service: "openai", Text: "unowned"}) {
+		t.Fatal("accepted result without request ownership")
 	}
 }
 
@@ -400,17 +384,20 @@ func TestNewInputReplacesSessionAndRejectsOldWork(t *testing.T) {
 	b.present()
 	oldSession := b.sessionID
 	ctx, _ := m.StartRun(w, RunReq{SessionID: oldSession, ReqID: "old", Revision: 1, Text: "previous text"})
-	m.RecordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "previous result"})
+	if !m.PushMeta(w, RunMetaMsg{ReqID: "old", Services: []string{"google"}}, "") ||
+		!m.PushResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "previous result"}) {
+		t.Fatal("initial input result rejected")
+	}
 	b.replaceContent(cfg, "input", "", "", "", nil)
 	b.present()
 	state := m.state(b, cfg)
-	if ctx.Err() != context.Canceled || state.SessionID == oldSession || state.Text != "" || len(state.Results) != 0 || state.Meta != nil || len(state.ServiceRequests) != 0 {
+	if ctx.Err() != context.Canceled || state.SessionID == oldSession || state.Text != "" || len(b.serviceRequests) != 0 {
 		t.Fatalf("new input retained old content/work: %+v", state)
 	}
 	if state.Generation != 2 || state.ShowID != 2 || state.Revision != -1 || b.presentationShown {
 		t.Fatal("new input did not acquire a fresh unsubmitted presentation")
 	}
-	if _, ok := m.StartRun(w, RunReq{SessionID: oldSession, ReqID: "late", Revision: 99}); ok || m.RecordResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "late"}) {
+	if _, ok := m.StartRun(w, RunReq{SessionID: oldSession, ReqID: "late", Revision: 99}); ok || m.PushResult(w, TranslationUpdateMsg{ReqID: "old", Service: "google", Text: "late"}) {
 		t.Fatal("old input work entered the fresh session")
 	}
 }

@@ -3,7 +3,6 @@ package bubble
 import (
 	"context"
 	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/egoist/mygo"
@@ -23,60 +22,70 @@ func newDismissTestBubble(t *testing.T, trigger, phase string) (*Manager, *bubbl
 	return m, b
 }
 
-func equalDismissTestSnapshots(before, after BubbleState) bool {
-	// resultList walks a map; card ordering is not part of the state contract.
-	less := func(results []TranslationUpdateMsg) {
-		sort.Slice(results, func(i, j int) bool { return results[i].Service < results[j].Service })
-	}
-	less(before.Results)
-	less(after.Results)
-	return reflect.DeepEqual(before, after)
-}
-
 func dismissTestBubble(m *Manager, b *bubble) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return b.dismiss()
 }
 
-func startDismissTestJobs(t *testing.T, m *Manager, b *bubble) (context.Context, context.Context) {
+func startDismissTestJobs(t *testing.T, m *Manager, b *bubble, view *bubbleView) (context.Context, context.Context) {
 	t.Helper()
+	fullMeta := RunMetaMsg{
+		ReqID: "full", Services: []string{"openai", "google", "baidu"},
+		SourceLang: "en", TargetLang: "zh-HANS",
+	}
 	full, ok := m.StartRun(b.win, RunReq{
 		SessionID: b.sessionID, ReqID: "full", Revision: 0,
 		Text: b.text, SourceLang: "en", TargetLang: "zh-HANS",
 	})
-	if !ok || !m.RecordMeta(b.win, RunMetaMsg{
-		ReqID: "full", Services: []string{"openai", "google", "baidu"},
-		SourceLang: "en", TargetLang: "zh-HANS",
-	}, "") {
+	if !ok || !m.PushMeta(b.win, fullMeta, "") {
 		t.Fatal("could not start full translation")
+	}
+	if view != nil {
+		view.reqID, view.revision, view.stateRevision = "full", 0, 0
+		view.applyMeta(fullMeta)
+	}
+	retryMeta := RunMetaMsg{
+		ReqID: "retry", Services: []string{"baidu"}, SourceLang: "en", TargetLang: "zh-HANS",
 	}
 	retry, ok := m.StartRun(b.win, RunReq{
 		SessionID: b.sessionID, ReqID: "retry", Revision: 1, Service: "baidu",
 		Text: b.text, SourceLang: "en", TargetLang: "zh-HANS",
 	})
-	if !ok || !m.RecordMeta(b.win, RunMetaMsg{
-		ReqID: "retry", Services: []string{"baidu"}, SourceLang: "en", TargetLang: "zh-HANS",
-	}, "baidu") {
+	if !ok || !m.PushMeta(b.win, retryMeta, "baidu") {
 		t.Fatal("could not start concurrent service retry")
 	}
+	if view != nil {
+		view.reqID, view.revision, view.stateRevision = "retry", 1, 1
+		view.retryService = "baidu"
+		view.serviceReqIDs["baidu"] = "retry"
+		view.applyMeta(retryMeta)
+	}
 	for _, result := range []TranslationUpdateMsg{
+		{ReqID: "full", Service: "openai", Text: "partial", Streaming: true},
 		{ReqID: "full", Service: "openai", Text: "partial translation", Streaming: true},
 		{ReqID: "full", Service: "google", Text: "finished translation"},
 		{ReqID: "retry", Service: "baidu", Text: "partial retry", Streaming: true},
 	} {
-		if !m.RecordResult(b.win, result) {
+		if !m.PushResult(b.win, result) {
 			t.Fatalf("could not record %s result", result.Service)
+		}
+		if view != nil {
+			view.applyResult(result)
 		}
 	}
 	return full, retry
 }
 
-func TestBubbleDismissCancelsAllJobsAndSettlesSnapshot(t *testing.T) {
+func TestBubbleDismissCancelsAllJobsAndSettlesView(t *testing.T) {
 	for _, trigger := range []string{"input", "selection", "ocr"} {
 		t.Run(trigger, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, trigger, "")
-			full, retry := startDismissTestJobs(t, m, b)
+			// Results belong to the view; dismissal must settle its cards without
+			// reconstructing them from a second backend result store.
+			view := newBubbleView(b.id, config.Default(), bubbleViewActions{})
+			view.applyState(m.state(b, config.Default()), false)
+			full, retry := startDismissTestJobs(t, m, b, view)
 			// Attach an independently pending acquisition after StartRun, which
 			// intentionally cancels capture when a full translation takes over.
 			capture, cancelCapture := context.WithCancel(context.Background())
@@ -88,8 +97,13 @@ func TestBubbleDismissCancelsAllJobsAndSettlesSnapshot(t *testing.T) {
 			if full.Err() != context.Canceled || retry.Err() != context.Canceled || capture.Err() != context.Canceled {
 				t.Fatal("dismissal left full translation, service retry, or capture running")
 			}
-			state, ok := m.State(config.Default(), b.id)
-			if !ok || state.ReqID != "" || len(state.ServiceRequests) != 0 || len(b.runCancels) != 0 || b.cancelCapture != nil {
+			view.onStopped(RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision})
+			// Already queued UI callbacks must not revive the stopped cards.
+			view.applyMeta(RunMetaMsg{ReqID: "full", Services: []string{"openai", "google"}})
+			view.applyResult(TranslationUpdateMsg{ReqID: "full", Service: "openai", Text: "late full", Streaming: true})
+			view.applyResult(TranslationUpdateMsg{ReqID: "retry", Service: "baidu", Text: "late retry", Streaming: true})
+			state := m.state(b, config.Default())
+			if state.ReqID != "" || len(b.serviceRequests) != 0 || len(b.runCancels) != 0 || b.cancelCapture != nil || view.reqID != "" || len(view.serviceReqIDs) != 0 {
 				t.Fatalf("dismissal retained active request ownership: %+v", state)
 			}
 			if !b.closeClaimed || b.canShow == nil || b.canShow() || state.Revision != before.Revision+1 || b.fullRevision != state.Revision || b.fullReqID != "" {
@@ -98,20 +112,16 @@ func TestBubbleDismissCancelsAllJobsAndSettlesSnapshot(t *testing.T) {
 			if state.SessionID != before.SessionID || state.ShowID != before.ShowID || state.Generation != before.Generation || state.Text != before.Text {
 				t.Fatal("dismissal replaced content instead of retaining the stopped snapshot")
 			}
-			results := make(map[string]TranslationUpdateMsg)
-			for _, result := range state.Results {
-				results[result.Service] = result
-			}
-			if len(results) != 3 {
-				t.Fatalf("dismissal lost existing cards: %+v", results)
+			if len(view.cards) != 3 {
+				t.Fatalf("dismissal lost existing cards: %+v", view.cards)
 			}
 			for service, text := range map[string]string{"openai": "partial translation", "baidu": "partial retry"} {
-				result := results[service]
-				if result.Text != text || result.Streaming || result.Err == "" {
+				result := view.cards[service]
+				if result == nil || result.Text != text || result.Loading || result.Streaming || result.Err == "" {
 					t.Errorf("dismissed stream must retain partial text and settle: %+v", result)
 				}
 			}
-			if result := results["google"]; result.Text != "finished translation" || result.Streaming || result.Err != "" {
+			if result := view.cards["google"]; result == nil || result.Text != "finished translation" || result.Loading || result.Streaming || result.Err != "" {
 				t.Errorf("dismissal changed a finished card: %+v", result)
 			}
 		})
@@ -141,7 +151,7 @@ func TestBubbleDismissRecognitionRejectsLateCaptureAndShow(t *testing.T) {
 			if b.claimShow() {
 				t.Fatal("late show revived the dismissed recognition")
 			}
-			if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) {
+			if after := m.state(b, config.Default()); !reflect.DeepEqual(before, after) {
 				t.Fatalf("late capture or show mutated the stopped snapshot: before=%+v after=%+v", before, after)
 			}
 		})
@@ -158,24 +168,24 @@ func TestBubbleDismissedCaptureRequiresOpenPresentation(t *testing.T) {
 	if m.CompleteCapture(config.Default(), shown, "late recognized text", "") {
 		t.Fatal("capture ignored closure while its recognition revision still matched")
 	}
-	if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) {
+	if after := m.state(b, config.Default()); !reflect.DeepEqual(before, after) {
 		t.Fatal("rejected capture changed the closed presentation")
 	}
 }
 
 func TestBubbleDismissRejectsLateWorkAtAnyRevision(t *testing.T) {
 	m, b := newDismissTestBubble(t, "input", "")
-	startDismissTestJobs(t, m, b)
+	startDismissTestJobs(t, m, b, nil)
 	if !dismissTestBubble(m, b) {
 		t.Fatal("dismissal rejected")
 	}
 	before := m.state(b, config.Default())
 	for _, attempt := range []struct{ request, service string }{{"full", ""}, {"retry", "baidu"}} {
-		if m.RecordMeta(b.win, RunMetaMsg{ReqID: attempt.request, Services: []string{"google", "baidu"}}, attempt.service) {
+		if m.PushMeta(b.win, RunMetaMsg{ReqID: attempt.request, Services: []string{"google", "baidu"}}, attempt.service) {
 			t.Errorf("accepted late metadata for %s", attempt.request)
 		}
 		for _, service := range []string{"openai", "google", "baidu"} {
-			if m.RecordResult(b.win, TranslationUpdateMsg{ReqID: attempt.request, Service: service, Text: "late", Streaming: true}) {
+			if m.PushResult(b.win, TranslationUpdateMsg{ReqID: attempt.request, Service: service, Text: "late", Streaming: true}) {
 				t.Errorf("accepted late %s result for %s", service, attempt.request)
 			}
 		}
@@ -193,7 +203,7 @@ func TestBubbleDismissRejectsLateWorkAtAnyRevision(t *testing.T) {
 	if b.claimShow() {
 		t.Fatal("late show reopened the dismissed bubble")
 	}
-	if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) || len(b.runCancels) != 0 {
+	if after := m.state(b, config.Default()); !reflect.DeepEqual(before, after) || len(b.runCancels) != 0 {
 		t.Fatalf("late work changed the stopped snapshot: before=%+v after=%+v", before, after)
 	}
 }
@@ -202,7 +212,7 @@ func TestBubbleDismissIsIdempotentAndPinnedDismissIsNoOp(t *testing.T) {
 	for _, pinned := range []bool{false, true} {
 		t.Run(map[bool]string{false: "repeated", true: "pinned"}[pinned], func(t *testing.T) {
 			m, b := newDismissTestBubble(t, "selection", "")
-			full, retry := startDismissTestJobs(t, m, b)
+			full, retry := startDismissTestJobs(t, m, b, nil)
 			b.pinned = pinned
 			calls := make(map[string]int)
 			for request, cancel := range b.runCancels {
@@ -220,7 +230,7 @@ func TestBubbleDismissIsIdempotentAndPinnedDismissIsNoOp(t *testing.T) {
 					t.Fatal("pinned or already dismissed presentation accepted dismissal")
 				}
 			}
-			if after := m.state(b, config.Default()); !equalDismissTestSnapshots(before, after) {
+			if after := m.state(b, config.Default()); !reflect.DeepEqual(before, after) {
 				t.Fatalf("no-op dismissal mutated the snapshot: before=%+v after=%+v", before, after)
 			}
 			wantCalls := 1
@@ -243,7 +253,7 @@ func TestBubbleDismissAllowsReplacementButNotOldSession(t *testing.T) {
 	for _, trigger := range []string{"input", "selection", "ocr"} {
 		t.Run(trigger, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, trigger, "")
-			startDismissTestJobs(t, m, b)
+			startDismissTestJobs(t, m, b, nil)
 			oldSession, oldShow, oldGeneration := b.sessionID, b.showID, b.generation
 			if !dismissTestBubble(m, b) {
 				t.Fatal("dismissal rejected")
@@ -262,7 +272,7 @@ func TestBubbleDismissAllowsReplacementButNotOldSession(t *testing.T) {
 			if b.claimClose(oldSession, oldShow, 1<<60) || m.CompleteCapture(config.Default(), Shown{Win: b.win, ReqID: oldSession}, "old capture", "") {
 				t.Fatal("old presentation callback affected replacement")
 			}
-			full, retry := startDismissTestJobs(t, m, b)
+			full, retry := startDismissTestJobs(t, m, b, nil)
 			if full.Err() != nil || retry.Err() != nil || b.text != "replacement source" {
 				t.Fatal("replacement failed to start fresh full and retry jobs")
 			}
@@ -287,7 +297,7 @@ func TestBubblePresentationAndCaptureCompletionDoNotDismissJobs(t *testing.T) {
 	if capture.Err() != nil || b.closeClaimed || !b.canShow() || b.revision != -1 || !b.presentationShown || b.cancelCapture != nil {
 		t.Fatal("capture completion dismissed presentation or retained pending acquisition")
 	}
-	full, retry := startDismissTestJobs(t, m, b)
+	full, retry := startDismissTestJobs(t, m, b, nil)
 	if b.claimShow() || full.Err() != nil || retry.Err() != nil || b.closeClaimed || !b.canShow() {
 		t.Fatal("translation repeated first show or dismissed active jobs")
 	}
@@ -299,7 +309,7 @@ func TestBubblePresentationAndCaptureCompletionDoNotDismissJobs(t *testing.T) {
 func TestWorkspaceDismissStopsTransientJobs(t *testing.T) {
 	for _, pinned := range []bool{false, true} {
 		m, b := newDismissTestBubble(t, "selection", "")
-		full, retry := startDismissTestJobs(t, m, b)
+		full, retry := startDismissTestJobs(t, m, b, nil)
 		b.pinned = pinned
 		if b.stopStalePresentation(0) {
 			t.Fatal("current entry was hidden")
@@ -315,7 +325,7 @@ func TestWorkspaceDismissStopsTransientJobs(t *testing.T) {
 			if full.Err() == nil || retry.Err() == nil {
 				t.Fatal("stale work continued")
 			}
-			if m.RecordResult(b.win, TranslationUpdateMsg{ReqID: "full", Service: "openai", Text: "late"}) || m.RecordMeta(b.win, RunMetaMsg{ReqID: "full"}, "") {
+			if m.PushResult(b.win, TranslationUpdateMsg{ReqID: "full", Service: "openai", Text: "late"}) || m.PushMeta(b.win, RunMetaMsg{ReqID: "full"}, "") {
 				t.Fatal("accepted late work")
 			}
 			if b.stopStalePresentation(1) || b.claimShow() {
@@ -334,7 +344,7 @@ func TestPinnedRestorePreservesEntryOwnership(t *testing.T) {
 	b.canShow = old.Valid
 	b.pinned = true
 	b.claimShow()
-	full, retry := startDismissTestJobs(t, m, b)
+	full, retry := startDismissTestJobs(t, m, b, nil)
 	pending := gate.Begin()
 	defer pending.Cancel()
 	if !b.stopStalePresentation(1) || !m.claimPinnedRestore(b, 1) {

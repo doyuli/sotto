@@ -302,19 +302,10 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 
 	v.cards = make(map[string]*bubbleCard)
 	v.serviceReqIDs = make(map[string]string)
-	for svc, id := range st.ServiceRequests {
-		v.serviceReqIDs[svc] = id
-	}
 	if st.ReqID != "" && st.Text != "" {
 		for _, svc := range v.activeConfiguredServices() {
 			v.cards[svc] = &bubbleCard{Loading: true}
 		}
-	}
-	if st.Meta != nil && st.Meta.ReqID == st.ReqID {
-		v.applyMetaLocked(st.Meta)
-	}
-	for _, msg := range st.Results {
-		v.applyResultInternal(msg)
 	}
 
 	v.pendingFocus = focus || st.Trigger == "input"
@@ -391,11 +382,6 @@ func (v *bubbleView) applyMeta(meta RunMetaMsg) {
 		v.bumpContent()
 		return
 	}
-	v.applyMetaLocked(&meta)
-	v.bumpContent()
-}
-
-func (v *bubbleView) applyMetaLocked(meta *RunMetaMsg) {
 	if meta.SourceLang != "" {
 		v.sourceLang = meta.SourceLang
 	}
@@ -416,6 +402,7 @@ func (v *bubbleView) applyMetaLocked(meta *RunMetaMsg) {
 	} else if !slices.Contains(meta.Services, v.retryService) {
 		v.cards[v.retryService] = &bubbleCard{Err: "该服务当前不可用，请检查设置"}
 	}
+	v.bumpContent()
 }
 
 func (v *bubbleView) applyResult(msg TranslationUpdateMsg) {
@@ -426,11 +413,7 @@ func (v *bubbleView) applyResult(msg TranslationUpdateMsg) {
 	if msg.ReqID != expected {
 		return
 	}
-	v.applyResultInternal(msg)
 	v.bumpContent()
-}
-
-func (v *bubbleView) applyResultInternal(msg TranslationUpdateMsg) {
 	if v.sourceLang == "auto" && msg.DetectedLang != "" &&
 		msg.DetectedLang != "latin" && msg.DetectedLang != "unknown" {
 		if v.detected == "" {

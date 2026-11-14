@@ -20,14 +20,13 @@ func TestBubbleNewPresentationExpandsCards(t *testing.T) {
 	if err := tt.Click("折叠 Google"); err != nil {
 		t.Fatal(err)
 	}
-	// Incremental results and same-presentation snapshots preserve user choice.
+	// Incremental results and same-presentation notifications preserve user choice.
 	v.applyResult(TranslationUpdateMsg{ReqID: "first", Service: "baidu", Text: "另一译文"})
 	tt.Frame()
 	if !v.collapsed["google"] {
 		t.Fatal("incremental result expanded a collapsed card")
 	}
-	state.Results = []TranslationUpdateMsg{{ReqID: "first", Service: "google", Text: "译文"}}
-	v.applyState(state, false)
+	v.onPresented(BubblePresentedMsg{SessionID: "first", ShowID: state.ShowID, Revision: state.Revision})
 	tt.Frame()
 	if !v.collapsed["google"] {
 		t.Fatal("same presentation reset collapse state")
@@ -35,8 +34,8 @@ func TestBubbleNewPresentationExpandsCards(t *testing.T) {
 	state.Generation++
 	state.SessionID, state.ReqID = "second", "second"
 	state.ShowID++
-	state.Results = []TranslationUpdateMsg{{ReqID: "second", Service: "google", Text: "新译文"}}
 	v.applyState(state, false)
+	v.applyResult(TranslationUpdateMsg{ReqID: "second", Service: "google", Text: "新译文"})
 	tt.Frame()
 	if v.collapsed["google"] || !tt.HasText("新译文") {
 		t.Fatal("reopened panel retained collapsed cards")

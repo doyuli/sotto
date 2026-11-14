@@ -6,28 +6,25 @@ import (
 	"sotto/internal/config"
 )
 
-// BubbleState is the native view snapshot when an unpinned bubble is reused
-// for a new query or its recognition phase completes.
+// BubbleState initializes source content for a new session or completes OCR
+// before translation starts. Results live only in the native view, not here.
 type BubbleState struct {
-	MaxHeight           float64                `json:"maxHeight"`
-	ClipboardRecoveryID string                 `json:"clipboardRecoveryID"`
-	ShowID              int64                  `json:"showID"`
-	ID                  int64                  `json:"id"`
-	ReqID               string                 `json:"reqID"`
-	ServiceRequests     map[string]string      `json:"serviceRequests"`
-	Generation          int64                  `json:"generation"`
-	SessionID           string                 `json:"sessionID"`
-	Revision            int64                  `json:"revision"`
-	Phase               string                 `json:"phase"`
-	Message             string                 `json:"message"`
-	Meta                *RunMetaMsg            `json:"meta"`
-	Results             []TranslationUpdateMsg `json:"results"`
-	Trigger             string                 `json:"trigger"`
-	Text                string                 `json:"text"`
-	SourceLang          string                 `json:"sourceLang"`
-	TargetLang          string                 `json:"targetLang"`
-	Pinned              bool                   `json:"pinned"`
-	Settings            config.Settings        `json:"settings"`
+	MaxHeight           float64         `json:"maxHeight"`
+	ClipboardRecoveryID string          `json:"clipboardRecoveryID"`
+	ShowID              int64           `json:"showID"`
+	ID                  int64           `json:"id"`
+	ReqID               string          `json:"reqID"`
+	Generation          int64           `json:"generation"`
+	SessionID           string          `json:"sessionID"`
+	Revision            int64           `json:"revision"`
+	Phase               string          `json:"phase"`
+	Message             string          `json:"message"`
+	Trigger             string          `json:"trigger"`
+	Text                string          `json:"text"`
+	SourceLang          string          `json:"sourceLang"`
+	TargetLang          string          `json:"targetLang"`
+	Pinned              bool            `json:"pinned"`
+	Settings            config.Settings `json:"settings"`
 }
 
 // TranslationUpdateMsg carries cumulative text for one service and request.

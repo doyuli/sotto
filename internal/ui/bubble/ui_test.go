@@ -171,6 +171,21 @@ func TestBubbleViewStreamingErrorRetryAndNamingChips(t *testing.T) {
 	if v.cards["baidu"] == nil || !v.cards["baidu"].Loading {
 		t.Fatal("expected loading state after retry")
 	}
+	// Retrying one card must preserve its completed peer and reject old updates
+	// that were queued before the retry acquired a new request identity.
+	v.applyMeta(RunMetaMsg{ReqID: "req-1", Services: []string{"google", "baidu"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: "req-1", Service: "baidu", Text: "stale"})
+	tt.Frame()
+	if !tt.HasText("user name") || tt.HasText("stale") || !v.cards["baidu"].Loading {
+		t.Fatal("retry lost its peer or accepted an old response")
+	}
+	v.applyMeta(RunMetaMsg{ReqID: runs[0].ReqID, Services: []string{"google", "baidu"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: runs[0].ReqID, Service: "baidu", Text: "new result"})
+	v.onPresented(BubblePresentedMsg{SessionID: v.sessionID, ShowID: v.showID + 1, Revision: v.revision})
+	tt.Frame()
+	if !tt.HasText("user name") || !tt.HasText("new result") {
+		t.Fatal("refocusing failed to retain both rendered results")
+	}
 }
 
 func TestBubbleViewLanguageMenuAndSwap(t *testing.T) {

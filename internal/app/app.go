@@ -464,16 +464,13 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 		}
 	}
 	meta := bubble.RunMetaMsg{ReqID: req.ReqID, SourceLang: source, TargetLang: target, Services: services}
-	if !a.bubbles.RecordMeta(win, meta, req.Service) {
+	if !a.bubbles.PushMeta(win, meta, req.Service) {
 		a.bubbles.FinishRun(win, req.ReqID)
 		return
 	}
-	a.bubbles.PushMeta(win, meta)
 	if req.Service != "" && !slices.Contains(services, req.Service) {
 		msg := bubble.TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Err: "该服务当前不可用，请检查设置"}
-		if a.bubbles.RecordResult(win, msg) {
-			a.bubbles.PushResult(win, msg)
-		}
+		a.bubbles.PushResult(win, msg)
 		a.bubbles.FinishRun(win, req.ReqID)
 		return
 	}
@@ -484,9 +481,7 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 				return
 			}
 			msg := bubble.TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err, Streaming: res.Streaming}
-			if a.bubbles.RecordResult(win, msg) {
-				a.bubbles.PushResult(win, msg)
-			}
+			a.bubbles.PushResult(win, msg)
 		}
 		if text == "" {
 			for _, service := range cfg.Services.Enabled {

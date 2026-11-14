@@ -22,17 +22,8 @@ func (b *bubble) replaceContent(cfg config.Settings, trigger, text, phase, messa
 	b.trigger, b.text = trigger, text
 	b.sourceLang, b.targetLang = "auto", cfg.TargetLanguage
 	b.phase, b.message = phase, message
-	b.meta, b.results = nil, nil
 	b.serviceRequests = nil
 	b.cancelCapture = cancel
-}
-
-func (b *bubble) resultList() []TranslationUpdateMsg {
-	out := make([]TranslationUpdateMsg, 0, len(b.results))
-	for _, r := range b.results {
-		out = append(out, r)
-	}
-	return out
 }
 
 // StartRun rejects late IPC calls from an older page session or revision.
@@ -80,22 +71,16 @@ func (m *Manager) StartRun(win *mygo.Window, req RunReq) (context.Context, bool)
 		if req.Revision > b.revision {
 			b.reqID, b.revision = req.ReqID, req.Revision
 			b.text, b.sourceLang, b.targetLang = req.Text, req.SourceLang, req.TargetLang
-			b.meta = nil
 		}
 		b.phase, b.message = "", ""
-		if req.Service == "" {
-			b.results = make(map[string]TranslationUpdateMsg)
-		} else {
-			delete(b.results, req.Service)
-		}
 		return ctx, true
 	}
 	return nil, false
 }
 
-func (m *Manager) RecordMeta(win *mygo.Window, meta RunMetaMsg, retry string) bool {
+// PushMeta registers service ownership before queuing metadata on the UI thread.
+func (m *Manager) PushMeta(win *mygo.Window, meta RunMetaMsg, retry string) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, b := range m.byID {
 		if b.win != win || b.runCancels[meta.ReqID] == nil {
 			continue
@@ -113,27 +98,35 @@ func (m *Manager) RecordMeta(win *mygo.Window, meta RunMetaMsg, retry string) bo
 				}
 			}
 			if b.reqID == meta.ReqID {
-				b.meta = &meta
 				b.sourceLang, b.targetLang = meta.SourceLang, meta.TargetLang
+			}
+			view := b.view
+			m.mu.Unlock()
+			if view != nil {
+				win.Update(func() { view.applyMeta(meta) })
 			}
 			return true
 		}
 	}
+	m.mu.Unlock()
 	return false
 }
 
-func (m *Manager) RecordResult(win *mygo.Window, msg TranslationUpdateMsg) bool {
+// PushResult validates worker ownership without retaining another result copy.
+// The view checks again because a retry or dismissal may precede UI delivery.
+func (m *Manager) PushResult(win *mygo.Window, msg TranslationUpdateMsg) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, b := range m.byID {
-		if b.win == win && b.serviceRequests[msg.Service] == msg.ReqID {
-			if b.results == nil {
-				b.results = make(map[string]TranslationUpdateMsg)
+		if b.win == win && msg.ReqID != "" && b.serviceRequests[msg.Service] == msg.ReqID {
+			view := b.view
+			m.mu.Unlock()
+			if view != nil {
+				win.Update(func() { view.applyResult(msg) })
 			}
-			b.results[msg.Service] = msg
 			return true
 		}
 	}
+	m.mu.Unlock()
 	return false
 }
 
@@ -179,14 +172,6 @@ func (m *Manager) CompleteCapture(cfg config.Settings, shown Shown, text, messag
 		})
 	}
 	return found
-}
-
-func cloneRequests(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
 
 func (m *Manager) FinishRun(win *mygo.Window, reqID string) {
