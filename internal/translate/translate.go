@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
@@ -141,9 +142,16 @@ const maxChunkRunes = 1800
 
 // RunWith is Run over a given set of services, for tests.
 func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeyStore, req Request, emit func(Result)) {
+	parts, inputErr := prepareParts(req.Text)
 	var wg sync.WaitGroup
 	for _, t := range orderTranslators(all, cfg.Services.Order) {
 		if !contains(cfg.Services.Enabled, t.Name()) {
+			continue
+		}
+		if inputErr != nil {
+			if ctx.Err() == nil {
+				emit(Result{Service: t.Name(), Err: UserMessage(inputErr)})
+			}
 			continue
 		}
 		if err := credentialError(k, t.Name()); err != nil {
@@ -162,8 +170,8 @@ func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeySt
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			progress, stopProgress := streamProgress(ctx, emit)
-			res, err := translateLong(ctx, t, req, k, cfg, progress)
+			progress, stopProgress := streamProgressWithPrefix(ctx, emit)
+			res, err := translateParts(ctx, t, req, k, cfg, parts, progress)
 			// Stop scheduled partials before the terminal result can enable actions.
 			stopProgress()
 			if err != nil {
@@ -183,19 +191,27 @@ func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeySt
 // streamProgress publishes the first text immediately and coalesces later
 // snapshots at 25 Hz. A timer flushes a burst even if the server then pauses.
 func streamProgress(ctx context.Context, emit func(Result)) (func(Result), func()) {
+	progress, stop := streamProgressWithPrefix(ctx, emit)
+	return func(res Result) { progress("", res) }, stop
+}
+
+func streamProgressWithPrefix(ctx context.Context, emit func(Result)) (func(string, Result), func()) {
 	const interval = 40 * time.Millisecond
 	var mu sync.Mutex
 	var timer *time.Timer
 	var last time.Time
 	var pending Result
+	var prefix string
 	stopped := false
 	send := func() {
 		if !stopped && ctx.Err() == nil {
-			emit(pending)
+			snapshot := pending
+			snapshot.Text = prefix + pending.Text
+			emit(snapshot)
 			last = time.Now()
 		}
 	}
-	progress := func(res Result) {
+	progress := func(completed string, res Result) {
 		if res.Text == "" {
 			return
 		}
@@ -204,7 +220,7 @@ func streamProgress(ctx context.Context, emit func(Result)) (func(Result), func(
 		if stopped || ctx.Err() != nil {
 			return
 		}
-		pending = res
+		pending, prefix = res, completed
 		if timer != nil {
 			return
 		}
@@ -235,9 +251,20 @@ func streamProgress(ctx context.Context, emit func(Result)) (func(Result), func(
 // body limits of Baidu and the free Google endpoint; splitting keeps the
 // text translatable at the cost of a little context.
 func translateLong(ctx context.Context, t Translator, req Request, k KeyStore, cfg config.Settings, emit func(Result)) (Result, error) {
-	parts := splitLongText(req.Text, maxChunkRunes)
-	texts := make([]string, 0, len(parts))
-	detected := ""
+	parts, err := prepareParts(req.Text)
+	if err != nil {
+		return Result{Service: t.Name()}, err
+	}
+	return translateParts(ctx, t, req, k, cfg, parts, func(prefix string, partial Result) {
+		if emit != nil {
+			partial.Text = prefix + partial.Text
+			emit(partial)
+		}
+	})
+}
+
+func translateParts(ctx context.Context, t Translator, req Request, k KeyStore, cfg config.Settings, parts []string, emit func(string, Result)) (Result, error) {
+	var completed strings.Builder
 	result := Result{Service: t.Name()}
 	for i, part := range parts {
 		if err := ctx.Err(); err != nil {
@@ -245,30 +272,51 @@ func translateLong(ctx context.Context, t Translator, req Request, k KeyStore, c
 		}
 		r := req
 		r.Text = part
+		prefix := completed.String()
+		if prefix != "" {
+			prefix += "\n"
+		}
+		chunkCtx, cancel := context.WithCancel(ctx)
 		var res Result
 		var err error
+		var oversized bool
+		var lastSafe string
 		if streaming, ok := t.(StreamingTranslator); ok {
-			prefix := strings.Join(texts, "\n")
-			if len(texts) > 0 {
-				prefix += "\n"
-			}
-			res, err = streaming.Stream(ctx, r, k, cfg, func(partial Result) {
+			res, err = streaming.Stream(chunkCtx, r, k, cfg, func(partial Result) {
+				if oversized || ctx.Err() != nil {
+					return
+				}
+				if len(partial.Text) > maxResultBytes-len(prefix) {
+					oversized = true
+					cancel()
+					return
+				}
+				lastSafe = partial.Text
 				partial.Service, partial.Streaming = t.Name(), true
-				partial.Text = prefix + partial.Text
 				if emit != nil {
-					emit(partial)
+					emit(prefix, partial)
 				}
 			})
 		} else {
-			res, err = t.Translate(ctx, r, k, cfg)
+			res, err = t.Translate(chunkCtx, r, k, cfg)
+		}
+		cancel()
+		if oversized || len(res.Text) > maxResultBytes-len(prefix) {
+			if lastSafe != "" {
+				result.Text = prefix + lastSafe
+			}
+			return result, ErrResultLimit
 		}
 		if res.Text != "" {
-			texts = append(texts, res.Text)
+			if completed.Len() != 0 {
+				completed.WriteByte('\n')
+			}
+			completed.WriteString(res.Text)
 		}
-		if detected == "" {
-			detected = res.DetectedLang
+		if result.DetectedLang == "" {
+			result.DetectedLang = res.DetectedLang
 		}
-		result.Text, result.DetectedLang = strings.Join(texts, "\n"), detected
+		result.Text = completed.String()
 		if err != nil {
 			if len(parts) > 1 {
 				err = fmt.Errorf("第 %d/%d 段：%w", i+1, len(parts), err)
@@ -283,31 +331,23 @@ func translateLong(ctx context.Context, t Translator, req Request, k KeyStore, c
 // boundaries into pieces of at most limit runes. A single run longer than
 // limit is cut hard so progress is always possible.
 func splitLongText(text string, limit int) []string {
-	if limit <= 0 {
-		return []string{text}
-	}
-	runes := []rune(text)
-	if len(runes) <= limit {
+	if limit <= 0 || utf8.RuneCountInString(text) <= limit {
 		return []string{text}
 	}
 	var out []string
-	for start := 0; start < len(runes); {
-		end := start + limit
-		if end >= len(runes) {
-			out = append(out, string(runes[start:]))
-			break
-		}
-		cut := end
-		for j := end; j > start; j-- {
-			if isChunkBreak(runes[j-1]) {
-				cut = j
-				break
+	for start := 0; start < len(text); {
+		end, cut := start, start
+		for count := 0; end < len(text) && count < limit; count++ {
+			r, size := utf8.DecodeRuneInString(text[end:])
+			end += size
+			if isChunkBreak(r) {
+				cut = end
 			}
 		}
-		if cut == start {
+		if end == len(text) || cut == start {
 			cut = end
 		}
-		out = append(out, string(runes[start:cut]))
+		out = append(out, text[start:cut])
 		start = cut
 	}
 	return out
@@ -347,6 +387,12 @@ func orderTranslators(all []Translator, order []string) []Translator {
 func UserMessage(err error) string {
 	var networkErr *url.Error
 	switch {
+	case errors.Is(err, ErrInputLimit):
+		return "原文过长，单次最多翻译 18000 个字符，请分次提交"
+	case errors.Is(err, ErrChunkLimit):
+		return "原文分段过多，请缩短内容后重试"
+	case errors.Is(err, ErrResultLimit):
+		return "译文过长，已停止生成；请缩短原文后重试"
 	case errors.Is(err, keys.ErrUnavailable):
 		return "系统凭据暂时无法读取，请解锁钥匙串或检查系统凭据后重试"
 	case errors.Is(err, ErrQuota):

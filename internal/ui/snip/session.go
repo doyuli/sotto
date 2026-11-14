@@ -20,15 +20,18 @@ type Task interface {
 // All manager and native-view state belongs to the UI thread. Capture workers
 // return their HWND leases through RunOnMain after GDI has finished.
 type Manager struct {
-	screens    map[int64]*snipScreen
-	task       Task
-	shownAt    time.Time
-	IsQuitting func() bool
-	Done       func(*Capture)
+	screens        map[int64]*snipScreen
+	idleTimer      *time.Timer
+	idleGeneration uint64
+	task           Task
+	shownAt        time.Time
+	IsQuitting     func() bool
+	Done           func(*Capture)
 }
 
 func (s *Manager) Show(task Task) {
 	s.Hide()
+	s.stopIdleCleanup()
 	displays := mygo.Screen.Displays()
 	s.prune(displays)
 	if len(displays) == 0 {
@@ -65,7 +68,7 @@ func (s *Manager) Show(task Task) {
 
 func (s *Manager) reusableScreen(id int64) *snipScreen {
 	screen := s.screens[id]
-	if screen != nil && (screen.used || screen.captures != 0) {
+	if screen != nil && (screen.retired || screen.used || screen.captures != 0) {
 		// Hidden surfaces can retain the last selection: Invalidate is async,
 		// and hidden windows need not present a clean frame before Show.
 		// On Windows a new surface stays cloaked until its first frame. Keep
@@ -135,6 +138,8 @@ func (s *Manager) Hide() {
 		screen.win.Hide()
 		screen.win.Invalidate()
 	}
+	s.reclaimHidden(true)
+	s.scheduleIdleCleanup(mygo.RunOnMain)
 }
 
 func (s *Manager) cancelCurrent() {
@@ -186,5 +191,47 @@ func (s *Manager) take(id int64, win *mygo.Window) (Task, *snipScreen) {
 func (s *Manager) HideStale() {
 	if s.task != nil && !s.task.Valid() {
 		s.cancelCurrent()
+	}
+}
+
+const overlayIdleTimeout = 10 * time.Second
+
+func (s *Manager) stopIdleCleanup() {
+	s.idleGeneration++
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+}
+
+func (s *Manager) scheduleIdleCleanup(post func(func())) {
+	s.stopIdleCleanup()
+	if len(s.screens) == 0 {
+		return
+	}
+	generation := s.idleGeneration
+	s.idleTimer = time.AfterFunc(overlayIdleTimeout, func() {
+		post(func() {
+			if s.idleGeneration != generation || s.task != nil {
+				return
+			}
+			s.idleTimer = nil
+			s.reclaimHidden(false)
+		})
+	})
+}
+
+// Unlike display invalidation, ordinary hiding must not cancel the capture
+// which still borrows this HWND. Its final lease release destroys the surface.
+func (s *Manager) reclaimHidden(usedOnly bool) {
+	for id, screen := range s.screens {
+		if screen.round != nil || (usedOnly && !screen.used && screen.captures == 0) {
+			continue
+		}
+		screen.retired = true
+		if screen.captures == 0 {
+			delete(s.screens, id)
+		}
+		screen.destroyIfUnused()
 	}
 }

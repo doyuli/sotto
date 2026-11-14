@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -247,5 +248,39 @@ if ($script:calls -ne 2) { throw 'successful engine was not cached' }
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", probe)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("language pack recovery: %v\n%s", err, output)
+	}
+}
+
+func TestWinRTScriptParses(t *testing.T) {
+	// The embedded worker is production PowerShell, not exercised by Go helper workers.
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `$tokens=$null; $errors=$null; [void][System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(), [ref]$tokens, [ref]$errors); if ($errors.Count) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }`)
+	cmd.Stdin = strings.NewReader(script)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("parse worker: %v: %s", err, output)
+	}
+}
+
+func TestWinRTNativeRepeatedRequests(t *testing.T) {
+	if os.Getenv("SOTTO_OCR_PREFLIGHT") != "1" {
+		t.Skip("set SOTTO_OCR_PREFLIGHT=1 for system OCR and installed language packs")
+	}
+	f, err := os.Open("testdata/bilingual.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	w := &winrt{}
+	defer w.killLocked()
+	for range 2 {
+		lines, err := w.ask(ctx, img, "")
+		if err != nil || len(lines) == 0 {
+			t.Fatalf("resident worker round trip: lines=%d err=%v", len(lines), err)
+		}
 	}
 }
