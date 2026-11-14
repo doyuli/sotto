@@ -14,7 +14,8 @@ def package_size(root):
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f"not a package directory: {root}")
     files = []
-    for path in sorted(root.rglob("*")):
+    # Path comparison is case-insensitive on Windows; serialize a stable order.
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
         if path.is_symlink():
             raise ValueError(f"symlink requires explicit accounting: {path}")
         if path.is_file():

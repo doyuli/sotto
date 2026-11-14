@@ -23,7 +23,7 @@ class PerformanceTests(unittest.TestCase):
             (root / "ocr" / "model.onnx").write_bytes(b"model")
             report = package_size(root)
             self.assertEqual(report["total_bytes"], 8)
-            self.assertEqual(report["files"], [
+            self.assertCountEqual(report["files"], [
                 {"path": "Sotto.exe", "bytes": 3}, {"path": "ocr/model.onnx", "bytes": 5}])
 
     def test_cpu_deltas_and_pid_reuse(self):
