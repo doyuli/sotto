@@ -86,8 +86,6 @@ jobs:
     env:
       CGO_ENABLED: "0"
       GH_TOKEN: ${{ github.token }}
-      MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
-      MACOS_DEVELOPER_ID_RELEASE: ${{ vars.MACOS_DEVELOPER_ID_RELEASE }}
       GOARCH: arm64
     steps:
       - uses: actions/checkout@v7
@@ -105,37 +103,6 @@ jobs:
           gh release download "$GITHUB_REF_NAME" --pattern update-windows-amd64.json --dir "$notes_dir"
           printf '## %s\n\n' "${GITHUB_REF_NAME#v}" > CHANGELOG.md
           jq -r '.notes // ""' "$notes_dir/update-windows-amd64.json" >> CHANGELOG.md
-      - name: Prepare Developer ID and notarization credentials
-        if: vars.MACOS_DEVELOPER_ID_RELEASE == 'true'
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ vars.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER_ID: ${{ vars.MACOS_NOTARY_ISSUER_ID }}
-        run: |
-          for name in MACOS_CERTIFICATE MACOS_SIGNING_IDENTITY MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
-            if [[ -z "${!name}" ]]; then
-              echo "Configure $name before releasing Sotto." >&2
-              exit 1
-            fi
-          done
-          keychain="$RUNNER_TEMP/sotto-signing.keychain-db"
-          cert="$RUNNER_TEMP/sotto-signing.p12"
-          notary_key="$RUNNER_TEMP/sotto-notary.p8"
-          keychain_password=$(openssl rand -base64 24)
-          umask 077
-          printf '%s' "$MACOS_CERTIFICATE" | base64 -D > "$cert"
-          printf '%s' "$MACOS_NOTARY_KEY" | base64 -D > "$notary_key"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$cert" -P "$MACOS_CERTIFICATE_PASSWORD" -k "$keychain" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain"
-          xcrun notarytool store-credentials sotto-ci --keychain "$keychain" \
-            --key "$notary_key" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID"
-          echo "MACOS_NOTARY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - name: Build and upload Apple silicon Mac artifacts
         env:
           MYGO_UPDATER_PUBLIC_KEY: ${{ vars.MYGO_UPDATER_PUBLIC_KEY }}
@@ -145,23 +112,4 @@ jobs:
             echo "Configure the updater public key variable and private key secret." >&2
             exit 1
           fi
-          case "${MACOS_DEVELOPER_ID_RELEASE:-false}" in
-            false)
-              # Ad-hoc code signing needs no Apple account. Update archives
-              # still require our own signing key in either distribution mode.
-              bun run build:mac -sign - -skip-notarize -upload
-              ;;
-            true)
-              export MACOS_NOTARY_PROFILE=sotto-ci
-              bun run build:mac -upload
-              ;;
-            *)
-              echo "MACOS_DEVELOPER_ID_RELEASE must be true, false, or unset." >&2
-              exit 1
-              ;;
-          esac
-      - name: Remove signing credentials
-        if: always() && vars.MACOS_DEVELOPER_ID_RELEASE == 'true'
-        run: |
-          security delete-keychain "$RUNNER_TEMP/sotto-signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/sotto-signing.p12" "$RUNNER_TEMP/sotto-notary.p8"
+          bun run build:mac -sign - -skip-notarize -upload

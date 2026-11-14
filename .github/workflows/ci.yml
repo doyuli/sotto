@@ -89,8 +89,6 @@ jobs:
         env:
           SOTTO_MACOS_NATIVE: "1"
         run: go test ./internal/selection -run '^TestMacIsolatedPasteboardItems$' -count=1 -v
-      - name: Verify macOS release modes
-        run: bun test scripts/macos-release.test.ts
       - name: Build the ad-hoc Apple silicon app and DMG
         run: |
           bun run build:mac -sign - -skip-notarize
