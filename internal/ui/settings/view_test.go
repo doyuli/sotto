@@ -262,19 +262,26 @@ func TestSettingsViewServicesTab(t *testing.T) {
 }
 
 func TestSettingsConsolePageDoesNotBlockUIOrSettingsWrites(t *testing.T) {
+	// A wall-clock failsafe used to unblock the shell during slow CI rendering,
+	// falsely blaming UI dispatch. Only the test releases the blocked operation.
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	defer unblock()
-	// Release a synchronous regression so it fails instead of hanging the suite.
-	deadline := time.AfterFunc(time.Second, unblock)
-	defer deadline.Stop()
 	opened := make(chan string, 1)
+	written := make(chan config.Settings, 1)
+	invalidated := make(chan struct{}, 1)
 	current := testSettingsConfig()
 	v := NewView(TabServices, current, Actions{
-		GetSettings:  func() config.Settings { return current },
-		SaveSettings: func(s config.Settings) error { current = s; return nil },
 		Credentials:  func() (CredentialStatus, error) { return CredentialStatus{}, nil },
+		GetSettings:  func() config.Settings { return current },
+		SaveSettings: func(s config.Settings) error { current = s; written <- s; return nil },
+		Invalidate: func() {
+			select {
+			case invalidated <- struct{}{}:
+			default:
+			}
+		},
 		OpenKeyPage: func(service string) error {
 			opened <- service
 			<-release
@@ -282,38 +289,38 @@ func TestSettingsConsolePageDoesNotBlockUIOrSettingsWrites(t *testing.T) {
 		},
 	})
 	defer v.Dispose()
-	waitSettingsIdle(t, v)
+	for {
+		v.mu.Lock()
+		loaded := v.credentialsLoaded
+		v.mu.Unlock()
+		if loaded {
+			break
+		}
+		<-invalidated
+	}
 	tt := ui.NewTester(v.Render, 780, 900)
 	settingsClick(t, tt, "配置OpenAI")
 	settingsClick(t, tt, "前往控制台获取凭证")
-	select {
-	case service := <-opened:
-		if service != "openai" {
-			t.Fatalf("opened service = %q, want openai", service)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("console page was not opened")
+	if service := <-opened; service != "openai" {
+		t.Fatalf("opened service = %q, want openai", service)
 	}
 
-	// A stalled shell must allow both further UI input and persistent writes.
+	// Both the clicks and the persistent write must finish before shell release.
 	settingsClick(t, tt, "命名转换")
 	settingsClick(t, tt, "切换自动拆分标识符")
-	waitSettingsIdle(t, v)
-	if current.Identifier.AutoSplit {
-		t.Fatal("settings write was blocked by browser startup")
+	if settings := <-written; settings.Identifier.AutoSplit {
+		t.Fatal("settings write did not apply")
 	}
-	select {
-	case <-release:
-		t.Fatal("UI or settings writes waited for browser startup")
-	default:
-	}
-	deadline.Stop()
 	unblock()
-	waitForCondition(t, time.Second, func() bool {
+	for {
 		v.mu.Lock()
-		defer v.mu.Unlock()
-		return v.pendingToast == "打开控制台失败"
-	}, "browser failure was not published")
+		toast := v.pendingToast
+		v.mu.Unlock()
+		if toast == "打开控制台失败" {
+			break
+		}
+		<-invalidated
+	}
 	tt.Frame()
 	if !tt.HasText("打开控制台失败") {
 		t.Fatal("browser failure toast was not rendered")
