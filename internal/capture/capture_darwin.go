@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ebitengine/purego/objc"
-	"github.com/egoist/mygo"
 
 	"sotto/internal/macnative"
 	"sotto/internal/ocr/pipeline"
@@ -179,9 +178,4 @@ func captureDisplay(ctx context.Context, displayID int64, r macnative.Rect) (img
 		img, err = macnative.CopyNativeImage(shot.image)
 	})
 	return img, err
-}
-
-func grab(r Rect) (image.Image, error) {
-	d := mygo.Screen.DisplayMatching(mygo.Rectangle{X: r.X, Y: r.Y, Width: r.W, Height: r.H})
-	return grabDisplayWindow(context.Background(), 0, d.ID, Rect{r.X - d.Bounds.X, r.Y - d.Bounds.Y, r.W, r.H})
 }

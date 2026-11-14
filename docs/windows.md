@@ -66,7 +66,7 @@ This document records the architectural structure, Win32/COM subsystem integrati
 ### Per-Monitor DPI Awareness V2
 
 - Sotto initializes with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2`.
-- Coordinates between MyGo logical units (DIPs) and hardware pixels are dynamically mapped per-display by `internal/screencoords`.
+- `internal/screencoords` maps UIA physical rectangles to MyGo logical units (DIPs). Screenshot selections convert overlay-local DIPs to physical pixels using the leased HWND's client origin and DPI.
 - Multi-display setups with mixed scaling (e.g., 100%, 125%, 150%, 200%) and negative coordinate monitors (secondary displays positioned to the left or above the primary monitor) are snapshotted on-demand via `EnumDisplayMonitors` and `GetDpiForMonitor`.
 
 ### Native Screenshot Overlays
@@ -123,6 +123,7 @@ When UIA returns empty or unsupported, Sotto falls back to simulating `Ctrl+C`:
 Implemented in `internal/capture/capture_windows.go`:
 - Uses Win32 GDI: captures the virtual screen DC using `CreateCompatibleDC`, `CreateDIBSection`, and `BitBlt`.
 - Physical coordinate calculations account for display layout bounds, DPI scale factors, and client-bound clipping.
+- The application enters through `capture.GrabDisplayWindow` using the leased overlay HWND and overlay-local DIPs. The opt-in `TestBitBltSmoke` checks the shared GDI core's physical pixel output; it does not replace mixed-DPI overlay acceptance.
 - Image budgets: selections exceeding 16 Mi pixels or 16,384 pixels on a side are rejected before memory allocation, asking the user to choose a smaller region.
 
 ---

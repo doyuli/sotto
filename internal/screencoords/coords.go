@@ -19,8 +19,3 @@ func Origin(pixelOrigin, minDPI int) int {
 func ToDIP(pixel float64, pixelOrigin, dipOrigin, dpi int) int {
 	return dipOrigin + Scale(pixel-float64(pixelOrigin), 96, dpi)
 }
-
-// ToPixels converts a DIP coordinate relative to its display's origin.
-func ToPixels(dip, pixelOrigin, dipOrigin, dpi int) int {
-	return pixelOrigin + Scale(float64(dip-dipOrigin), dpi, 96)
-}

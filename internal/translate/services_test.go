@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -202,8 +201,8 @@ func TestSiliconFlowZhipuCredentials(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"siliconflow", "zhipu"}
 	creds := fakeKeys{keys.OpenAIKey: "unrelated-openai-key"}
-	if got := Available(cfg, creds); len(got) != 0 {
-		t.Fatalf("OpenAI credentials enabled other services: %v", got)
+	if (SiliconFlow{}).Available(creds, cfg) || (Zhipu{}).Available(creds, cfg) {
+		t.Fatal("OpenAI credentials enabled other services")
 	}
 	for _, tc := range []struct {
 		service Translator
@@ -221,12 +220,9 @@ func TestSiliconFlowZhipuCredentials(t *testing.T) {
 			t.Errorf("%s not configured with its own key", tc.service.Name())
 		}
 	}
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"siliconflow", "zhipu"}) {
-		t.Errorf("available = %v", got)
-	}
 	delete(creds, keys.SiliconFlowKey)
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"zhipu"}) {
-		t.Errorf("removing SiliconFlow key affected Zhipu: %v", got)
+	if (SiliconFlow{}).Available(creds, cfg) || !(Zhipu{}).Available(creds, cfg) {
+		t.Error("removing SiliconFlow key affected Zhipu")
 	}
 }
 

@@ -33,7 +33,7 @@ type Actions struct {
 	SetSecret    func(name, value string) error
 	TestService  func(ctx context.Context, name string) string
 	OpenKeyPage  func(service string) error
-	DeeplUsage   func() (DeeplUsage, error)
+	DeeplUsage   func(context.Context) (DeeplUsage, error)
 	SaveHotkey   func(action, accel string) error
 	HotkeyErrors func() map[string]string
 	Invalidate   func()
@@ -61,6 +61,8 @@ type View struct {
 	pendingToast     string
 	disposed         bool
 	usageGeneration  uint64
+	usageCancel      context.CancelFunc
+	usageLoaded      bool
 	windowGeneration uint64
 	probeCancels     map[string]context.CancelFunc
 	switchHandles    map[string]*ui.Handle
@@ -131,7 +133,7 @@ func (v *View) Dispose() {
 	}
 	v.flushTextDraftsLocked()
 	v.disposed = true
-	v.usageGeneration++
+	v.resetUsageLocked()
 	for _, cancel := range v.probeCancels {
 		cancel()
 	}
@@ -272,7 +274,7 @@ func (v *View) DetachWindow() {
 	v.mu.Lock()
 	v.flushTextDraftsLocked()
 	v.windowGeneration++
-	v.usageGeneration++
+	v.resetUsageLocked()
 	for name, cancel := range v.probeCancels {
 		cancel()
 		delete(v.probeCancels, name)
@@ -338,21 +340,43 @@ func (v *View) openKeyPageAsync(service string) {
 	}()
 }
 
+// Reset on credential changes and window closure. Cancellation alone cannot
+// reject a result which was already completing, so retain the generation check.
+func (v *View) resetUsageLocked() {
+	v.usageGeneration++
+	if v.usageCancel != nil {
+		v.usageCancel()
+		v.usageCancel = nil
+	}
+	v.usageLoaded = false
+	v.deeplUsageText = "额度查询中…"
+	v.deeplUsagePct = 0
+}
+
 func (v *View) loadDeeplUsageAsync() {
 	if v.actions.DeeplUsage == nil {
 		return
 	}
 	v.mu.Lock()
+	if v.disposed || !v.expanded["deepl"] || v.usageCancel != nil || v.usageLoaded || v.credentialBusy["deepl"] {
+		v.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	v.usageCancel = cancel
 	v.usageGeneration++
 	generation := v.usageGeneration
 	v.deeplUsageText = "额度查询中…"
 	v.deeplUsagePct = 0
 	v.mu.Unlock()
 	go func() {
-		usage, err := v.actions.DeeplUsage()
+		defer cancel()
+		usage, err := v.actions.DeeplUsage(ctx)
 		v.mu.Lock()
 		disposed := v.disposed || generation != v.usageGeneration
 		if !disposed {
+			v.usageCancel = nil
+			v.usageLoaded = err == nil
 			if err != nil {
 				v.deeplUsageText = "额度查询失败"
 			} else {
@@ -401,7 +425,7 @@ func (v *View) saveCredentials(name string) {
 		}
 	}
 	if name == "deepl" {
-		v.usageGeneration++
+		v.resetUsageLocked()
 	}
 	v.credentialBusy[name] = true
 	v.testStatuses[name] = serviceTestStatus{}
@@ -454,7 +478,7 @@ func (v *View) saveCredentials(name string) {
 				v.credentialsErr = ""
 			}
 		}
-		loadUsage := !disposed && name == "deepl" && slices.Contains(v.credentials.Stored, keys.DeeplKey)
+		loadUsage := !disposed && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
 		v.mu.Unlock()
 		if loadUsage {
 			v.loadDeeplUsageAsync()
@@ -472,7 +496,7 @@ func (v *View) clearSecret(name, key string) {
 		return
 	}
 	if name == "deepl" {
-		v.usageGeneration++
+		v.resetUsageLocked()
 	}
 	v.credentialBusy[name] = true
 	v.testStatuses[name] = serviceTestStatus{}
@@ -522,7 +546,11 @@ func (v *View) clearSecret(name, key string) {
 				v.settings = cloneSettings(*refreshedSettings)
 			}
 		}
+		loadUsage := !disposed && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
 		v.mu.Unlock()
+		if loadUsage {
+			v.loadDeeplUsageAsync()
+		}
 		if !disposed {
 			v.invalidate()
 		}

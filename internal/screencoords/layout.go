@@ -40,27 +40,11 @@ func NewLayout(displays []Display, fallbackDPI int) Layout {
 // display when the rectangle is outside all monitors, as mygo does.
 func (l Layout) PixelsToDIP(x, y, w, h float64) (Rect, bool) {
 	r := Rect{Scale(x, 1, 1), Scale(y, 1, 1), Scale(w, 1, 1), Scale(h, 1, 1)}
-	order := l.ranked(r, false)
+	order := l.ranked(r)
 	if len(order) == 0 {
 		return Rect{}, false
 	}
 	return l.toDIP(x, y, w, h, order[0]), true
-}
-
-// DIPToPixels also checks that a candidate maps back through the same
-// physical display. This matters for rectangles spanning mixed-DPI screens.
-func (l Layout) DIPToPixels(r Rect) (Rect, bool) {
-	order := l.ranked(r, true)
-	for _, i := range order {
-		pixels := l.toPixels(r, i)
-		if l.ranked(pixels, false)[0] == i {
-			return pixels, true
-		}
-	}
-	if len(order) == 0 {
-		return Rect{}, false
-	}
-	return l.toPixels(r, order[0]), true
 }
 
 func (l Layout) toDIP(x, y, w, h float64, i int) Rect {
@@ -72,18 +56,9 @@ func (l Layout) toDIP(x, y, w, h float64, i int) Rect {
 	}
 }
 
-func (l Layout) toPixels(r Rect, i int) Rect {
-	d := l.displays[i]
-	return Rect{
-		X: ToPixels(r.X, d.Pixels.X, Origin(d.Pixels.X, l.minDPI), d.DPI),
-		Y: ToPixels(r.Y, d.Pixels.Y, Origin(d.Pixels.Y, l.minDPI), d.DPI),
-		W: Scale(float64(r.W), d.DPI, 96), H: Scale(float64(r.H), d.DPI, 96),
-	}
-}
-
 // ranked follows mygo's internal/windows.byOverlap ordering: descending
 // overlap, then ascending squared rectangle distance, with stable ties.
-func (l Layout) ranked(r Rect, dips bool) []int {
+func (l Layout) ranked(r Rect) []int {
 	r.W, r.H = max(r.W, 1), max(r.H, 1)
 	type rank struct {
 		index          int
@@ -92,9 +67,6 @@ func (l Layout) ranked(r Rect, dips bool) []int {
 	ranks := make([]rank, len(l.displays))
 	for i, d := range l.displays {
 		b := d.Pixels
-		if dips {
-			b = l.toDIP(float64(b.X), float64(b.Y), float64(b.W), float64(b.H), i)
-		}
 		w := min(r.X+r.W, b.X+b.W) - max(r.X, b.X)
 		h := min(r.Y+r.H, b.Y+b.H) - max(r.Y, b.Y)
 		v := rank{index: i}

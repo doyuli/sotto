@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,18 +17,17 @@ import (
 
 func TestVolcengineRequiresBothCredentials(t *testing.T) {
 	cfg := config.Default()
-	cfg.Services.Enabled = append(cfg.Services.Enabled, "volcengine", "baidu")
 	creds := fakeKeys{keys.VolcAccessKey: "access"}
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"index-translate"}) {
-		t.Errorf("partial credentials: available = %v", got)
+	if (Volcengine{}).Available(creds, cfg) {
+		t.Error("accepted access key without secret")
 	}
 	creds[keys.VolcSecretKey] = "secret"
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{"index-translate", "volcengine"}) {
-		t.Errorf("complete credentials: available = %v", got)
+	if !(Volcengine{}).Available(creds, cfg) {
+		t.Error("rejected complete credentials")
 	}
-	cfg.Services.Enabled = []string{}
-	if got := Available(cfg, creds); !reflect.DeepEqual(got, []string{}) {
-		t.Errorf("all disabled: available = %#v", got)
+	delete(creds, keys.VolcAccessKey)
+	if (Volcengine{}).Available(creds, cfg) {
+		t.Error("accepted secret without access key")
 	}
 }
 

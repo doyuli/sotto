@@ -3,13 +3,6 @@
 // layers convert the chosen display's local units to capture pixels.
 package capture
 
-import "image"
-
-// Grab returns the screen content of rect (DIP coordinates, as mygo's
-// windows place).
-func Grab(rect Rect) (image.Image, error) {
-	return grab(rect)
-}
-
-// Rect is a rectangle in DIP screen coordinates.
+// Rect uses overlay-local DIPs on Windows and display-local points on macOS,
+// as defined by GrabDisplayWindow.
 type Rect struct{ X, Y, W, H int }

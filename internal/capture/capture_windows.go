@@ -8,8 +8,6 @@ import (
 	"runtime"
 	"unsafe"
 
-	"sotto/internal/screencoords"
-
 	"golang.org/x/sys/windows"
 )
 
@@ -58,23 +56,6 @@ type bitmapInfo struct {
 	YPelsPerMeter int32
 	ClrUsed       uint32
 	ClrImportant  uint32
-}
-
-// grab converts the DIP rectangle through the matching display layout
-// before capturing physical screen pixels.
-func grab(r Rect) (image.Image, error) {
-	if r.W <= 0 || r.H <= 0 {
-		return nil, fmt.Errorf("capture: empty rect %+v", r)
-	}
-	pixels, ok := screencoords.Current().DIPToPixels(screencoords.Rect{X: r.X, Y: r.Y, W: r.W, H: r.H})
-	if !ok {
-		return nil, fmt.Errorf("capture: no displays")
-	}
-	px, py, pw, ph := pixels.X, pixels.Y, pixels.W, pixels.H
-	if pw <= 0 || ph <= 0 {
-		return nil, fmt.Errorf("capture: rect %+v is sub-pixel on its display", r)
-	}
-	return bitBlt(px, py, pw, ph)
 }
 
 // bitBlt takes pw×ph physical pixels at px,py of the virtual screen.

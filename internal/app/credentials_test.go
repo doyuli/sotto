@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"sotto/internal/config"
@@ -8,6 +10,16 @@ import (
 	"sotto/internal/ui/bubble"
 	"testing"
 )
+
+func TestDeeplUsageRejectsCanceledRequestBeforeReadingCredentials(t *testing.T) {
+	// A query canceled while queued must not start keyring or network work.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a := &application{keys: &unusedKeyring{t: t}}
+	if _, err := (ConfigSvc{a}).DeeplUsage(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled usage: %v", err)
+	}
+}
 
 type unusedKeyring struct {
 	t       *testing.T

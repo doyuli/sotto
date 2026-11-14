@@ -105,11 +105,14 @@ func (ConfigSvc) OpenKeyPage(service string) error {
 }
 
 // DeeplUsage reports this month's DeepL character count and limit.
-func (s ConfigSvc) DeeplUsage() (settings.DeeplUsage, error) {
+func (s ConfigSvc) DeeplUsage(ctx context.Context) (settings.DeeplUsage, error) {
+	if err := ctx.Err(); err != nil {
+		return settings.DeeplUsage{}, err
+	}
 	credentials := s.app.keys.Snapshot([]string{keys.DeeplKey})
 	if err := credentials.Err(); err != nil {
 		return settings.DeeplUsage{}, errors.New(translate.UserMessage(err))
 	}
-	used, limit, err := translate.DeepL{}.Usage(context.Background(), credentials.Get(keys.DeeplKey))
+	used, limit, err := translate.DeepL{}.Usage(ctx, credentials.Get(keys.DeeplKey))
 	return settings.DeeplUsage{Used: used, Limit: limit}, err
 }

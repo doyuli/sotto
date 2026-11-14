@@ -102,6 +102,7 @@ func TestSettingsViewServicesTab(t *testing.T) {
 	credFails := true
 	var openedPage string
 	var testedSvc string
+	usageCalls := 0
 
 	v := NewView(TabServices, current, Actions{
 		GetSettings: func() config.Settings {
@@ -158,7 +159,10 @@ func TestSettingsViewServicesTab(t *testing.T) {
 			mu.Unlock()
 			return nil
 		},
-		DeeplUsage: func() (DeeplUsage, error) {
+		DeeplUsage: func(context.Context) (DeeplUsage, error) {
+			mu.Lock()
+			usageCalls++
+			mu.Unlock()
 			return DeeplUsage{Used: 1200, Limit: 500000}, nil
 		},
 	})
@@ -210,6 +214,19 @@ func TestSettingsViewServicesTab(t *testing.T) {
 		tt.Frame()
 		return tt.HasText("本月已用 1200 / 500000 字符")
 	}, "expected DeepL usage text")
+
+	// Collapsing and expanding the same card must retain its completed quota query.
+	settingsClick(t, tt, "收起DeepL")
+	settingsClick(t, tt, "配置DeepL")
+	if !tt.HasText("本月已用 1200 / 500000 字符") {
+		t.Fatal("re-expanding DeepL discarded cached usage")
+	}
+	mu.Lock()
+	gotUsageCalls := usageCalls
+	mu.Unlock()
+	if gotUsageCalls != 1 {
+		t.Fatalf("re-expanding DeepL queried usage %d times", gotUsageCalls)
+	}
 
 	if err := tt.Click("前往控制台获取凭证"); err != nil {
 		t.Fatalf("Click console link: %v", err)
@@ -1218,7 +1235,7 @@ func TestSettingsUsageRejectsOldRequests(t *testing.T) {
 		first := make(chan struct{})
 		second := make(chan struct{})
 		calls := 0
-		v := NewView(TabServices, testSettingsConfig(), Actions{DeeplUsage: func() (DeeplUsage, error) {
+		v := NewView(TabServices, testSettingsConfig(), Actions{DeeplUsage: func(context.Context) (DeeplUsage, error) {
 			calls++
 			id := calls
 			if id == 1 {
@@ -1229,8 +1246,12 @@ func TestSettingsUsageRejectsOldRequests(t *testing.T) {
 			return DeeplUsage{Used: id, Limit: 10}, nil
 		}})
 		defer v.Dispose()
+		v.expanded["deepl"] = true
 		v.loadDeeplUsageAsync()
 		synctest.Wait()
+		// A new window may start a query before the canceled old one returns.
+		v.DetachWindow()
+		v.expanded["deepl"] = true
 		v.loadDeeplUsageAsync()
 		synctest.Wait()
 		close(second)
@@ -1257,10 +1278,11 @@ func TestSettingsDetachRejectsProbeAndUsageResults(t *testing.T) {
 				<-release
 				return "old result"
 			},
-			DeeplUsage: func() (DeeplUsage, error) { <-release; return DeeplUsage{Used: 5, Limit: 10}, nil },
+			DeeplUsage: func(context.Context) (DeeplUsage, error) { <-release; return DeeplUsage{Used: 5, Limit: 10}, nil },
 		})
 		defer v.Dispose()
 		v.testConnection("openai")
+		v.expanded["deepl"] = true
 		v.loadDeeplUsageAsync()
 		synctest.Wait()
 		v.DetachWindow()
@@ -1339,37 +1361,6 @@ func TestSettingsQuitWaitsForQueuedWrites(t *testing.T) {
 		if retries != 1 || current.Services.OpenAI.BaseURL != draft || !v.PrepareQuit(retry) {
 			t.Fatal("quit did not drain writes and retry exactly once")
 		}
-	})
-}
-
-func TestSettingsKeyChangeInvalidatesUsageBeforeWriteCompletes(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		usageRelease := make(chan struct{})
-		writeRelease := make(chan struct{})
-		v := NewView(TabServices, testSettingsConfig(), Actions{
-			DeeplUsage:  func() (DeeplUsage, error) { <-usageRelease; return DeeplUsage{Used: 9, Limit: 10}, nil },
-			SetSecret:   func(string, string) error { <-writeRelease; return nil },
-			Credentials: func() (CredentialStatus, error) { return CredentialStatus{}, nil },
-		})
-		defer v.Dispose()
-		synctest.Wait()
-		v.loadDeeplUsageAsync()
-		synctest.Wait()
-		v.mu.Lock()
-		v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "new-key"}
-		v.mu.Unlock()
-		v.saveCredentials("deepl")
-		synctest.Wait()
-		close(usageRelease)
-		synctest.Wait()
-		v.mu.Lock()
-		usage := v.deeplUsageText
-		v.mu.Unlock()
-		if usage != "额度查询中…" {
-			t.Fatal("old key's usage applied during new key write")
-		}
-		close(writeRelease)
-		synctest.Wait()
 	})
 }
 

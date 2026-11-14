@@ -93,18 +93,6 @@ func Run(ctx context.Context, cfg config.Settings, k KeyStore, req Request, emit
 	RunWith(ctx, DefaultTranslators(), cfg, k, req, emit)
 }
 
-// Available lists the enabled services that are ready to run, in card
-// order, so the UI can tell a slow service from an unconfigured one.
-func Available(cfg config.Settings, k KeyStore) []string {
-	out := []string{}
-	for _, t := range orderTranslators(DefaultTranslators(), cfg.Services.Order) {
-		if contains(cfg.Services.Enabled, t.Name()) && t.Available(k, cfg) {
-			out = append(out, t.Name())
-		}
-	}
-	return out
-}
-
 // Configured includes services the user can turn on with the current credentials.
 func Configured(cfg config.Settings, k KeyStore) []string {
 	out := []string{}

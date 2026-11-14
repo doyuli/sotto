@@ -29,9 +29,6 @@ func TestDisplayCoordinateArithmetic(t *testing.T) {
 			if point != tt.wantPoint {
 				t.Fatalf("screen coordinate = %d, want %d", point, tt.wantPoint)
 			}
-			if pixel := ToPixels(point, tt.origin, origin, tt.dpi); pixel != int(tt.pixel) {
-				t.Errorf("capture pixel = %d, want %v", pixel, tt.pixel)
-			}
 		})
 	}
 }

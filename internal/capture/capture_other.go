@@ -7,8 +7,6 @@ import (
 	"image"
 )
 
-func grab(Rect) (image.Image, error) {
-	return nil, errors.New("capture is only supported on Windows")
+func grabWindow(uintptr, Rect) (image.Image, error) {
+	return nil, errors.New("capture is only supported on Windows and macOS")
 }
-
-func grabWindow(_ uintptr, rect Rect) (image.Image, error) { return grab(rect) }

@@ -17,23 +17,23 @@ func TestBitBltRejectsOversizedInput(t *testing.T) {
 	}
 }
 
-// TestGrabSmoke captures a small region of the real screen and keeps it
+// TestBitBltSmoke exercises the production GDI core in physical pixels and keeps it
 // as a PNG when GO_CAPTURE_OUT is set, for the manual checklist: run
 //
-//	GO_CAPTURE_OUT=capture.png go test ./internal/capture/
+//	CGO_ENABLED=0 SOTTO_CAPTURE_NATIVE=1 GO_CAPTURE_OUT=capture.png go test ./internal/capture/ -run '^TestBitBltSmoke$'
 //
 // and inspect the file — its corner must match the screen's top-left.
-func TestGrabSmoke(t *testing.T) {
+func TestBitBltSmoke(t *testing.T) {
 	if os.Getenv("SOTTO_CAPTURE_NATIVE") != "1" {
 		t.Skip("set SOTTO_CAPTURE_NATIVE=1 for desktop capture")
 	}
-	img, err := Grab(Rect{X: 0, Y: 0, W: 320, H: 200})
+	img, err := bitBlt(0, 0, 320, 200)
 	if err != nil {
-		t.Fatalf("Grab: %v", err)
+		t.Fatalf("bitBlt: %v", err)
 	}
 	b := img.Bounds()
-	if b.Dx() == 0 || b.Dy() == 0 {
-		t.Fatalf("empty capture %+v", b)
+	if b.Dx() != 320 || b.Dy() != 200 {
+		t.Fatalf("unexpected physical capture bounds %+v", b)
 	}
 	if out := os.Getenv("GO_CAPTURE_OUT"); out != "" {
 		f, err := os.Create(filepath.Clean(out))
