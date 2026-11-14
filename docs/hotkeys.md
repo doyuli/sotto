@@ -1,34 +1,34 @@
-# 快捷键绑定
+# Hotkey Bindings
 
-`internal/hotkey` 统一解析、比较与注册组合键。macOS 的标准名称是 `Ctrl / Option / Shift / Cmd`，Windows 是 `Ctrl / Alt / Shift / Win`；修饰键有独立标识，UI 的通用 modifier bits 只在录制入口转换。现有配置中的 Alt/Option、Super/Cmd/Win 等名称按当前平台解析，保留相同组合，不引入版本迁移。JSON 仍保存 accelerator 字符串。
+`internal/hotkey` centralizes parsing, comparison, and registration of key combinations. Canonical names are `Ctrl / Option / Shift / Cmd` on macOS and `Ctrl / Alt / Shift / Win` on Windows. Modifiers have distinct identities; generic UI modifier bits are converted only at the recording entry point. Names such as Alt/Option and Super/Cmd/Win in existing settings are parsed for the current platform, preserving the same combinations without a version migration. JSON continues to store accelerator strings.
 
-## 录制与反馈
+## Recording and Feedback
 
-- 普通 key-down 和 Sotto 自己的全局回调进入同一录制流程；正在录制时不触发翻译。macOS 字母和标点使用 MyGo 的 `PhysicalKey`，扩展功能键和小键盘保留 `KeyCode` 身份。
-- 普通 Esc 取消；带修饰键的 Escape 可以绑定。方向键、标点、Tab、Enter 等可以录制；缺少修饰键或不支持的按键会显示原因。冲突后可直接继续录制。不支持的小键盘位置（例如 macOS 小键盘 Enter）明确提示改用主键盘，不会误存为主键盘的对应键。
-- “手动设置”通过修饰键按钮和主键列表设置组合，用于系统已经拦截按键、录制器收不到事件的情况。它与录制共用验证和保存流程。
-- 注册及保存成功前显示“正在保存…”，旧绑定继续工作。保存任务串行执行，普通设置写入使用最新快捷键，最后一个任务回读实际设置。关闭/重开窗口不会恢复旧录制状态或显示旧窗口的迟到错误。
-- 启动时无法注册的组合保留在配置中，并在设置页显示“未生效”；不再自动替换成候选键位。取消录制或重开窗口不会隐藏这个状态，可通过再次设置同一组合重试。
+- Ordinary key-down events and Sotto's own global callbacks enter the same recording flow; translation is not triggered while recording. On macOS, letters and punctuation use MyGo's `PhysicalKey`, while extended function keys and numpad keys retain their `KeyCode` identities.
+- Plain Esc cancels; Escape with modifiers can be bound. Arrow keys, punctuation, Tab, Enter, and similar keys can be recorded; missing modifiers or unsupported keys produce an explanation. Recording can continue immediately after a conflict. Unsupported numpad positions (such as macOS numpad Enter) explicitly ask the user to use the main keyboard instead of incorrectly saving the corresponding main-keyboard key.
+- "手动设置" uses modifier buttons and a main-key list for combinations intercepted by the system before the recorder receives an event. It shares validation and saving with recording.
+- Show "正在保存…" until registration and saving succeed; the old binding remains active. Save tasks run serially, ordinary settings writes use the latest hotkeys, and the final task reads back the actual settings. Closing/reopening the window must not restore old recording state or display late errors from the old window.
+- Combinations that cannot be registered at startup remain in the configuration and appear as "未生效" in settings; they are no longer automatically replaced with alternatives. Canceling recording or reopening the window does not hide this status. Setting the same combination again retries registration.
 
-## 注册事务
+## Registration Transaction
 
-`internal/app/hotkeys.go` 的提交顺序为：验证应用内重复 → 注册新增组合 → 保存配置 → 发布生效映射 → 释放被替换的组合。注册或保存失败只撤销新增注册，旧绑定不释放。回调按当前生效映射派发，因此组合交换不需要先清空全部注册。
+The commit order in `internal/app/hotkeys.go` is: validate in-app duplicates → register new combinations → save configuration → publish the active mapping → release replaced combinations. Registration or save failures roll back only new registrations; old bindings remain registered. Callbacks dispatch through the current active mapping, so swapping combinations does not require clearing all registrations first.
 
-Windows 继续使用 MyGo 的 `RegisterHotKey` 封装。macOS 在项目内通过 purego 直接桥接 Carbon，使用 `kEventHotKeyExclusive`，并在注册前调用 `CopySymbolicHotKeys` 检查启用的系统快捷键。所有 Carbon 操作回主线程，退出时释放注册和事件处理器；不添加事件 tap 或输入监控权限。
+Windows continues to use MyGo's `RegisterHotKey` wrapper. On macOS, the project bridges Carbon directly through purego, uses `kEventHotKeyExclusive`, and calls `CopySymbolicHotKeys` before registration to check enabled system hotkeys. All Carbon operations run on the main thread; registrations and event handlers are released on exit. No event tap or Input Monitoring permission is added.
 
-依据：本机 Apple SDK 的 `CarbonEvents.h` 中 `HotKeyOptions`、`RegisterEventHotKey`、`CopySymbolicHotKeys` 定义。MyGo v0.8.3 的 `internal/darwin/hotkey.go` 使用非独占选项 0；Apple 明确说明这种注册可能成功但被独占持有者抑制。因此 Sotto 不用 MyGo 的非独占返回值推断无冲突，也不修改 MyGo 源码。
+Source: the `HotKeyOptions`, `RegisterEventHotKey`, and `CopySymbolicHotKeys` definitions in the local Apple SDK's `CarbonEvents.h`. MyGo v0.8.3 uses nonexclusive option 0 in `internal/darwin/hotkey.go`; Apple explicitly states that such registration may succeed while an exclusive owner suppresses delivery. Sotto therefore does not infer the absence of conflicts from MyGo's nonexclusive return value, and does not modify MyGo source.
 
-系统列表不包含各应用的菜单快捷键，无法保证覆盖所有第三方拦截机制。未知的收不到事件不能直接标记为冲突。
+The system list does not include individual apps' menu shortcuts and cannot cover every third-party interception mechanism. Unexplained missing events must not be labeled as conflicts.
 
-## 验证边界
+## Verification Boundaries
 
-- 解析和注册事务测试覆盖两平台名称、旧组合语义、注册失败、保存失败及组合交换。
-- UI Tester 覆盖录制、全局事件分流、错误后重试、手动选择主键、取消/重开、异步保存交错与启动失败状态；预览包含 660/780 宽度、深浅色和录制/手动/冲突状态。
-- `CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/hotkey -v` 使用两个独立 AppKit 进程临时注册 `Ctrl+Option+Shift+Cmd+F19`，验证跨进程独占注册冲突及释放后重新注册。测试不合成键盘输入，不修改用户配置。
-- 真实键盘触发、输入法/键盘布局、系统拦截和窗口焦点仍需按 `e2e/macos.md` 实机验收。Windows 交叉编译不代表 Windows 实机验证。
+- Parsing and registration transaction tests cover both platforms' names, existing combination semantics, registration failures, save failures, and combination swaps.
+- UI Tester covers recording, global-event routing, retry after errors, manual main-key selection, cancellation/reopening, interleaved asynchronous saves, and startup failure states. Previews include widths of 660/780, light/dark themes, and recording/manual/conflict states.
+- `CGO_ENABLED=0 SOTTO_MACOS_NATIVE=1 go test ./internal/hotkey -v` temporarily registers `Ctrl+Option+Shift+Cmd+F19` in two independent AppKit processes to verify cross-process exclusive registration conflicts and re-registration after release. It does not synthesize keyboard input or modify user settings.
+- Actual keyboard triggering, input methods/keyboard layouts, system interception, and window focus still require hardware acceptance testing per `e2e/macos.md`. Windows cross-compilation is not Windows runtime validation.
 
-## 已知限制：第三方非独占注册
+## Known Limitation: Third-Party Nonexclusive Registration
 
-macOS 不保证报告第三方的非独占快捷键占用。2026-11-14 在 macOS 15.7.3（24G419）、Apple Silicon、`CGO_ENABLED=0` 下实测：另一进程通过 MyGo 非独占注册后，Sotto 的独占注册仍返回成功。Apple SDK `CarbonEvents.h` 的 `HotKeyOptions` 说明独占持有者可能阻止非独占持有者接收事件；本次探针只验证注册结果，没有验证实际按键分发。
+macOS does not guarantee reporting third-party nonexclusive hotkey registrations. On 2026-11-14, a probe on macOS 15.7.3 (24G419), Apple Silicon, with `CGO_ENABLED=0` found that Sotto's exclusive registration still succeeded after another process registered the combination nonexclusively through MyGo. The Apple SDK's `CarbonEvents.h` documentation for `HotKeyOptions` states that an exclusive owner may prevent nonexclusive owners from receiving events. This probe checked registration results only, not actual key-event delivery.
 
-按产品取舍，该情况不作为交付阻塞，也不纳入要求检测成功的回归用例。保留系统公开快捷键检查、Sotto 内部重复检查、独占注册冲突反馈和保存失败回滚；不承诺检测所有第三方占用，不额外引入输入监控或事件 tap。相关测试仅验证上述承诺范围。
+As a product tradeoff, this case is not a release blocker and is excluded from regression cases that require successful conflict detection. Keep checks against the public system hotkey list, Sotto's internal duplicate checks, exclusive-registration conflict feedback, and rollback on save failure. Do not promise detection of all third-party registrations or add Input Monitoring or event taps. Related tests verify only these stated guarantees.

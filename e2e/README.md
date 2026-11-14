@@ -1,13 +1,13 @@
-# 验证入口
+# Verification Entry Points
 
-| 层级 | Windows | macOS |
+| Layer | Windows | macOS |
 | --- | --- | --- |
-| 共享逻辑与原生 UI Tester | `CGO_ENABLED=0 go test ./...` | 同左 |
-| 原生引擎/隔离系统对象 | 显式启用 OCR、抓屏探针 | 显式启用 Vision、隔离 pasteboard、SCK 探针 |
-| 桌面窗口、焦点、权限与多屏 | [Windows 验收](windows.md) | [macOS 验收](macos.md) |
+| Shared logic and native UI Tester | `CGO_ENABLED=0 go test ./...` | Same command |
+| Native engines / isolated system objects | Explicitly enable OCR and capture probes | Explicitly enable Vision, isolated pasteboard, and SCK probes |
+| Desktop windows, focus, permissions, and multiple displays | [Windows acceptance](windows.md) | [macOS acceptance](macos.md) |
 
-Tester 不创建原生窗口；符号加载不等同于真实取词/抓屏。交叉编译不等同于平台测试执行。默认测试不合成输入、不修改 general pasteboard，也不进行真实屏幕捕获。
+Tester does not create native windows; symbol loading does not prove actual selection capture or screen capture. Cross-compilation is not platform test execution. Default tests do not synthesize input, modify the general pasteboard, or capture the actual screen.
 
-Windows 普通 CI 运行无交互测试、OCR preflight、e2e vet 和 DPI 初始化检查；macOS 普通 CI 运行无交互测试和 Vision smoke。完整桌面验收需要交互式会话、对应权限和硬件。
+Regular Windows CI runs noninteractive tests, OCR preflight, e2e vet, and DPI initialization checks. Regular macOS CI runs noninteractive tests and the Vision smoke test. Full desktop acceptance requires an interactive session, the appropriate permissions, and hardware.
 
-构建与验证命令中的环境变量示例使用 POSIX shell；PowerShell 使用 `$env:NAME="value"` 后单独运行命令。
+Environment-variable examples in build and verification commands use POSIX shell syntax. In PowerShell, set `$env:NAME="value"` and run the command separately.

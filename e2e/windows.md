@@ -1,115 +1,111 @@
-# Windows 桌面验收
+# Windows Desktop Acceptance
 
-下文为 Windows 专用流程。
+The procedures below are Windows-specific.
 
-以用户方式驱动**已构建的生产 exe**：合成全局热键、检查窗口、焦点与失焦。
-全部通过 Win32 直调（`x/sys`），不依赖窗口标题或截图。
+Drive the **built production executable** as a user would: synthesize global hotkeys and inspect windows, focus, and blur. All checks use direct Win32 calls (`x/sys`), without relying on window titles or screenshots.
 
-## 运行
+## Running
 
 ```bash
-bun run build                                      # 先产出 build/windows-amd64/sotto.exe
-CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # 需要桌面会话（本机跑，CI 无头环境不适用）
+bun run build                                    # First produce build/windows-amd64/sotto.exe
+CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # Requires a local desktop session; not suitable for headless CI
 ```
 
-## 覆盖项
+## Coverage
 
-| 测试 | 验证 |
+| Test | Verification |
 |---|---|
-| `TestDPIAwarenessAlreadyInitialized` | 测试进程使用与 app 相同的每屏 DPI V2 模式；重复设置时确认现有模式，不把“已经设置”误判为失败。此项无需桌面会话，可在 CI 单独运行 |
-| `TestPanelAndSelectionShareBubble` | 面板热键唤出输入气泡并获得焦点；可见时连按三次保持同一窗口和焦点；失焦隐藏后，划词热键在没有选中文本时打开可输入的回退页，并复用同一 HWND |
-| `TestSnipOverlay` | OCR 热键唤出原生截图遮罩；使用透明 DirectComposition 窗口，不设置全窗淡化；确认 DWM 已解除 cloak、存在 `MyGoSurface` 且没有 WebView 子窗口；显示后 700ms 仍在；20 次未拖拽的打开/取消交替验证 Esc、右键及每屏 HWND 复用；拖拽后取消再打开，验证该屏替换 HWND、其他屏继续复用 |
+| `TestDPIAwarenessAlreadyInitialized` | The test process uses the same per-monitor DPI V2 mode as the app. Repeated initialization confirms the existing mode rather than treating "already set" as failure. Requires no desktop session and can run separately in CI. |
+| `TestPanelAndSelectionShareBubble` | The panel hotkey opens and focuses the input bubble. Three repeated invocations while visible retain the same window and focus. After blur hides it, the selection hotkey with no selected text opens an editable fallback page, reusing the same HWND. |
+| `TestSnipOverlay` | The OCR hotkey opens a native screenshot overlay using a transparent DirectComposition window without whole-window fading. Confirms DWM has uncloaked it, `MyGoSurface` exists, and there is no WebView child window; it remains present after 700 ms. Twenty open/cancel cycles without dragging alternate Esc and right-click and verify per-display HWND reuse. Canceling after a drag and reopening replaces that display's HWND while other displays continue reusing theirs. |
 
-热键组合从 app 启动日志的 "hotkeys in force" 行解析后合成发送——默认键位或用户自定组合变了，测试跟着走，不再依赖写死的 Alt+A/S/D。
+Hotkey combinations are parsed from the app startup log's "hotkeys in force" line and sent as synthesized input. Tests follow changes to defaults or user bindings rather than hardcoding Alt+A/S/D.
 
-## 已知测试环境限制
+## Known Test Environment Limitations
 
-- 测试启动时确认每屏 DPI V2 模式；无法设置且当前模式不符时明确报错退出，避免混合缩放下用虚拟坐标误测。
-- `.github/workflows/ci.yml` 的 Windows 任务执行全量普通测试、`go vet -tags e2e ./e2e` 和单独的 `TestDPIAwarenessAlreadyInitialized`，不启动桌面冒烟中的窗口交互用例。ARM64 当前只做编译检查，原生 OCR preflight 在 x64 上执行。
-- 热键由 `SendInput` 合成，测试进程先 `AllowSetForegroundWindow` 授予 app 前台权限，模拟真实键盘热键的权益。
-- 此冒烟测试覆盖截图窗口打开、取消和拖拽取消后重新打开的窗口生命周期；拖拽几何和取消输入另由 native Tester 覆盖，Windows 实际拖拽到截屏、OCR 的完整链路仍需手工验收。`sotto --ocr <png>` 可单独复核图片识别。
+- At startup, tests confirm per-monitor DPI V2 mode. If it cannot be set and the current mode differs, fail explicitly rather than testing virtualized coordinates under mixed scaling.
+- The Windows job in `.github/workflows/ci.yml` runs all ordinary tests, `go vet -tags e2e ./e2e`, and the separate `TestDPIAwarenessAlreadyInitialized`; it does not run desktop smoke cases that interact with windows. ARM64 currently receives compilation checks only; native OCR preflight runs on x64.
+- Hotkeys are synthesized with `SendInput`. The test process first grants the app foreground permission with `AllowSetForegroundWindow`, modeling the foreground rights of real keyboard hotkeys.
+- This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path still requires manual acceptance. `sotto --ocr <png>` can independently check image recognition.
 
-## 划词与剪贴板手工验收
+## Manual Selection and Clipboard Acceptance
 
-需在 Windows 桌面会话验证；宿主机单测和 Windows 交叉编译不能替代原生剪贴板验收。
+Requires a Windows desktop session. Host unit tests and Windows cross-compilation cannot replace native clipboard acceptance.
 
-- 先用 Win+Shift+S、微信/QQ/Snipaste 或浏览器复制图片，随后在 VS Code 编辑器、实际使用的聊天界面分别双击选词并触发划词翻译。对照剪贴板为纯文本、HTML/RTF、文件复制和文件剪切时的行为；取词结束后粘贴原内容，检查图片、富文本、文件列表和剪切语义保留。
-- 用普通截图、透明 PNG、4K 截图、多屏大截图和带调色板的图片分别验证。保留原 PNG/其他注册格式和两种 DIB；确认尺寸、像素、透明度和颜色，比较恢复前后各可备份格式的原始数据，并确认恢复后请求 CF_BITMAP 仍能得到有效位图。CF_PALETTE 的颜色和条目标志也要保留。
-- 全流程若 UIA 命中，不会进入剪贴板路径。单独验证图片兜底时运行 `sotto.exe --grab clipboard`，在 3 秒等待内切到目标窗口并选词。该诊断命令的 stdout JSON 包含取词文本；新增诊断日志写 stderr，只含格式元数据和状态。通过 `--grab uia` 可单独比较 UIA 结果，但持续槽位占用要在同一个常驻进程内观察。
-- 快照总预算为 128 MiB，非 DIB/DIBV5 数据合计仍限 32 MiB。4K DIB+DIBV5 可同时备份；超总预算、超非图片预算、DIB 读取失败、未知格式无法读取、metafile/owner/display 格式时，应在模拟复制前报错，旧内容不被替换。剪贴板被其他进程持续打开时也应保守拒绝，日志指向 snapshot/open。
-- 取词过程中手动复制新内容、切换应用、按键/鼠标按键或滚轮打断：新内容优先，迟到结果不覆盖剪贴板。仅移动鼠标仍可完成取词。恢复失败仍显示恢复操作并暂停新的模拟复制；明确重试只能恢复仍匹配的序列号，退出后内存恢复内容不保留。
-- 检查三个排除格式继续随 Sotto 的恢复写入存在：CanIncludeInClipboardHistory=DWORD(0)、CanUploadToCloudClipboard=DWORD(0)、ExcludeClipboardContentFromMonitorProcessing 存在。分别观察 Windows 历史和实际使用的剪贴板管理器；目标应用响应模拟复制的临时写入不由 Sotto 控制，不能以恢复标记保证它从未进入历史。
-- 日志应能区分 UIA `empty`/`miss`、`timeout`、`slot_busy`、`breaker_open`，以及 worker 迟到返回；永久阻塞时不新增 COM 调用。剪贴板失败应包含阶段、格式 ID/名称、大小或预算、耗时，不包含正文。发生“无法安全保留”时，保存该次 source → uia → clipboard → end 的日志，区分选词应用和原剪贴板内容的来源。
+- Copy an image with Win+Shift+S, WeChat/QQ/Snipaste, or a browser, then double-click words in the VS Code editor and the chat interfaces actually used and trigger selection translation. Compare behavior with plain text, HTML/RTF, copied files, and cut files on the clipboard. Paste the original content after capture and check preservation of images, rich text, file lists, and cut semantics.
+- Test ordinary screenshots, transparent PNGs, 4K screenshots, large multi-display screenshots, and palette images separately. Preserve original PNG/other registered formats and both DIB representations. Check dimensions, pixels, transparency, and color; compare raw data for every backed-up format before and after restoration. Confirm requesting CF_BITMAP after restoration still yields a valid bitmap. Preserve CF_PALETTE colors and entry flags as well.
+- A successful UIA path bypasses the clipboard entirely. To test image fallback independently, run `sotto.exe --grab clipboard`, switch to the target window, and select text within the 3-second wait. This diagnostic command's stdout JSON includes captured text; added diagnostics go to stderr and contain only format metadata and status. Compare UIA separately with `--grab uia`; persistent slot occupancy must be observed within one long-running process.
+- The total snapshot budget is 128 MiB; non-DIB/DIBV5 data remains limited to 32 MiB combined. A 4K DIB+DIBV5 pair can be backed up together. Exceeding either budget, a DIB read failure, an unreadable unknown format, or metafile/owner/display formats must produce an error before simulated copy, leaving old content intact. Conservatively reject a clipboard continuously held open by another process, with logs identifying snapshot/open.
+- During selection capture, manually copy new content, switch apps, or interrupt with keys, mouse buttons, or the wheel. New content takes priority; late results do not overwrite the clipboard. Pointer movement alone still allows capture to finish. Recovery failure continues to offer recovery and pauses new simulated copies. An explicit retry restores only a still-matching sequence number; in-memory recovery content does not survive exit.
+- Check that Sotto's restoration writes still include all three exclusion formats: CanIncludeInClipboardHistory=DWORD(0), CanUploadToCloudClipboard=DWORD(0), and the presence of ExcludeClipboardContentFromMonitorProcessing. Inspect Windows history and the clipboard managers actually used. Temporary writes made by the target app in response to simulated copy are outside Sotto's control; restoration markers cannot guarantee they never entered history.
+- Logs must distinguish UIA `empty`/`miss`, `timeout`, `slot_busy`, `breaker_open`, and late worker returns. A permanently blocked call must not cause additional COM calls. Clipboard failures should include stage, format ID/name, size or budget, and timing, without content. For "无法安全保留" errors, save that run's source → uia → clipboard → end logs, distinguishing the source of the selected text from the source of the original clipboard content.
 
-## 原生截图手工验收与测量
+## Manual Native Screenshot Acceptance and Measurement
 
-纯逻辑和 `ui.NewTester` 覆盖正反向/越界拖选、客户区边界校验与负坐标锚点、8 DIPs 临界尺寸、Esc/右键/捕获丢失取消、旧轮次与重复输入、隐藏后恢复、显示器移除和在途抓屏 HWND 的保留。Tester 不替代 Windows 实际合成和多屏验证。
+Pure logic and `ui.NewTester` cover forward/reverse/out-of-bounds selection drags, client-bound validation and negative-coordinate anchors, the 8-DIP size threshold, Esc/right-click/capture-loss cancellation, stale rounds and duplicate input, restoration after hiding, display removal, and retaining HWNDs for in-flight capture. Tester cannot replace actual Windows composition and multi-display validation.
 
-对应测试位于 `internal/ui/snip/view_test.go`；`internal/ui/snip/capture_test.go` 使用注入回调验证取消和入口失效时的租约释放，不执行真实抓屏。
+Relevant tests are in `internal/ui/snip/view_test.go`. `internal/ui/snip/capture_test.go` uses injected callbacks to verify lease release on cancellation and entry invalidation, without actual capture.
 
-- 单屏与多屏、负坐标副屏，以及 100% / 125% / 150% / 200% 混合缩放：透明输入层覆盖对应显示器，未拖拽时显示约 10% 不透明度的深色背景、不画提示文字，拖拽时选区内叠加淡蓝色半透明底、选区外保留淡遮罩；选区边框、DIP 尺寸标注与最终物理截图一致。跨屏内容仍分次框选。
-- 拖拽后分别正常提交、Esc/右键取消，再快速打开截图：从第一帧起只有淡遮罩，不闪现上一次的选区、尺寸标签或蓝色底；未拖拽就取消的屏幕继续复用。
-- 快速重复截图、截图中触发输入/划词、切应用、丢失捕获、Alt+F4：结束当前未钉住气泡会话，取消不提交 OCR，不出现旧轮次幽灵窗口；跨屏焦点切换与启动阶段不误隐藏。
-- 框选中断开显示器、改变分辨率/布局或缩放：旧遮罩消失；已提交但尚未完成的抓屏取消且 HWND 在 GDI 返回前保持有效。再次打开使用当前布局。
-- 完成框选后，抓屏不含选区着色/边框/尺寸标注，保留 120ms 隐藏等待；真实中文、英文、系统回退和 OCR 的 5 分钟空闲回收均继续工作。
-- 浅色/深色桌面检查选区边框与尺寸标签可读性；托盘退出能真正关闭所有原生窗口。
+- On single and multiple displays, secondary displays with negative coordinates, and mixed 100% / 125% / 150% / 200% scaling, verify that the transparent input layer covers its display. Before dragging, show a dark veil at roughly 10% opacity without instruction text. During dragging, add a translucent light-blue fill inside the selection and retain the light veil outside. Selection borders, DIP size labels, and the final physical screenshot must agree. Select cross-display content in separate operations.
+- After dragging, submit normally or cancel with Esc/right-click, then quickly reopen capture. From the first frame, show only the light veil, without flashing the previous selection, size badge, or blue fill. Displays canceled without dragging continue reusing their windows.
+- Repeatedly trigger screenshots, invoke input/selection during capture, switch apps, lose pointer capture, and use Alt+F4. End the current unpinned bubble session; cancellation must not submit OCR or create stale ghost windows. Cross-display focus changes and startup must not cause unintended hiding.
+- Disconnect a display or change resolution/layout/scaling during selection. Old overlays disappear; submitted but unfinished captures are canceled, and their HWNDs remain valid until GDI returns. Reopening uses the current layout.
+- After selection, the capture contains no selection tint/border/size label, retaining the 120 ms hide wait. Real Chinese/English recognition, system fallback, and OCR's 5-minute idle release continue working.
+- Check border and size-label readability on light/dark desktops. Quitting from the tray must actually close all native windows.
 
+## Manual Bubble Edge and Long-Text Acceptance
 
-## 气泡边缘与长文本手工验收
+Requires a Windows desktop session.
 
-需在 Windows 桌面会话验证：
+Windows tests in `internal/selection` use hidden windows and `NotifyWinEvent` to cover HWND ownership, foreground-notification filtering, foreground notifications without bubble blur, and shared-hook removal. Native menu activation, dismissal, and cross-app switching still require the manual checks below.
 
-`internal/selection` 的 Windows 测试用隐藏窗口和 `NotifyWinEvent` 覆盖 HWND 归属、前台通知过滤、无气泡 blur 时的前台通知及共享钩子的注销；原生菜单的激活、关闭和跨应用切换仍需以下手工验收。
+- Trigger selection and OCR at all four screen corners and above the taskbar. Keep margins; expand left when space to the right is insufficient and upward when space below is insufficient.
+- Wait for service results to arrive in sequence, then collapse/expand cards. The window stays within the work area as its height changes; upward expansion preserves the bottom anchor.
+- With auto-hide enabled, change source and target languages using both mouse and keyboard. Opening native dropdowns, confirming an option, or canceling with Esc keeps the bubble visible; confirmation retranslates in the selected languages. Also check dropdowns extending beyond bubble bounds, initial display without focus, pinned bubbles, and disabled auto-hide. Clicking another app or using Alt+Tab, both while a dropdown is open and after confirmation, must still follow auto-hide.
+- Open the input bubble on a secondary display and edit a draft; blur to hide, disconnect that display, then press the input hotkey. Clear the input and old translations, and place the bubble on a connected display. Disconnect a display with a visible bubble, change the layout, or reduce resolution; position and maximum height update together. Late results after the current session ends must not update the window or return it to old coordinates.
+- Use long source text and multiple long translations. Source text has a height cap; translations expand fully without extra scrollbars inside cards or on the page itself. Content below the header scrolls together; the logo and close/pin buttons remain fixed. The scrollbar starts below the header; wheel input over the header must not scroll content.
+- Hover alone does not show scrollbars. Wheel, trackpad, and keyboard scrolling show them; they fade after roughly 900 ms of inactivity. Text wrapping and cards remain stable as scrollbars appear/disappear.
+- Pin and drag to a shorter display, continue translation, then unpin. Preserve the dragged position, keep new content within the work area, and retain draggable scrollbars.
+- Check 100%, 125%, 150%, and 200% scaling in both themes. Also verify a blank new session from the input hotkey, hiding on blur, and tray quit.
 
-- 屏幕四角、任务栏上方触发划词和 OCR；气泡应留出边距，右侧空间不足时向左、下方空间不足时向上展开。
-- 等待多服务结果依次返回，再折叠/展开卡片；窗口增高或变矮后仍在工作区内，向上展开时底部锚点保持稳定。
-- 开启自动隐藏，分别用鼠标和键盘切换源语言、目标语言；展开原生下拉框、确认选项或 Esc 取消时气泡保持可见，确认后按所选语言重新翻译。下拉框伸出气泡边界、首次显示未获得焦点、钉住和关闭自动隐藏时也检查；下拉框保持展开时及确认后，点击其他应用或 Alt+Tab 仍应按自动隐藏设置收起。
-- 在副屏打开输入气泡并编辑草稿，失焦收起后断开副屏，再按输入热键；输入框与旧译文应清空，气泡回到仍连接的显示器。对可见气泡断开副屏、调整显示布局或缩小分辨率，检查位置与最大高度同步更新；当前会话结束后迟到结果不能更新窗口或把窗口拉回旧坐标。
-- 使用长原文和多份长译文：原文有高度上限，译文完整展开，卡片内部和页面本身没有额外滚动条；header 下方的内容统一滚动，logo 和关闭/钉住按钮独立固定；滚动条从 header 下方开始，在 header 上滚轮不应滚动内容。
-- 鼠标仅悬浮时滚动条不出现；滚轮、触控板、键盘滚动时出现，停止约 900 ms 后淡出。观察显隐前后文字不换行、卡片不抖动。
-- 钉住后拖动到另一块较矮的显示器，继续翻译、取消钉住；保留拖动位置，新增内容不超出工作区，滚动条仍能拖动。
-- 100%、125%、150% 和 200% 显示缩放、浅色/深色各检查一次；同时验证输入热键开启空白新会话、失焦隐藏和托盘退出。
+## Manual Streaming Translation Acceptance
 
-## 流式译文手工验收
+Requires a Windows desktop session. Local HTTP simulations and native UI tests cover protocol and state but cannot replace hardware acceptance.
 
-需在 Windows 桌面会话验证（本地 HTTP 模拟与原生 UI 测试已覆盖协议和状态，不能替代实机）：
+- Enable Bilibili and a configured OpenAI-compatible service together and translate long text. Skeletons disappear when the first text arrives; the title shows "生成中" and the body grows progressively. New text fades in over roughly 150 ms without repeatedly flashing old text. With system reduced motion enabled, new text appears immediately.
+- Copy and speech buttons are disabled during generation, and English translations do not request naming formats. Successful completion enables actions and shows naming formats for the complete translation.
+- Disconnect the network after receiving partial text. Preserve text, show an incomplete notice, and keep copy disabled. Restore the network and retry one card; other cards and reading position remain intact.
+- Use a slow model or controlled mock endpoint. Continuous heartbeats/reasoning/translation beyond 30 seconds must not hit an overall time limit. After text arrives, 30 consecutive seconds without data preserves text and reports generation timeout. A successful OpenAI connection test shows "连接成功".
+- Return model-unavailable, insufficient-balance, rate-limit, and excessive-input errors from a mock endpoint. Connection tests and normal translation give consistent messages; streaming errors preserve existing text.
+- Submit new source text, change languages, or close/reopen during generation. Old streams must not overwrite new content; canceled cards must not remain stuck on "生成中".
+- Scroll, select text, and collapse cards during generation. Text selection remains stable and focus does not jump. Check both themes and short work areas.
 
-- 同时启用 Bilibili 和已配置的 OpenAI 兼容服务，翻译较长文本；首段译文到达后骨架屏消失，标题显示“生成中”，正文持续补充；新增文字约 150 ms 淡入，旧文字不反复闪动。开启系统“减少动态效果”后新增文字直接显示。
-- 生成过程中复制和朗读按钮不可用，英文译文不请求命名格式；成功结束后启用操作并显示完整译文的命名格式。
-- 在收到部分文字后断网，检查已有译文保留、出现未完成提示、复制仍不可用；恢复网络后单卡重试，其他卡片与阅读位置保持。
-- 使用慢模型或受控模拟接口：保持心跳/推理/译文持续到 30 秒后仍不应被总时限截断；有译文后连续 30 秒无数据应保留文字并提示生成超时。OpenAI“测试连接”成功时显示“连接成功”。
-- 用模拟接口返回模型不可用、欠费、限流和超长输入错误，检查测试连接与正式翻译提示一致；流式错误保留已有译文。
-- 生成中提交新原文、切换语言、关闭后重新打开；旧流不得覆盖新内容，取消后的卡片不得一直显示“生成中”。
-- 生成中滚动、选择文字、折叠卡片；正文选择保持稳定、焦点不跳动。浅色/深色和短工作区各检查一次。
+## Manual Model Configuration Acceptance
 
-## 模型配置手工验收
+- Change OpenAI, SiliconFlow, and Zhipu models separately. Settings persist across restart and remain independent; leaving a model blank restores its default.
+- Changing a model clears the previous test result. Model editing is disabled during testing, and the OpenAI address is locked as well.
+- Simulate a settings-save failure. The UI rolls back to the last successfully saved configuration; the connection test aborts and asks the user to save again. After another edit and successful save, testing uses the new configuration.
 
-- 分别修改 OpenAI、硅基流动和智谱模型，重启后配置保留且互不影响；留空恢复默认模型。
-- 修改模型后旧测试结果清除；测试期间模型不可编辑，OpenAI 地址同时锁定。
-- 模拟设置保存失败：界面回滚到最后成功保存的配置，连接测试中止并提示重新保存；再次修改并成功保存后测试使用新配置。
+## Manual Bubble New-Session and Initial-Size Acceptance
 
-## 气泡新会话与首次尺寸手工验收
+Requires a Windows desktop session.
 
-需在 Windows 桌面会话验证：
+- Complete a long translation that expands the bubble beyond 400 DIPs, then blur and trigger screenshot translation. Blur ends the old unpinned session. The new bubble's first visible frame uses the short recognition-state size without flashing old translations or height; it grows normally after recognition.
+- Take screenshots in rapid succession, close during recognition, and take another screenshot during recognition. Old OCR and layout acknowledgments must not redisplay the bubble or contaminate a new session. First capture after a cold start must also display normally.
+- With the input panel visible, type an unsubmitted draft, manually choose languages, start translation, and press the input hotkey again. The window does not hide or flash; draft, languages, translations, and in-flight requests remain, and input receives focus. Repeatedly invoke before initial layout completes; only the latest valid session appears.
+- After entering an unsubmitted draft or completing translation, blur or close the input panel, then press its hotkey. The new panel is empty with no old source text or cards, and accepts input and translation normally.
+- Trigger slow selection capture while input is visible, then press the input hotkey before capture returns. Start a blank input session and revoke old capture; late results must not take over the window. Switching from screenshot selection to input also cancels overlays. Pinned windows always remain independent.
+- With a controlled slow service, repeatedly close, change sessions, and quit. Late native height measurements and state updates must not redisplay old windows or expose old content. Initial presentation and sizing also have coverage in `internal/ui/bubble/ui_test.go`, `internal/ui/bubble/layout_test.go`, and regression tests.
+- Pin an old bubble, then open new input, selection, or OCR. Pinned content and work remain; the new bubble is independent. Unpin while the new bubble is visible and while it is hidden: confirm the new bubble's HWND is destroyed, the unpinned window retains its content, and the next invocation starts a new session in it. Repeat with auto-hide disabled.
+- Check initial size, anchors, and display boundaries at 100% / 125% / 150% / 200% scaling and on a negative-coordinate secondary display. Confirm tray quit still closes all windows.
+- With a fast translation service, repeatedly transition from a short loading state to a long translation. Late short layouts must not shrink or persistently clip long content. Streaming growth and card collapse must update window size accordingly.
+- Blur to dismiss a bubble during streaming. The current session is canceled; later size updates must not redisplay it. Pin another bubble still translating, then trigger a new entry; the old pinned bubble must continue growing with its translation.
 
-- 先完成一轮长文翻译，将气泡撑到 400 DIP 以上，再失焦并截图翻译。旧未钉住会话应在失焦时结束；新气泡第一次可见即为识别状态的短尺寸，不闪现旧译文或旧高度；识别完成后正常增长。
-- 连续快速截图、识别期间关闭、识别期间再次截图；旧 OCR 和旧布局确认不能让气泡重新出现或污染新会话。首次冷启动截图也应正常显示。
-- 输入面板可见时，输入未提交草稿、手选语言并开始翻译，再按输入热键；窗口不隐藏或闪烁，草稿、语言、译文和在途请求保留，输入框获得焦点。首次布局尚未完成时快速连按，仅最后有效会话显示。
-- 输入面板输入未提交草稿或完成翻译后，分别失焦与关闭再按热键；新面板为空，没有旧原文或卡片，能正常输入翻译。
-- 输入可见时触发慢划词，在采集返回前再按输入热键；应开启空白输入会话并撤销旧采集，迟到结果不能接管窗口。截图中切换输入也应取消遮罩；已钉住窗口始终独立。
-- 使用受控慢服务反复关闭、换会话及退出；迟到的原生高度测量与状态更新不得重新显示旧窗口或暴露旧内容。首次呈现与尺寸计算另由 `internal/ui/bubble/ui_test.go`、`internal/ui/bubble/layout_test.go` 和回归测试覆盖。
-- 钉住旧气泡后开启新输入、划词或 OCR；钉住窗口内容和工作继续保留，新气泡独立。分别在新气泡可见和已隐藏时取消钉住，确认新气泡 HWND 被销毁，取消钉住的窗口保留当前内容，下次唤起在它上面开启新会话。关闭自动隐藏后也验证一次。
-- 100% / 125% / 150% / 200% 缩放及负坐标副屏检查首次尺寸、锚点和屏幕边界；确认托盘退出仍能关闭所有窗口。
+## Manual Native Settings Acceptance
 
-- 使用快速返回的翻译服务，反复触发短加载状态 → 长译文：长内容不能被迟到的短布局缩回或持续裁切。流式增长和卡片折叠后窗口都应同步调整。
-- 译文流式返回期间失焦收起气泡；当前会话应被取消，后续尺寸更新不能将其重新显示。钉住另一个仍在翻译的气泡后触发新入口，旧钉住气泡仍应随译文增长。
+`internal/ui/settings/view_test.go` covers settings saves, credential operations, model configuration, ordering, and keyboard interaction. The following still require Windows desktop acceptance:
 
-
-## 原生设置手工验收
-
-`internal/ui/settings/view_test.go` 覆盖设置保存、凭据操作、模型配置、排序与键盘交互。以下仍需 Windows 桌面验收：
-
-- 从托盘和气泡打开设置，确认单实例复用；关闭后重开正常，设置窗口打开时托盘退出仍可结束进程。
-- 在浅色/深色、100% / 125% / 150% / 200% 缩放下检查四个标签页、长服务列表与最小窗口尺寸。
-- 用 Tab、Shift+Tab、Enter、空格和 Esc 操作控件；拖动排序、切换服务分组后检查焦点和凭据草稿。
-- 实际保存、清除密钥并重启，检查 Windows Credential Manager 持久化；测试连接期间模型和地址锁定，关闭窗口后结果不影响新窗口。
+- Open settings from the tray and bubble; confirm singleton reuse, correct reopening after closure, and process exit through tray quit while settings is open.
+- Check all four tabs, long service lists, and minimum window size in both themes at 100% / 125% / 150% / 200% scaling.
+- Operate controls with Tab, Shift+Tab, Enter, Space, and Esc. Check focus and credential drafts after drag reordering and service-group changes.
+- Actually save and clear keys, then restart to check Windows Credential Manager persistence. Model and address fields remain locked during connection tests; results after window closure must not affect the new window.
