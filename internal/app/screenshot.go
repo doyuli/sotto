@@ -7,6 +7,7 @@ import (
 
 	"sotto/internal/capture"
 	"sotto/internal/ocr"
+	"sotto/internal/translate"
 	"sotto/internal/ui/bubble"
 	"sotto/internal/ui/snip"
 )
@@ -42,6 +43,12 @@ func (a *application) snipDone(shot *snip.Capture) {
 			log.Printf("ocr: %v", err)
 		} else if result.Text == "" {
 			message = "未识别到文字，请框选完整文字后重试。"
+		}
+		if message == "" {
+			if err := translate.ValidateInput(result.Text); err != nil {
+				result.Text = ""
+				message = translate.UserMessage(err)
+			}
 		}
 		if !a.bubbles.CompleteCapture(a.settings(), shown, result.Text, message) {
 			return

@@ -63,20 +63,11 @@ function Send-Line([string]$line) {
 $script:defaultEngine = New-Engine ''
 Send-Line (ConvertTo-Json -Compress @{ready=$true; maxDimension=[Windows.Media.Ocr.OcrEngine]::MaxImageDimension})
 
-$stdin = [Console]::OpenStandardInput()
-while ($true) {
-  # Read one UTF-8 line by hand: the console input encoding is not
-  # reliable under redirection.
-  $ms = New-Object System.IO.MemoryStream
-  while ($true) {
-    $b = $stdin.ReadByte()
-    if ($b -lt 0) { return }           # stdin closed: exit
-    if ($b -eq 10) { break }           # LF ends the line
-    if ($b -ne 13) { $ms.WriteByte($b) }
-  }
-  if ($ms.Length -eq 0) { continue }
-  $line = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
-  $ms.Dispose()
+# StreamReader buffers pipe reads and decodes UTF-8 in blocks instead of
+# invoking PowerShell once per byte. Parent-side image budgets bound requests.
+$stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8, $false, 65536)
+while ($null -ne ($line = $stdin.ReadLine())) {
+  if ($line.Length -eq 0) { continue }
   $bitmap = $null
   $ras = $null
   $stream = $null
@@ -103,10 +94,10 @@ while ($true) {
     # as a single item (which made every line carry the full text).
     # Line text comes from OcrLine.Text so it stays paired with its box;
     # joining words would place a space between every CJK glyph.
-    $lines = @()
+    $lines = New-Object System.Collections.Generic.List[object]
     foreach ($l in $result.Lines) {
-      $words = @()
-      foreach ($w in $l.Words) { $words += $w }
+      $words = New-Object System.Collections.Generic.List[object]
+      foreach ($w in $l.Words) { $words.Add($w) }
       if ($words.Count -eq 0) { continue }
       $first = $words[0].BoundingRect
       $x = [int]$first.X
@@ -124,9 +115,9 @@ while ($true) {
       if (-not $text) { $text = ($words | ForEach-Object { $_.Text }) -join '' }
       # Parentheses around the subtractions: comma binds tighter than
       # minus, so $right - $x, $bottom - $y would subtract an array.
-      $lines += @{ text = $text; box = @($x, $y, ($right - $x), ($bottom - $y)) }
+      $lines.Add(@{ text = $text; box = @($x, $y, ($right - $x), ($bottom - $y)) })
     }
-    $out = @{ ok = $true; lines = @($lines) }
+    $out = @{ ok = $true; lines = $lines.ToArray() }
     Send-Line (ConvertTo-Json -InputObject $out -Compress -Depth 4)
   } catch {
     $msg = ($_.Exception.Message -replace '"', "'")
@@ -139,5 +130,10 @@ while ($true) {
     foreach ($resource in @($bitmap, $ras, $stream)) {
       if ($resource) { try { $resource.Dispose() } catch {} }
     }
+    # Dispose releases native handles; clear managed payload references too
+    # before the resident worker blocks waiting for its next request.
+    $resource = $bitmap = $ras = $stream = $decoder = $result = $null
+    $line = $req = $bytes = $lines = $words = $out = $l = $w = $null
+
   }
 }

@@ -10,6 +10,7 @@ import (
 	"sotto/internal/config"
 	"sotto/internal/languages"
 	"sotto/internal/naming"
+	"sotto/internal/translate"
 	"sotto/internal/ui/shared"
 )
 
@@ -561,6 +562,11 @@ func (v *bubbleView) StartRun(text string, service string) {
 	}
 	if trimmed == "" {
 		v.clearRun()
+		return
+	}
+	if err := translate.ValidateInput(text); err != nil {
+		v.clearRun()
+		v.message = translate.UserMessage(err)
 		return
 	}
 	// A retry after editing is a new full run; every card must match the draft.

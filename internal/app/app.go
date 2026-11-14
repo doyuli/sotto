@@ -248,6 +248,12 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	if sel.Text == "" && message == "" {
 		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
 	}
+	if message == "" {
+		if err := translate.ValidateInput(sel.Text); err != nil {
+			sel.Text = ""
+			message = translate.UserMessage(err)
+		}
+	}
 	var anchor *bubble.Anchor
 	if sel.HasRect {
 		anchor = &bubble.Anchor{X: sel.Rect.X + sel.Rect.W, Y: sel.Rect.Y + sel.Rect.H}
@@ -418,10 +424,13 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 	}
 	cfg := a.settings()
 
-	text := translate.PrepareSource(req.Text, cfg.Identifier)
+	text := req.Text
+	if translate.ValidateInput(text) == nil {
+		text = translate.PrepareSource(text, cfg.Identifier)
+	}
 	// Identifiers translate better as words: getUserInfo goes to the
 	// services as "get user info".
-	if cfg.Identifier.AutoSplit && naming.DetectStyle(text) != naming.None &&
+	if translate.ValidateInput(text) == nil && cfg.Identifier.AutoSplit && naming.DetectStyle(text) != naming.None &&
 		langdetect.Detect(text) == "latin" {
 		text = strings.Join(naming.SplitWords(text), " ")
 	}

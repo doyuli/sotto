@@ -155,3 +155,15 @@ Passive results do not receive focus, so blur alone cannot dismiss them. Outside
 Space/sleep changes advance workspace generation. Stale transient presentations must be closed semantically: cancel full-text requests, single-card retries, and recognition; clear result identities; and settle view state. Calling Hide alone is insufficient. Pinned bubbles only hide and retain independent requests. Menu actions explicitly restore numbered windows that are still alive and pinned. Restoration updates only the `workspace` presentation boundary and preserves the original `canShow` entry check. When unpinning after restoration and reopening the input panel, an invalid old entry requires acquiring a new entry and revoking other entries still capturing content.
 
 Shared state machines and injected operations are not acceptance tests of real NSWorkspace, AX, SCK, or pasteboard behavior. See `../e2e/README.md` for platform tests and desktop verification entry points.
+
+
+## Translation resource budgets
+
+A complete translation accepts at most 18,000 Unicode characters and 32 chunks,
+with at most 256 KiB of cumulative translated UTF-8 text per service. The existing
+1,800-character provider chunks and transport limits still apply. Oversized input
+is rejected explicitly; oversized generated output cancels that service's request
+and keeps its last accepted partial text. Source selections are checked before
+creating a result view, and input-panel submissions preserve the draft on rejection.
+All services share a single split of the source. Streaming updates retain a prefix
+and current chunk separately, concatenating only when the 25 Hz publisher emits.

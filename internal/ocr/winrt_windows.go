@@ -106,7 +106,8 @@ func recognizeWinRT(ctx context.Context, img image.Image, lang string, request *
 // saw. It runs with mu held.
 func (w *winrt) ask(ctx context.Context, img image.Image, lang string) ([]systemLine, error) {
 	var pngBuf bytes.Buffer
-	if err := png.Encode(&pngBuf, img); err != nil {
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&pngBuf, img); err != nil {
 		return nil, fmt.Errorf("ocr: %w", err)
 	}
 	req, err := json.Marshal(map[string]string{
