@@ -2,7 +2,6 @@ package settings
 
 import (
 	"fmt"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -15,10 +14,6 @@ import (
 	"sotto/internal/naming"
 	"sotto/internal/platform"
 	"sotto/internal/ui/shared"
-)
-
-var (
-	shieldSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
 type settingsPalette struct {
@@ -260,7 +255,6 @@ func (v *View) Render(c *ui.Context) {
 }
 
 func (v *View) renderSidebar(c *ui.Context, p settingsPalette, active Tab) {
-	credentialLabel, credentialHint := credentialProtectionCopy(runtime.GOOS)
 	ui.Column(c).Width(176).FillHeight().Background(p.sidebar).Padding(16, 12).Gap(4).Children(func() {
 		for _, item := range settingsNavItems {
 			isActive := item.id == active
@@ -295,21 +289,6 @@ func (v *View) renderSidebar(c *ui.Context, p settingsPalette, active Tab) {
 				})
 			})
 		}
-
-		ui.Spacer(c)
-
-		ui.Row(c).
-			FillWidth().
-			Padding(7, 10).
-			Radius(9).
-			Background(p.field).
-			AlignItems(ui.Center).
-			Gap(6).
-			Tooltip(credentialHint).
-			Children(func() {
-				ui.Icon(c, shieldSVG).Size(13, 13).TextColor(p.accent)
-				ui.Text(c, credentialLabel).FontSize(11).TextColor(p.muted).SingleLine()
-			})
 	})
 }
 

@@ -65,8 +65,7 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	tt := ui.NewTester(v.Render, 780, 600)
 	tt.Frame()
 
-	credentialLabel, _ := credentialProtectionCopy(runtime.GOOS)
-	if !tt.HasText("通用") || !tt.HasText(credentialLabel) {
+	if !tt.HasText("通用") {
 		t.Fatalf("missing general tab content: %v", tt.Texts())
 	}
 

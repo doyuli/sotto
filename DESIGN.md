@@ -54,7 +54,7 @@ The settings window adds a navigation rail, service cards, and recessed fields. 
 | `--sidebar` | `#fbfcfd` | `#1a1b1d` | navigation rail |
 | `--card` | `#ffffff` | `#26272a` | cards and drawers |
 | `--card-head` | `#f8f9fb` | `#2b2c30` | service title strip |
-| `--field` | `#f4f5f7` | `#1e1f22` | inputs, quota well, security pill |
+| `--field` | `#f4f5f7` | `#1e1f22` | inputs, quota well |
 | `--muted` | `#6b6b6b` | `#a0a3a7` | secondary text and placeholder |
 | `--badge-ink` | `#5c5c5c` | `#b4b7bb` | quiet badge and order-number text |
 | `--success` | `#15803d` | `#4ade80` | connection-test success text |

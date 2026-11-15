@@ -5,7 +5,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -13,8 +12,7 @@ import (
 	"sotto/internal/config"
 )
 
-func TestSettingsPlatformCopyAndShortcutPresentation(t *testing.T) {
-	label, _ := credentialProtectionCopy(runtime.GOOS)
+func TestSettingsPlatformShortcutPresentation(t *testing.T) {
 	themes, widths := []bool{false}, []int{780}
 	if os.Getenv("SOTTO_SETTINGS_PREVIEW") != "" {
 		themes, widths = []bool{false, true}, []int{660, 780}
@@ -27,16 +25,10 @@ func TestSettingsPlatformCopyAndShortcutPresentation(t *testing.T) {
 				tt := ui.NewTester(v.Render, width, 600)
 				tt.SetDark(dark)
 				tt.Frame()
-				if !tt.HasText(label) {
-					t.Fatalf("missing platform credential label: %v", tt.Texts())
-				}
 				for _, key := range []string{config.Default().Hotkeys.Panel, config.Default().Hotkeys.Ocr, config.Default().Hotkeys.Selection} {
 					if !tt.HasText(displayHotkey(key)) {
 						t.Fatalf("missing native shortcut %s", displayHotkey(key))
 					}
-				}
-				if runtime.GOOS == "darwin" && tt.HasText("Windows 凭据保护") {
-					t.Fatal("Windows credential label leaked into Mac settings")
 				}
 				if output := os.Getenv("SOTTO_SETTINGS_PREVIEW"); output != "" {
 					if err := os.MkdirAll(output, 0755); err != nil {
