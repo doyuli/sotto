@@ -13,108 +13,129 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%2014%2B-blue" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS%2014%2B-blue" alt="Platform">
   <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
-  <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go Version">
   <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
   <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
 </p>
 
 <p align="center">
-  <img src="docs/banner.png" width="100%" alt="Sotto">
+  <img src="docs/banner.png" width="100%" alt="Sotto interface preview">
 </p>
 
-Sotto is a desktop translation utility for Windows and macOS (see [Windows Architecture](docs/windows.md) and [macOS Architecture](docs/macos.md)). Whether you are reading documentation, writing code, or processing multi-language content, Sotto delivers translation results right beside your active window via selection capture, screen snips, or quick keyboard invocation.
+---
 
-Combining multi-engine streaming comparison, offline screen OCR, selection with guarded clipboard preservation, and instant code identifier formatting, Sotto keeps you focused on your work without window-switching fatigue.
+## Why Sotto?
 
-[Download for Windows](https://github.com/doyuli/sotto/releases/latest) · Choose `amd64` for 64-bit PCs (Intel / AMD) or `arm64` for Windows on ARM devices (e.g. Surface Pro, Snapdragon X).
+When reading documentation, researching foreign language resources, or coding, constantly switching between browser tabs or heavy translation apps interrupts your flow. It often leads to clipboard pollution, privacy concerns, and frustration with single-engine inaccuracy.
 
-macOS 14+ is supported on Apple silicon (arm64). Download the arm64 DMG from [Releases](https://github.com/doyuli/sotto/releases/latest). It runs in the menu bar without a Dock icon, uses Accessibility for selection and ScreenCaptureKit + Vision for local screenshot OCR, and ships no PP-OCR models or ONNX Runtime (see [macOS Architecture](docs/macos.md)). Mac selection requires Accessibility permission; screenshots require screen recording permission (see [verification entry points](e2e/README.md) for platform checks and desktop acceptance procedures). Windows models live in `resources/windows/ocr`; MyGo merges them with the architecture-specific runtime DLLs only for Windows builds. Every release includes Mac artifacts alongside both Windows architectures. Current Mac downloads use ad-hoc signing and are not notarized by Apple. After copying Sotto to Applications and trying to open it, you may need to approve Sotto in **System Settings → Privacy & Security → Open Anyway**, if you trust the download from this repository ([Apple's instructions](https://support.apple.com/en-us/102445)). Update archives still use Sotto's own cryptographic signatures.
+**Sotto** (meaning *in an undertone* or *whisper*) is designed to be an always-available, silent translation companion right on your desktop. Whether triggered by **non-intrusive text selection**, **offline screen snip OCR**, or a **global shortcut**, Sotto pops up an elegant floating bubble beside your active window, queries multiple translation engines in parallel, and streams results in real time. It hides automatically on blur, keeping you entirely focused on your work.
 
 ---
 
 ## Features
 
-- ⚡ **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold or retry cards independently.
-- 🖱️ **Non-Intrusive Selection**: Windows reads text via UI Automation (UIA); Mac uses Accessibility. Guarded simulated copy preserves readable clipboard content. Sotto’s own Windows restore writes carry history exclusion markers; temporary copies made by the source app are outside this guarantee.
-- 📷 **Offline Screen OCR**: Snip any screen region to translate locally. Windows uses on-device PP-OCR and native WinRT OCR; Mac uses Vision. Images stay local.
-- 💻 **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
-- 🔒 **Secure Credentials & Zero Telemetry**: Strictly local with no tracking. API keys are safely encrypted in Windows Credential Manager or macOS Keychain rather than plain-text configs.
-- 🎨 **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects themes, hides on blur, or pins in place.
+- **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold, copy, or retry cards independently.
+- **Non-Intrusive Selection & Clipboard Protection**: Windows reads text via UI Automation (UIA) and macOS via Accessibility without stealing focus. The simulated copy fallback restores readable clipboard content when safe. On Windows, clipboard history exclusion markers apply only to Sotto’s own restore writes.
+- **Offline Screen OCR**: Snip a screen region to recognize text locally, then send the text for translation. Windows uses embedded PP-OCR with a WinRT OCR fallback, and macOS uses native Vision. Images stay on your device.
+- **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
+- **Credential Protection & Zero Telemetry**: Zero tracking. API keys are protected by the system credential manager or keychain.
+- **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects system themes, hides on blur, or pins in place.
+
+---
+
+## Shortcuts & Operations
+
+Sotto provides three instant entry points with fully customizable global shortcuts:
+
+| Action | Windows Default | macOS Default | Description |
+| :--- | :--- | :--- | :--- |
+| **Open Translation Panel** | `Ctrl + Alt + A` | `⌥ Option + A` | Opens the typed translation panel; if already open, focuses it and preserves existing text |
+| **Screen Snip Translation (OCR)** | `Ctrl + Alt + S` | `⌥ Option + S` | Snips any screen area to extract text locally and query translation engines |
+| **Selection Translation** | `Ctrl + Alt + D` | `⌥ Option + D` | Reads highlighted text in the frontmost app and shows a popup bubble beside it |
+
+### In-Bubble Controls
+- **Keyboard navigation**: Press `Enter` to translate, `Shift + Enter` for a newline, and `Esc` to dismiss the bubble.
+- **Floating controls**: Click the pin icon to keep the bubble open on blur; native text-to-speech pronunciation for source and translated text.
+- **Card management**: Fold or expand individual engine cards, and retry any card that encounters an error.
 
 ---
 
 ## Supported Translation Services
 
-| Service | Type | Notes |
-| --- | --- | --- |
-| **Google Translate** | Keyless | Optional keyless endpoint; disabled by default |
-| **Bilibili (Index)** | Keyless | Experimental keyless endpoint |
-| **Dictionary** | Keyless | Displays phonetics and definitions for English words |
-| **DeepL** | API Key | Supports both Free and Pro keys |
-| **OpenAI-Compatible** | API Key | Custom Base URL and model names (DeepSeek, Moonshot, Qwen, etc.) |
-| **SiliconFlow** | API Key | Custom model; defaults to `tencent/Hunyuan-MT-7B`; identity verification required |
-| **Zhipu** | API Key | Custom model; defaults to `glm-4.7-flash` |
-| **Volcengine (ByteDance)** | API Key | High-performance machine translation |
+Open **Settings** from the tray menu to toggle services, reorder cards via drag-and-drop, configure API keys, and customize model names:
+
+| Service | Type | Details & Capabilities |
+| :--- | :--- | :--- |
+| **Bilibili (Index)** | Keyless | Experimental endpoint, enabled by default |
+| **Online Dictionary** | Keyless | Phonetics, parts of speech, and English definitions for single words |
+| **Google Translate** | Keyless | Disabled by default; toggle on in Settings |
+| **DeepL** | API Key | Industry-leading translation quality; supports both DeepL Free and DeepL Pro keys |
+| **OpenAI-Compatible** | API Key | Fully custom Base URL and model names (works seamlessly with DeepSeek, Moonshot, Qwen, etc.) |
+| **SiliconFlow** | API Key | Aggregated open-source LLMs; defaults to `tencent/Hunyuan-MT-7B` |
+| **Zhipu AI** | API Key | GLM family models; defaults to `glm-4.7-flash` |
+| **Volcengine (ByteDance)** | API Key | High-performance machine translation by ByteDance |
 | **Baidu Translate** | API Key | General text translation API |
-| **Tencent Cloud (TMT)** | API Key | Machine translation service |
+| **Tencent Cloud (TMT)** | API Key | Tencent Cloud machine translation service |
 | **Youdao** | API Key | NetEase Youdao translation API |
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
-> Translation and dictionary lookups use third-party services and send the relevant text to those providers. Some keyless integrations use unofficial or experimental endpoints. Availability, free quotas, and pricing follow each provider’s current policies. Translations are for reference only.
-
-> Open **Settings** from the tray menu to toggle services, reorder cards, manage keys, and configure models. Leave a model blank to restore its default.
-
----
-
-## Shortcuts & Quick Guide
-
-| Action | Windows Default | Description |
-| --- | --- | --- |
-| **Open Translation Panel** | `Ctrl+Alt+A` | Brings up the translation panel; if already open, focuses it and preserves its contents |
-| **Screen Region Translation (OCR)** | `Ctrl+Alt+S` | Snips any screen area to extract text locally and translate |
-| **Selection Translation** | `Ctrl+Alt+D` | Reads highlighted text in the active app and opens a popup bubble |
-
-- **Mac defaults**: `⌥A` opens the panel, `⌥S` starts OCR, and `⌥D` translates the selection. Customize shortcuts, including Command combinations, in Settings. Explicitly saved shortcuts are preserved; missing values use platform defaults.
-- **In the panel**: Press `Enter` to translate, `Shift+Enter` for a new line, `Esc` to close.
-- **Controls**: Pin (📌) to keep the bubble floating, listen to pronunciation (🔊), fold cards, or retry failed services.
+> [!NOTE]
+> Sotto sends text for translation and dictionary lookup to the respective third-party providers. Certain keyless integrations use experimental endpoints. Service availability, free quotas, and pricing follow each provider's latest terms.
 
 ---
 
-## System Requirements & Download
+## Download & Installation
 
-- **Operating System**: Windows 10 / Windows 11
-- **Architectures**:
-  - 64-bit x86 PC (Intel / AMD): download `sotto-setup-<version>-amd64.exe`
-  - 64-bit ARM device (e.g. Surface Pro / Snapdragon X): download `sotto-setup-<version>-arm64.exe`
+Visit the [GitHub Releases page](https://github.com/doyuli/sotto/releases/latest) to download the package corresponding to your operating system and CPU architecture:
 
-👉 [Download the latest release on GitHub Releases](https://github.com/doyuli/sotto/releases/latest)
+| Operating System | Architecture | Package Format | Notes |
+| :--- | :--- | :--- | :--- |
+| **Windows 10 / 11** | 64-bit Intel / AMD (x86_64) | `sotto-setup-<version>-amd64.exe` | Standard installer for x64 Windows PCs |
+| **Windows 10 / 11** | 64-bit ARM (arm64) | `sotto-setup-<version>-arm64.exe` | For Surface Pro, Qualcomm Snapdragon X devices |
+| **macOS 14+** | Apple Silicon (M-series / arm64) | `sotto-<version>-arm64.dmg` | Menu-bar accessory without Dock icon; native Vision OCR |
+
+### macOS First-Launch Guide
+1. **Gatekeeper Approval**: The macOS build uses ad-hoc signing. When opening Sotto for the first time after moving it to `Applications`, if prompted by Gatekeeper, navigate to **System Settings → Privacy & Security** and click **"Open Anyway"** ([Apple official guide](https://support.apple.com/en-us/102445)).
+2. **Permissions**: Selection translation requires **Accessibility** permission; screen snip translation requires **Screen Recording** permission.
 
 ---
 
-## Development
+## Development & Building
 
-Requires Go (>= 1.27.3) and Bun. The MyGo module and `mygo-cli` are pinned to 0.8.3.
+### Prerequisites
+- [Go](https://go.dev/) >= 1.27.3
+- [Bun](https://bun.sh/) (for the MyGo CLI toolchain)
 
-The root `main.go` embeds the app icon and calls `internal/app.Run`. Application lifecycle, hotkeys, service assembly and entry orchestration live together in `internal/app`; native UI components and platform implementations remain in their existing packages.
+### Commands
 
 ```bash
-bun install                  # Install dependencies
-bun run dev                  # Run the native app (with hot reload)
-CGO_ENABLED=0 go test ./...   # Run unit tests
-bunx mygo vet .              # Check native UI usage
-bun run build                # Build for current architecture
-bun run build:win            # Build for both x64 and arm64
-bun run build:mac            # Build an Apple silicon macOS app (on macOS)
+# 1. Install toolchain dependencies
+bun install
+
+# 2. Start desktop development server (with hot reload)
+bun run dev
+
+# 3. Run unit tests
+CGO_ENABLED=0 go test ./...
+
+# 4. Check native UI usage compliance
+bunx mygo vet .
+
+# 5. Build executable for the current architecture
+bun run build
+
+# 6. Cross-platform builds
+bun run build:win      # Builds both x64 and arm64 Windows installers
+bun run build:mac      # Builds the macOS Apple Silicon (arm64) DMG
 ```
 
-> For test layers, opt-in platform probes, and desktop acceptance, see [e2e/README.md](e2e/README.md).
+> For automated test suites, platform probes, and desktop acceptance testing, refer to [e2e/README.md](e2e/README.md).
 
 ---
 
 ## Acknowledgments
 
-Thanks to the authors and contributors of [Easydict](https://github.com/tisfeng/Easydict) for inspiring Sotto.
-
-Thanks to [Mygo](https://mygo.egoist.dev/) for the framework that powers Sotto.
+- [Easydict](https://github.com/tisfeng/Easydict): For inspiring Sotto's multi-engine comparison design and user experience.
+- [Mygo](https://mygo.egoist.dev/): The lightweight, modern Go desktop UI framework powering Sotto.

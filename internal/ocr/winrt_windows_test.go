@@ -264,7 +264,7 @@ func TestWinRTNativeRepeatedRequests(t *testing.T) {
 	if os.Getenv("SOTTO_OCR_PREFLIGHT") != "1" {
 		t.Skip("set SOTTO_OCR_PREFLIGHT=1 for system OCR and installed language packs")
 	}
-	f, err := os.Open("testdata/bilingual.png")
+	f, err := os.Open("testdata/screenshot.png")
 	if err != nil {
 		t.Fatal(err)
 	}

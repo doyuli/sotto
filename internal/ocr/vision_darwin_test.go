@@ -15,7 +15,7 @@ func TestVisionNativeSmoke(t *testing.T) {
 	if os.Getenv("SOTTO_MACOS_NATIVE") != "1" {
 		t.Skip("set SOTTO_MACOS_NATIVE=1 to run native Vision recognition")
 	}
-	f, err := os.Open("testdata/bilingual.png")
+	f, err := os.Open("testdata/screenshot.png")
 	if err != nil {
 		t.Fatal(err)
 	}
