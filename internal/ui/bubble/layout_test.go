@@ -32,15 +32,19 @@ func TestBubblePlacement(t *testing.T) {
 func TestBubbleGrowsAwayFromBottomAnchor(t *testing.T) {
 	work := mygo.Rectangle{Width: 1920, Height: 1040}
 	p := newBubblePlacement(mygo.Display{ID: 1, WorkArea: work}, mygo.Point{X: 1000, Y: 980}, false, 480)
-	_, shortY := p.position(480, 240)
-	_, tallY := p.position(480, 760)
-	if shortY+240 != tallY+760 {
-		t.Fatal("growth moved the bottom anchor")
+	short := fitBubbleFrame(mygo.Rectangle{Width: 480, Height: 240}, work, &p)
+	next := short
+	next.Height = 760
+	tall := fitBubbleFrame(next, work, &p)
+	// Resizing at the old origin briefly moved the visible bottom edge.
+	// A new frame must already be anchored when it reaches the window.
+	if tall.Height != next.Height || tall.Y+tall.Height != short.Y+short.Height {
+		t.Fatalf("growth moved the bottom anchor: short=%+v tall=%+v", short, tall)
 	}
 	// Shrinking returns to the original side instead of sticking to the top edge.
-	_, again := p.position(480, 240)
-	if again != shortY {
-		t.Fatalf("shrink returned to %d; want %d", again, shortY)
+	tall.Height = short.Height
+	if again := fitBubbleFrame(tall, work, &p); again != short {
+		t.Fatalf("shrink returned to %+v; want %+v", again, short)
 	}
 }
 

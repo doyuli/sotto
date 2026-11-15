@@ -175,7 +175,7 @@ type bubbleViewActions struct {
 	discardClipboard func(id string, done func())
 	copyText         func(c *ui.Context, text string) error
 	speakText        func(text, lang string, onError func()) // onError runs on the UI thread
-	onHeightMeasured func(height float64)
+	onHeightMeasured func(height float64, streaming bool)
 }
 
 type bubbleCard struct {
@@ -230,6 +230,9 @@ type bubbleView struct {
 	measuredVersion   uint64
 	lastMeasuredH     float64
 	lastMeasuredLimit float64
+	streamHeight      bool
+	lastStreamHeight  bool
+	reduceMotion      bool
 
 	speechAttempt    uint64
 	speechError      bool
@@ -421,26 +424,19 @@ func (v *bubbleView) applyResult(msg TranslationUpdateMsg) {
 		}
 	}
 	prev := v.cards[msg.Service]
-	if msg.Streaming {
-		v.cards[msg.Service] = &bubbleCard{
-			Streaming: true,
-			Text:      msg.Text,
+	card := &bubbleCard{Text: msg.Text, Streaming: msg.Streaming}
+	if !msg.Streaming && msg.Err != "" {
+		card.Err = msg.Err
+		if card.Text == "" && prev != nil {
+			card.Text = prev.Text
 		}
-		return
 	}
-	if msg.Err != "" {
-		text := msg.Text
-		if text == "" && prev != nil {
-			text = prev.Text
+	v.cards[msg.Service] = card
+	for _, service := range v.showingServices() {
+		if v.cards[service].Streaming && !v.collapsed[service] {
+			v.streamHeight = true
+			break
 		}
-		v.cards[msg.Service] = &bubbleCard{
-			Text: text,
-			Err:  msg.Err,
-		}
-		return
-	}
-	v.cards[msg.Service] = &bubbleCard{
-		Text: msg.Text,
 	}
 }
 
@@ -458,6 +454,7 @@ func (v *bubbleView) setMaxHeight(limit float64) {
 
 func (v *bubbleView) bumpContent() {
 	v.contentVersion++
+	v.streamHeight = false
 }
 
 func (v *bubbleView) isRecognizing() bool {
@@ -789,6 +786,7 @@ func (v *bubbleView) resolveClipboard(discard bool) {
 }
 
 func (v *bubbleView) render(c *ui.Context) {
+	v.reduceMotion = c.Preferences().ReduceMotion
 	if v.clipboardToast != "" {
 		c.Toast(v.clipboardToast)
 		v.clipboardToast = ""
@@ -842,10 +840,11 @@ func (v *bubbleView) render(c *ui.Context) {
 		if body.H > 0 {
 			v.measuredVersion = v.paintedVersion
 			total := float64(hdr.H + body.H)
-			if total != v.lastMeasuredH || v.maxHeight != v.lastMeasuredLimit {
+			if total != v.lastMeasuredH || v.maxHeight != v.lastMeasuredLimit || v.streamHeight != v.lastStreamHeight {
 				v.lastMeasuredH, v.lastMeasuredLimit = total, v.maxHeight
+				v.lastStreamHeight = v.streamHeight
 				if v.actions.onHeightMeasured != nil {
-					v.actions.onHeightMeasured(total)
+					v.actions.onHeightMeasured(total, v.streamHeight)
 				}
 			}
 		}

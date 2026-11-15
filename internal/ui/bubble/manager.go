@@ -49,7 +49,6 @@ type bubble struct {
 	id                     int64
 	win                    *mygo.Window
 	view                   *bubbleView
-	appliedHeight          int
 	pinned                 bool
 	reqID                  string // request with the highest accepted revision
 	generation             int64
@@ -81,6 +80,7 @@ type bubble struct {
 	placement       *bubblePlacement
 	positionState   bubblePosition
 	adjustingLayout bool
+	heightAnimation *bubbleHeightAnimation
 	maxHeight       float64 // native logical units; guarded by the manager mutex
 }
 
@@ -172,17 +172,15 @@ func (m *Manager) ShowTask(cfg config.Settings, trigger, text string, anchor *An
 		b.workspace = platform.WorkspaceGeneration()
 		m.mu.Unlock()
 		// Reset geometry and native view state before presenting the reused window.
+		b.stopHeightAnimation()
 		b.win.Hide()
 		initialH := 200
 		if text != "" {
 			initialH = 240
 		}
-		m.mu.Lock()
-		b.appliedHeight = initialH
-		m.mu.Unlock()
 		b.setContentSize(480, initialH)
 		m.position(b, trigger, anchor)
-		m.reflow(b, true)
+		m.reflow(b, true, 0)
 		m.mu.Lock()
 		state := m.state(b, cfg)
 		view := b.view
@@ -457,7 +455,7 @@ func (b *bubble) stopWindowLeave() {
 func (m *Manager) createTransient(cfg config.Settings) *bubble {
 	id := m.nextID
 	m.nextID++
-	b := &bubble{id: id, maxHeight: bubbleMaxHeight, appliedHeight: 240}
+	b := &bubble{id: id, maxHeight: bubbleMaxHeight}
 	b.view = newBubbleView(id, cfg, bubbleViewActions{
 		run: func(req RunReq) {
 			if m.actions.Run != nil && b.win != nil {
@@ -516,25 +514,18 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 				b.win.Update(onError)
 			})
 		},
-		onHeightMeasured: func(height float64) {
-			m.mu.Lock()
-			limit := b.maxHeight
-			prevH := b.appliedHeight
-			closed := b.closeClaimed
-			m.mu.Unlock()
-			if closed {
-				return
-			}
-			targetH := bubbleLayoutHeight(height, limit)
-			if targetH == prevH {
-				return
-			}
-			m.mu.Lock()
-			b.appliedHeight = targetH
-			m.mu.Unlock()
-			m.reflow(b, false)
-			b.setContentSize(480, targetH)
-			m.reflow(b, true)
+		onHeightMeasured: func(height float64, streaming bool) {
+			session := b.view.sessionID
+			// AppKit can redraw during a resize. Apply the measurement after
+			// this build returns, while it still belongs to the same session.
+			b.win.Update(func() {
+				m.mu.Lock()
+				current := m.byID[b.id] == b && !b.closeClaimed && b.sessionID == session
+				m.mu.Unlock()
+				if current {
+					m.resizeToContent(b, height, streaming)
+				}
+			})
 		},
 	})
 	b.win = mygo.NewWindow(mygo.WindowOptions{
@@ -544,8 +535,8 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 		Height:          240,
 		MinWidth:        480,
 		MaxWidth:        480,
-		MinHeight:       160,
-		MaxHeight:       760,
+		MinHeight:       bubbleMinHeight,
+		MaxHeight:       bubbleMaxHeight,
 		DisableResize:   true, // the bubble has a fixed width
 		Hidden:          true, // shown once placed and ready
 		Frameless:       true,
@@ -554,8 +545,8 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 		CornerRadius:    14,
 		BackgroundColor: "light-dark(#ffffff, #222325)",
 	})
-	b.win.OnResize(func() { m.reflow(b, true) })
-	b.win.OnMove(func() { m.reflow(b, false) })
+	b.win.OnResize(func() { m.reflow(b, true, 0) })
+	b.win.OnMove(func() { m.reflow(b, false, 0) })
 	b.win.OnReadyToShow(func() {
 		log.Printf("bubble: view ready id=%d", b.id)
 		m.mu.Lock()
@@ -584,6 +575,7 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 		b.win.Hide()
 	})
 	b.win.OnClosed(func() {
+		b.stopHeightAnimation()
 		b.stopWindowLeave()
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -593,7 +585,14 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 			m.transient = nil
 		}
 	})
-	b.win.OnHide(b.stopWindowLeave)
+	b.win.OnHide(func() {
+		if animation := b.heightAnimation; animation != nil {
+			b.stopHeightAnimation()
+			// A pinned bubble may be restored before its hidden view redraws.
+			m.reflow(b, true, animation.target)
+		}
+		b.stopWindowLeave()
+	})
 	m.mu.Lock()
 	m.setBlurLocked(b, cfg.Bubble.AutoHide)
 	m.byID[id] = b

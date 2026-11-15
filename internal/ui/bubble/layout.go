@@ -9,6 +9,7 @@ import (
 const (
 	bubbleMargin    = 12
 	bubbleGap       = 16
+	bubbleMinHeight = 160
 	bubbleMaxHeight = 760
 )
 
@@ -80,6 +81,22 @@ func clampBubblePosition(work mygo.Rectangle, x, y, width, height int) (int, int
 		min(max(y, work.Y+marginY), work.Y+max(work.Height-height-marginY, 0))
 }
 
+// bubbleStreamRoom is the frame height that fits before moving the anchor edge.
+func bubbleStreamRoom(bounds, work mygo.Rectangle, placement *bubblePlacement) int {
+	if placement != nil && placement.above && !placement.input {
+		return placement.point.Y - bubbleGap - work.Y - bubbleMargin
+	}
+	y := bounds.Y
+	if placement != nil {
+		_, y = placement.position(bounds.Width, 0)
+	}
+	return work.Y + work.Height - bubbleMargin - max(y, work.Y+bubbleMargin)
+}
+
+func bubbleDisplay(bounds mygo.Rectangle) mygo.Display {
+	return mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2})
+}
+
 // bubblePosition tracks actual geometry, not event counts: a native move
 // notification may arrive after SetPosition returned or after another move.
 type bubblePosition struct {
@@ -139,9 +156,9 @@ func (b *bubble) setContentSize(width, height int) {
 	b.changeGeometry(func() { b.win.SetContentSize(width, height) })
 }
 
-// reflow runs on the main thread. Manually moved windows retain their position;
-// only automatic content growth is kept inside the current work area.
-func (m *Manager) reflow(b *bubble, resize bool) {
+// reflow runs on the main thread. A zero contentHeight keeps the current size.
+// Move notifications only update placement and the work area.
+func (m *Manager) reflow(b *bubble, fitFrame bool, contentHeight int) {
 	if b.adjustingLayout {
 		return
 	}
@@ -152,7 +169,7 @@ func (m *Manager) reflow(b *bubble, resize bool) {
 	if b.positionState.moved(bounds, displays) {
 		b.placement = nil
 	}
-	display := mygo.Screen.DisplayNearestPoint(mygo.Point{X: bounds.X + bounds.Width/2, Y: bounds.Y + bounds.Height/2})
+	display := bubbleDisplay(bounds)
 	work := display.WorkArea
 	m.mu.Lock()
 	pinned := b.pinned
@@ -171,18 +188,32 @@ func (m *Manager) reflow(b *bubble, resize bool) {
 		view.setMaxHeight(limit)
 		b.win.Invalidate()
 	}
-	if !resize {
+	if !fitFrame {
 		return
 	}
-	x, y := bounds.X, bounds.Y
-	if pinned || b.placement == nil {
-		x, y = clampBubblePosition(work, x, y, bounds.Width, bounds.Height)
+	next := bounds
+	if contentHeight > 0 {
+		next.Height += min(contentHeight, max(bubbleMinHeight, int(limit))) - b.win.ContentBounds().Height
+	}
+	placement := b.placement
+	if pinned {
+		placement = nil
+	}
+	next = fitBubbleFrame(next, work, placement)
+	if next != bounds {
+		// AppKit displays each frame change. Commit the target size and
+		// origin together so an upward-growing bubble keeps its bottom edge.
+		b.changeGeometry(func() { b.win.SetBounds(next) })
+	}
+}
+
+func fitBubbleFrame(bounds, work mygo.Rectangle, placement *bubblePlacement) mygo.Rectangle {
+	if placement != nil {
+		bounds.X, bounds.Y = placement.position(bounds.Width, bounds.Height)
 	} else {
-		x, y = b.placement.position(bounds.Width, bounds.Height)
+		bounds.X, bounds.Y = clampBubblePosition(work, bounds.X, bounds.Y, bounds.Width, bounds.Height)
 	}
-	if x != bounds.X || y != bounds.Y {
-		b.setPosition(x, y)
-	}
+	return bounds
 }
 
 // A hidden window must also be reconciled before its next presentation; a
@@ -196,7 +227,7 @@ func (m *Manager) RefreshDisplays() {
 		}
 		m.mu.Unlock()
 		for _, b := range bubbles {
-			m.reflow(b, true)
+			m.reflow(b, true, 0)
 		}
 	})
 }
@@ -204,5 +235,5 @@ func (m *Manager) RefreshDisplays() {
 func bubbleLayoutHeight(height, limit float64) int {
 	// Clamp before conversion and round fractional native view sizes as mygo does.
 	h := int(math.Ceil(min(min(height, limit), bubbleMaxHeight) - 1.0/128))
-	return max(160, h)
+	return max(bubbleMinHeight, h)
 }

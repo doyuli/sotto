@@ -508,7 +508,7 @@ func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
 	var heights []float64
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64) { heights = append(heights, h) },
+		onHeightMeasured: func(h float64, _ bool) { heights = append(heights, h) },
 	})
 	v.applyState(BubbleState{
 		ID: 1, Generation: 1, SessionID: "sess-collapse", ShowID: 1,
@@ -560,7 +560,7 @@ func TestBubbleViewHeightLimitChangeReportsUnchangedContent(t *testing.T) {
 	applied := 240
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64) {
+		onHeightMeasured: func(h float64, _ bool) {
 			heights = append(heights, h)
 			applied = bubbleLayoutHeight(h, limit)
 		},
@@ -603,7 +603,7 @@ func TestBubbleViewHeightMeasurementSettled(t *testing.T) {
 	var heights []float64
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64) { heights = append(heights, h) },
+		onHeightMeasured: func(h float64, _ bool) { heights = append(heights, h) },
 	})
 	v.applyState(BubbleState{
 		ID:         1,
@@ -625,6 +625,94 @@ func TestBubbleViewHeightMeasurementSettled(t *testing.T) {
 	tt.Frame()
 	if len(heights) != 1 {
 		t.Fatalf("extra frame re-triggered height measurement: %v", heights)
+	}
+}
+
+func TestBubbleViewSettlesHeightWhenStreamEnds(t *testing.T) {
+	type measurement struct {
+		height    float64
+		streaming bool
+	}
+	var heights []measurement
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		onHeightMeasured: func(height float64, streaming bool) {
+			heights = append(heights, measurement{height, streaming})
+		},
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "sess-stream-height", ShowID: 1,
+		ReqID: "req-stream-height", Trigger: "selection", Text: "hello", Settings: cfg,
+	}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "req-stream-height", Services: []string{"google", "baidu"}})
+	tt := ui.NewTester(v.render, 480, 600)
+	result := TranslationUpdateMsg{
+		ReqID: "req-stream-height", Service: "google", Text: "Translation appears immediately.", Streaming: true,
+	}
+	v.applyResult(result)
+	other := result
+	other.Service, other.Text = "baidu", "Another translation is still streaming."
+	v.applyResult(other)
+	for range 3 {
+		tt.Frame()
+	}
+	if len(heights) == 0 || !heights[len(heights)-1].streaming || !tt.HasText(result.Text) {
+		t.Fatalf("stream did not publish text and a streaming height: %v", heights)
+	}
+	result.Streaming = false
+	v.applyResult(result)
+	for range 3 {
+		tt.Frame()
+	}
+	if !heights[len(heights)-1].streaming {
+		t.Fatalf("finishing one service released space reserved for another: %v", heights)
+	}
+	before := len(heights)
+	// The final chunk can have the same text and geometry. It must still
+	// release the reserved space once all visible streams are done.
+	other.Streaming = false
+	v.applyResult(other)
+	for range 3 {
+		tt.Frame()
+	}
+	if len(heights) <= before || heights[len(heights)-1] != (measurement{height: heights[before-1].height}) {
+		t.Fatalf("stream completion left the height in streaming mode: %v", heights)
+	}
+}
+
+func TestBubbleViewHiddenServiceDoesNotKeepStreamHeadroom(t *testing.T) {
+	cfg := testBubbleConfig()
+	var streaming bool
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		onHeightMeasured: func(_ float64, active bool) { streaming = active },
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "hidden-stream", ShowID: 1,
+		ReqID: "run", Trigger: "selection", Text: "hello", Settings: cfg,
+	}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "run", Services: []string{"google", "baidu"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: "run", Service: "baidu", Text: "Hidden translation", Streaming: true})
+	cfg.Services.Enabled = []string{"google"}
+	v.ApplySettings(cfg)
+
+	shown := TranslationUpdateMsg{ReqID: "run", Service: "google", Text: "Visible translation", Streaming: true}
+	v.applyResult(shown)
+	tt := ui.NewTester(v.render, 480, 420)
+	for range 3 {
+		tt.Frame()
+	}
+	if !streaming || !tt.HasText(shown.Text) || tt.HasText("Hidden translation") {
+		t.Fatal("expected only the enabled service to be visible and streaming")
+	}
+	// Disabling a service hides its in-flight card. It must release the
+	// reserved space as soon as the last visible result completes.
+	shown.Streaming = false
+	v.applyResult(shown)
+	for range 3 {
+		tt.Frame()
+	}
+	if streaming {
+		t.Fatal("a hidden service kept headroom after visible translation finished")
 	}
 }
 
