@@ -56,7 +56,7 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 			saved = append(saved, s)
 			return nil
 		},
-		Credentials: func() (CredentialStatus, error) {
+		Credentials: func(string) (CredentialStatus, error) {
 			return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
 		},
 	})
@@ -115,7 +115,7 @@ func TestSettingsViewServicesTab(t *testing.T) {
 			current = s
 			return nil
 		},
-		Credentials: func() (CredentialStatus, error) {
+		Credentials: func(string) (CredentialStatus, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if credFails {
@@ -126,25 +126,27 @@ func TestSettingsViewServicesTab(t *testing.T) {
 				Configured: slices.Clone(configured),
 			}, nil
 		},
-		SetSecret: func(name, value string) error {
+		SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			if value == "" {
-				stored = slices.DeleteFunc(stored, func(s string) bool { return s == name })
-				if name == keys.OpenAIKey {
-					configured = slices.DeleteFunc(configured, func(s string) bool { return s == "openai" })
-				}
-			} else {
-				if !slices.Contains(stored, name) {
-					stored = append(stored, name)
-				}
-				if name == keys.BaiduAppID || name == keys.BaiduKey {
-					if slices.Contains(stored, keys.BaiduAppID) && slices.Contains(stored, keys.BaiduKey) && !slices.Contains(configured, "baidu") {
-						configured = append(configured, "baidu")
+			for name, value := range changes.Credentials {
+				if value == "" {
+					stored = slices.DeleteFunc(stored, func(s string) bool { return s == name })
+					if name == keys.OpenAIKey {
+						configured = slices.DeleteFunc(configured, func(s string) bool { return s == "openai" })
+					}
+				} else {
+					if !slices.Contains(stored, name) {
+						stored = append(stored, name)
+					}
+					if name == keys.BaiduAppID || name == keys.BaiduKey {
+						if slices.Contains(stored, keys.BaiduAppID) && slices.Contains(stored, keys.BaiduKey) && !slices.Contains(configured, "baidu") {
+							configured = append(configured, "baidu")
+						}
 					}
 				}
 			}
-			return nil
+			return ServiceSaveResult{}, nil
 		},
 		TestService: func(_ context.Context, name string) string {
 			mu.Lock()
@@ -268,7 +270,7 @@ func TestSettingsViewServicesTab(t *testing.T) {
 	}
 	tt.Type("sec-456")
 	tt.Frame()
-	settingsScrollClick(t, tt, "保存凭证", 780, 600)
+	settingsScrollClick(t, tt, "保存配置", 780, 600)
 	waitForCondition(t, time.Second, func() bool {
 		tt.Frame()
 		mu.Lock()
@@ -289,7 +291,7 @@ func TestSettingsConsolePageDoesNotBlockUIOrSettingsWrites(t *testing.T) {
 	invalidated := make(chan struct{}, 1)
 	current := testSettingsConfig()
 	v := NewView(TabServices, current, Actions{
-		Credentials:  func() (CredentialStatus, error) { return CredentialStatus{}, nil },
+		Credentials:  func(string) (CredentialStatus, error) { return CredentialStatus{}, nil },
 		GetSettings:  func() config.Settings { return current },
 		SaveSettings: func(s config.Settings) error { current = s; written <- s; return nil },
 		Invalidate: func() {
@@ -541,77 +543,107 @@ func TestSettingsViewNamingTabAndThemeFollow(t *testing.T) {
 	}
 }
 
-func TestSettingsViewDraftFlushAndSaveRollback(t *testing.T) {
-	var mu sync.Mutex
+func TestSettingsServiceDraftSavesOnlyOnExplicitAction(t *testing.T) {
+	// Blurring and folding a card used to save text independently from credentials.
 	current := testSettingsConfig()
-	failNextSave := false
-
+	var writes []ServiceChanges
 	v := NewView(TabServices, current, Actions{
-		GetSettings: func() config.Settings {
-			mu.Lock()
-			defer mu.Unlock()
-			return current
+		GetSettings: func() config.Settings { return current },
+		SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
+			writes = append(writes, changes)
+			applyServiceTestOptions(&current, name, changes)
+			return ServiceSaveResult{}, nil
 		},
-		SaveSettings: func(s config.Settings) error {
-			mu.Lock()
-			defer mu.Unlock()
-			if failNextSave {
-				failNextSave = false
-				return errors.New("disk full")
-			}
-			current = s
-			return nil
-		},
-		Credentials: func() (CredentialStatus, error) {
-			return CredentialStatus{
-				Stored:     []string{keys.OpenAIKey},
-				Configured: []string{"openai"},
-			}, nil
+		Credentials: func(string) (CredentialStatus, error) {
+			return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
 		},
 	})
-
 	defer v.Dispose()
-	tt := ui.NewTester(v.Render, 780, 600)
-	waitForCondition(t, time.Second, func() bool {
-		tt.Frame()
-		return tt.HasText("配置")
-	}, "expected services loaded")
-
-	if err := tt.Click("配置OpenAI"); err != nil {
-		t.Fatalf("Click 配置OpenAI: %v", err)
-	}
-	if err := tt.Click("编辑Base URL"); err != nil {
-		t.Fatalf("focus 编辑Base URL: %v", err)
-	}
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.Render, 780, 660)
+	settingsClick(t, tt, "配置OpenAI")
+	settingsClick(t, tt, "编辑Base URL")
 	tt.Key(ui.Cmd, ui.KeyA)
 	tt.Type("https://proxy.example/v1")
+	settingsClick(t, tt, "编辑API Key")
+	tt.Type("replacement")
+	tt.Key(0, ui.KeyEnter)
+	settingsClick(t, tt, "收起OpenAI")
 	tt.Frame()
-
-	// Collapsing the drawer must flush the pending Base URL draft.
-	if err := tt.Click("收起OpenAI"); err != nil {
-		t.Fatalf("Click 收起OpenAI: %v", err)
+	waitSettingsIdle(t, v)
+	if len(writes) != 0 || !tt.HasText("有未保存的更改") {
+		t.Fatal("collapsing committed or lost the draft")
 	}
-	wantBaseURL := "https://proxy.example/v1"
-	waitForCondition(t, time.Second, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return current.Services.OpenAI.BaseURL == wantBaseURL
-	}, "expected Base URL draft flushed on drawer collapse")
-
-	// Failed save rolls back from getSettings.
-	mu.Lock()
-	failNextSave = true
-	mu.Unlock()
-	v.SetActiveTab(TabNaming)
+	settingsClick(t, tt, "配置OpenAI")
+	settingsScrollClick(t, tt, "保存配置", 780, 660)
+	waitSettingsIdle(t, v)
 	tt.Frame()
-	if err := tt.Click("切换自动拆分标识符"); err != nil {
-		t.Fatalf("Click 切换自动拆分标识符: %v", err)
+	if len(writes) != 1 || writes[0].BaseURL == nil || *writes[0].BaseURL != "https://proxy.example/v1" ||
+		writes[0].Credentials[keys.OpenAIKey] != "replacement" || !tt.HasText("配置已保存") {
+		t.Fatal("the service's options and credentials were not saved together")
 	}
-	waitForCondition(t, time.Second, func() bool {
-		v.mu.Lock()
-		defer v.mu.Unlock()
-		return v.pendingWrites == 0 && v.settings.Identifier.AutoSplit == current.Identifier.AutoSplit
-	}, "expected failed save to reconcile back to saved settings")
+}
+
+func TestSettingsServiceDraftDiscardedOnLeave(t *testing.T) {
+	// Leaving the editor used to retain both its unsaved options and credentials.
+	for _, closeWindow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("closeWindow=%t", closeWindow), func(t *testing.T) {
+			cfg := testSettingsConfig()
+			v := NewView(TabServices, cfg, Actions{
+				SaveService: func(string, ServiceChanges) (ServiceSaveResult, error) {
+					t.Error("leaving the editor must not save a draft")
+					return ServiceSaveResult{}, nil
+				},
+				Credentials: func(string) (CredentialStatus, error) {
+					return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
+				},
+			})
+			defer v.Dispose()
+			waitSettingsIdle(t, v)
+			tt := ui.NewTester(v.Render, 780, 660)
+			settingsClick(t, tt, "配置OpenAI")
+			settingsClick(t, tt, "编辑Base URL")
+			tt.Key(ui.Cmd, ui.KeyA)
+			tt.Type("https://draft.example/v1")
+			settingsClick(t, tt, "清除API Key")
+			if _, ok := tt.Find("撤销清除API Key"); !ok {
+				t.Fatal("credential removal was not staged")
+			}
+
+			if closeWindow {
+				v.DetachWindow()
+				v.SetActiveTab(TabServices)
+				tt = ui.NewTester(v.Render, 780, 660)
+				settingsClick(t, tt, "配置OpenAI")
+			} else {
+				settingsClick(t, tt, "通用")
+				settingsClick(t, tt, "翻译服务")
+			}
+			tt.Frame()
+			waitSettingsIdle(t, v)
+			endpoint, found := tt.AccessByRole(ui.RoleTextField, "编辑Base URL")
+			if !found || endpoint.Value != cfg.Services.OpenAI.BaseURL {
+				t.Fatalf("editor did not restore the saved endpoint: %+v", endpoint)
+			}
+			save, found := tt.AccessByRole(ui.RoleButton, "保存配置")
+			if !found || !save.Disabled {
+				t.Fatal("save is still available after leaving the editor")
+			}
+			if _, ok := tt.Find("清除API Key"); !ok {
+				t.Fatal("editor retained a pending credential removal")
+			}
+		})
+	}
+}
+
+func applyServiceTestOptions(current *config.Settings, name string, changes ServiceChanges) {
+	if changes.BaseURL != nil {
+		current.Services.OpenAI.BaseURL = *changes.BaseURL
+	}
+	if changes.Model != nil {
+		*current.Services.Model(name) = *changes.Model
+	}
+	*current = config.Normalize(*current)
 }
 
 func TestSettingsViewSaveFIFOAndDisposeDrain(t *testing.T) {
@@ -640,11 +672,7 @@ func TestSettingsViewSaveFIFOAndDisposeDrain(t *testing.T) {
 			v.mu.Unlock()
 		}
 		<-started
-		// Keep the first write in flight while closing, including an uncommitted draft.
-		draft := "https://final.example/v1"
-		v.mu.Lock()
-		v.baseURLDraft = &draft
-		v.mu.Unlock()
+		// Closing drains the explicit writes already in flight.
 		v.Dispose()
 		synctest.Wait()
 		if len(saved) != 0 {
@@ -652,7 +680,6 @@ func TestSettingsViewSaveFIFOAndDisposeDrain(t *testing.T) {
 		}
 		close(release)
 		synctest.Wait()
-		want = append(want, draft)
 		if !slices.Equal(saved, want) {
 			t.Fatalf("saved snapshots = %v, want FIFO %v", saved, want)
 		}
@@ -695,80 +722,44 @@ func TestSettingsViewModelsIndependentAndNormalized(t *testing.T) {
 	for _, svc := range []string{"openai", "siliconflow", "zhipu"} {
 		t.Run(svc, func(t *testing.T) {
 			current := config.Default()
-			var saved []config.Settings
-			written := map[string]string{keys.DeeplKey: "existing-deepl-key"}
+			var writes int
 			v := NewView(TabServices, current, Actions{
 				GetSettings: func() config.Settings { return current },
-				SaveSettings: func(s config.Settings) error {
-					current = config.Normalize(s)
-					saved = append(saved, cloneSettings(current))
-					return nil
+				SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
+					writes++
+					applyServiceTestOptions(&current, name, changes)
+					if len(changes.Credentials) != 0 {
+						t.Error("model-only edit modified credentials")
+					}
+					return ServiceSaveResult{}, nil
 				},
-				SetSecret:   func(key, value string) error { written[key] = value; return nil },
-				Credentials: func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{svc}}, nil },
+				Credentials: func(string) (CredentialStatus, error) { return CredentialStatus{Configured: []string{svc}}, nil },
 			})
 			defer v.Dispose()
 			waitSettingsIdle(t, v)
 			tt := ui.NewTester(v.Render, 780, 500)
 			click := func(label string) { settingsScrollClick(t, tt, label, 780, 500) }
 			click("配置" + shared.ServiceName(svc))
-			click("编辑API Key")
-			tt.Type("unfinished-secret")
 			click("编辑模型")
 			tt.Key(ui.Cmd, ui.KeyA)
 			tt.Type(" custom-model ")
-			tt.Key(0, ui.KeyEnter)
+			click("保存配置")
 			waitSettingsIdle(t, v)
 			tt.Frame()
 			want := config.Default()
-			switch svc {
-			case "openai":
-				want.Services.OpenAI.Model = "custom-model"
-			case "siliconflow":
-				want.Services.SiliconFlow.Model = "custom-model"
-			case "zhipu":
-				want.Services.Zhipu.Model = "custom-model"
-			}
+			*want.Services.Model(svc) = "custom-model"
 			if current.Services.OpenAI != want.Services.OpenAI || current.Services.SiliconFlow != want.Services.SiliconFlow || current.Services.Zhipu != want.Services.Zhipu {
 				t.Fatalf("model edit leaked to other services: %+v", current.Services)
 			}
 			click("编辑模型")
 			tt.Key(ui.Cmd, ui.KeyA)
 			tt.Key(0, ui.KeyBackspace)
-			tt.Key(0, ui.KeyEnter)
+			click("保存配置")
 			waitSettingsIdle(t, v)
-			tt.Frame()
 			defaults := config.Default()
-			if current.Services.OpenAI != defaults.Services.OpenAI || current.Services.SiliconFlow != defaults.Services.SiliconFlow || current.Services.Zhipu != defaults.Services.Zhipu {
+			if current.Services.OpenAI != defaults.Services.OpenAI || current.Services.SiliconFlow != defaults.Services.SiliconFlow || current.Services.Zhipu != defaults.Services.Zhipu || writes != 2 {
 				t.Fatalf("blank model did not restore defaults: %+v", current.Services)
 			}
-			v.mu.Lock()
-			draft := v.serviceDrafts[svc][serviceCredentialFields[svc][0].name]
-			expanded := v.expanded[svc]
-			v.mu.Unlock()
-			field, ok := tt.AccessByRole(ui.RoleTextField, "编辑API Key")
-			if !ok || !field.Password || field.Value != "" {
-				t.Fatalf("credential field is not masked: %+v", field)
-			}
-			if draft != "unfinished-secret" || !expanded || tt.HasText("unfinished-secret") {
-				t.Fatalf("normalization: draft=%q expanded=%v hasText=%v", draft, expanded, tt.HasText("unfinished-secret"))
-			}
-			if len(saved) != 2 {
-				t.Fatalf("saved %d snapshots, want 2", len(saved))
-			}
-			click("保存凭证")
-			waitSettingsIdle(t, v)
-			key := serviceCredentialFields[svc][0].name
-			if written[key] != "unfinished-secret" || written[keys.DeeplKey] != "existing-deepl-key" || len(written) != 2 {
-				t.Fatalf("credential write crossed service boundaries: %v", written)
-			}
-			v.mu.Lock()
-			remaining := v.serviceDrafts[svc][key]
-			v.mu.Unlock()
-			if remaining != "" {
-				t.Fatal("saved credential draft was not cleared")
-			}
-			tt.Frame()
 		})
 	}
 }
@@ -780,21 +771,22 @@ func TestSettingsViewCredentialClearAndReorderPreserveDraft(t *testing.T) {
 	v := NewView(TabServices, current, Actions{
 		GetSettings:  func() config.Settings { return current },
 		SaveSettings: func(s config.Settings) error { current = s; return nil },
-		Credentials: func() (CredentialStatus, error) {
+		Credentials: func(string) (CredentialStatus, error) {
 			status := CredentialStatus{Stored: slices.Clone(stored)}
 			if len(stored) > 0 {
 				status.Configured = []string{"openai"}
 			}
 			return status, nil
 		},
-		SetSecret: func(key, value string) error {
-			if value != "" {
+		SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+			value, ok := changes.Credentials[keys.OpenAIKey]
+			if !ok || value != "" {
 				t.Error("expected credential deletion")
 			}
-			cleared = key
+			cleared = keys.OpenAIKey
 			stored = nil
 			current.Services.Enabled = []string{"google"}
-			return nil
+			return ServiceSaveResult{}, nil
 		},
 	})
 	defer v.Dispose()
@@ -809,7 +801,7 @@ func TestSettingsViewCredentialClearAndReorderPreserveDraft(t *testing.T) {
 	waitSettingsIdle(t, v)
 	tt.Frame()
 	v.mu.Lock()
-	draft := v.serviceDrafts["openai"][keys.OpenAIKey]
+	draft := v.serviceDrafts["openai"].credentials[keys.OpenAIKey].value
 	expanded := v.expanded["openai"]
 	v.mu.Unlock()
 	if !tt.Focused("编辑API Key") {
@@ -823,20 +815,159 @@ func TestSettingsViewCredentialClearAndReorderPreserveDraft(t *testing.T) {
 	tt.Frame()
 	settingsClick(t, tt, "配置OpenAI")
 	v.mu.Lock()
-	draft = v.serviceDrafts["openai"][keys.OpenAIKey]
+	draft = v.serviceDrafts["openai"].credentials[keys.OpenAIKey].value
 	v.mu.Unlock()
 	if draft != "unfinished-secret" {
 		t.Fatal("group change lost credential draft")
 	}
 	settingsClick(t, tt, "清除API Key")
+	settingsClick(t, tt, "撤销清除API Key")
+	if cleared != "" {
+		t.Fatal("staging and undoing removal modified the stored credential")
+	}
+	settingsClick(t, tt, "清除API Key")
+	settingsClick(t, tt, "放弃更改")
+	if cleared != "" {
+		t.Fatal("discarding removal modified the stored credential")
+	}
+	settingsClick(t, tt, "清除API Key")
+	settingsClick(t, tt, "保存配置")
 	waitSettingsIdle(t, v)
 	tt.Frame()
 	v.mu.Lock()
-	draft = v.serviceDrafts["openai"][keys.OpenAIKey]
+	draft = v.serviceDrafts["openai"].credentials[keys.OpenAIKey].value
 	configured := slices.Contains(v.credentials.Configured, "openai")
 	v.mu.Unlock()
 	if cleared != keys.OpenAIKey || configured || draft != "" || slices.Contains(current.Services.Enabled, "openai") {
 		t.Fatal("credential clear did not refresh presence, draft and enablement")
+	}
+}
+
+func TestSettingsUndoCredentialRemovalRestoresReplacement(t *testing.T) {
+	// Staging removal used to overwrite the replacement before undo could restore it.
+	var saved string
+	v := NewView(TabServices, testSettingsConfig(), Actions{
+		Credentials: func(string) (CredentialStatus, error) {
+			return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
+		},
+		SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+			saved = changes.Credentials[keys.OpenAIKey]
+			return ServiceSaveResult{}, nil
+		},
+	})
+	defer v.Dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.Render, 780, 660)
+	settingsClick(t, tt, "配置OpenAI")
+	settingsClick(t, tt, "编辑API Key")
+	tt.Type("replacement")
+	settingsClick(t, tt, "清除API Key")
+	settingsClick(t, tt, "撤销清除API Key")
+	settingsClick(t, tt, "保存配置")
+	waitSettingsIdle(t, v)
+	if saved != "replacement" {
+		t.Fatal("undo did not restore the replacement credential for saving")
+	}
+}
+
+func TestSettingsServiceReadbackPreservesNewerPublishedSettings(t *testing.T) {
+	// A service save could overwrite preferences published during its readback.
+	synctest.Test(t, func(t *testing.T) {
+		committed := testSettingsConfig()
+		committed.Services.OpenAI.Model = "custom-model"
+		newer := committed
+		newer.OpenAtLogin = !committed.OpenAtLogin
+		read := make(chan struct{})
+		release := make(chan struct{})
+		v := NewView(TabServices, testSettingsConfig(), Actions{
+			GetSettings: func() config.Settings {
+				close(read)
+				<-release
+				return committed
+			},
+			SaveService: func(string, ServiceChanges) (ServiceSaveResult, error) {
+				return ServiceSaveResult{}, nil
+			},
+		})
+		defer v.Dispose()
+		v.editServiceModel("openai", "custom-model")
+		v.saveService("openai")
+		<-read
+		// Attempt the external publication before the readback completes.
+		// If readback owns the view lock, publication must run after it.
+		if v.mu.TryLock() {
+			v.mu.Unlock()
+			v.ApplyExternalSettings(newer)
+			close(release)
+		} else {
+			close(release)
+			v.ApplyExternalSettings(newer)
+		}
+		synctest.Wait()
+		if v.settings.OpenAtLogin != newer.OpenAtLogin || v.settings.Services.OpenAI.Model != "custom-model" {
+			t.Fatal("service save did not retain the newer settings")
+		}
+	})
+}
+
+func TestSettingsCredentialRemovalSurvivesReadbackFailure(t *testing.T) {
+	// A failed readback used to hide the successful disablement and show the deleted key.
+	current := testSettingsConfig()
+	var reads []string
+	var v *View
+	v = NewView(TabServices, current, Actions{
+		GetSettings: func() config.Settings { return current },
+		Credentials: func(name string) (CredentialStatus, error) {
+			reads = append(reads, name)
+			switch len(reads) {
+			case 1:
+				return CredentialStatus{
+					Stored: []string{keys.OpenAIKey, keys.DeeplKey}, Configured: []string{"openai", "deepl"},
+				}, nil
+			case 2:
+				return CredentialStatus{}, errors.New("keyring locked")
+			default:
+				return CredentialStatus{}, nil
+			}
+		},
+		SaveService: func(string, ServiceChanges) (ServiceSaveResult, error) {
+			current.Services.Enabled = []string{"google"}
+			v.ApplyExternalSettings(current)
+			return ServiceSaveResult{Disabled: true}, nil
+		},
+	})
+	defer v.Dispose()
+	waitSettingsIdle(t, v)
+	v.toggleCredentialRemoval("openai", keys.OpenAIKey)
+	v.saveService("openai")
+	waitSettingsIdle(t, v)
+	v.mu.Lock()
+	toast := v.pendingToast
+	enabled := slices.Contains(v.settings.Services.Enabled, "openai")
+	v.mu.Unlock()
+	if toast != "OpenAI 已停用" || enabled {
+		t.Fatal("the status refresh hid the disablement acknowledgement")
+	}
+
+	tt := ui.NewTester(v.Render, 780, 900)
+	settingsClick(t, tt, "配置OpenAI")
+	if _, found := tt.Find("清除API Key"); found {
+		t.Fatal("the deleted API key still appears saved")
+	}
+	settingsClick(t, tt, "重试读取OpenAI状态")
+	waitForCondition(t, time.Second, func() bool {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return len(reads) == 3 && !v.credentialReads["openai"]
+	}, "service credential retry did not finish")
+	tt.Frame()
+	if _, found := tt.Find("重试读取OpenAI状态"); found {
+		t.Fatal("successful retry did not clear the readback error")
+	}
+	if !slices.Equal(reads, []string{"", "openai", "openai"}) ||
+		!slices.Equal(v.credentials.Stored, []string{keys.DeeplKey}) ||
+		!slices.Equal(v.credentials.Configured, []string{"deepl"}) {
+		t.Fatalf("scoped read affected other services: reads=%v status=%+v", reads, v.credentials)
 	}
 }
 
@@ -847,8 +978,12 @@ func TestSettingsViewProbeWaitsForSavedModelAndIgnoresDisposedResult(t *testing.
 		probeRelease := make(chan struct{})
 		var tested []string
 		v := NewView(TabServices, current, Actions{
-			GetSettings:  func() config.Settings { return current },
-			SaveSettings: func(s config.Settings) error { <-saveRelease; current = s; return nil },
+			GetSettings: func() config.Settings { return current },
+			SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
+				<-saveRelease
+				applyServiceTestOptions(&current, name, changes)
+				return ServiceSaveResult{}, nil
+			},
 			TestService: func(_ context.Context, svc string) string {
 				tested = append(tested, current.Services.OpenAI.Model)
 				<-probeRelease
@@ -856,18 +991,16 @@ func TestSettingsViewProbeWaitsForSavedModelAndIgnoresDisposedResult(t *testing.
 			},
 		})
 		defer v.Dispose()
-		v.mu.Lock()
-		next := cloneSettings(v.settings)
-		next.Services.OpenAI.Model = "saved-model"
-		v.enqueueSaveLocked(next)
-		v.mu.Unlock()
+		v.editServiceModel("openai", "saved-model")
+		v.saveService("openai")
 		v.testConnection("openai")
 		synctest.Wait()
 		if len(tested) != 0 {
 			t.Fatal("probe started before the model was saved")
 		}
 		close(saveRelease)
-		time.Sleep(20 * time.Millisecond)
+		synctest.Wait()
+		v.testConnection("openai")
 		synctest.Wait()
 		if !slices.Equal(tested, []string{"saved-model"}) {
 			t.Fatalf("probe used models %v", tested)
@@ -894,13 +1027,49 @@ func waitSettingsIdle(t *testing.T, v *View) {
 		if v.pendingWrites != 0 || (v.actions.Credentials != nil && !v.credentialsLoaded) {
 			return false
 		}
-		for _, busy := range v.credentialBusy {
+		for _, busy := range v.serviceSaving {
 			if busy {
 				return false
 			}
 		}
 		return true
 	}, "settings work did not settle")
+}
+
+func TestSettingsQueuedPreferencePreservesServiceSave(t *testing.T) {
+	// A preference queued during a service save used to carry a whole stale
+	// service snapshot, which could restore the old endpoint and enablement.
+	synctest.Test(t, func(t *testing.T) {
+		current := testSettingsConfig()
+		release := make(chan struct{})
+		v := NewView(TabServices, current, Actions{
+			GetSettings: func() config.Settings { return current },
+			SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
+				<-release
+				applyServiceTestOptions(&current, name, changes)
+				current.Services.Enabled = []string{"google"}
+				return ServiceSaveResult{}, nil
+			},
+			SaveSettings: func(next config.Settings) error { current = next; return nil },
+		})
+		defer v.Dispose()
+		v.editServiceBaseURL("openai", "https://proxy.example/v1")
+		v.toggleCredentialRemoval("openai", keys.OpenAIKey)
+		v.saveService("openai")
+		synctest.Wait()
+
+		v.mu.Lock()
+		next := cloneSettings(v.settings)
+		next.TargetLanguage = "ja"
+		v.enqueueSaveLocked(next)
+		v.mu.Unlock()
+		close(release)
+		synctest.Wait()
+		if current.TargetLanguage != "ja" || current.Services.OpenAI.BaseURL != "https://proxy.example/v1" ||
+			slices.Contains(current.Services.Enabled, "openai") {
+			t.Fatal("the unrelated preference overwrote part of the service save")
+		}
+	})
 }
 
 func TestSettingsViewFailedSaveDoesNotDropNextSnapshot(t *testing.T) {
@@ -944,7 +1113,7 @@ func TestSettingsViewDisposedCredentialsCannotUpdateView(t *testing.T) {
 		release := make(chan struct{})
 		invalidations := 0
 		v := NewView(TabServices, testSettingsConfig(), Actions{
-			Credentials: func() (CredentialStatus, error) {
+			Credentials: func(string) (CredentialStatus, error) {
 				<-release
 				return CredentialStatus{Stored: []string{keys.OpenAIKey}}, nil
 			},
@@ -968,39 +1137,32 @@ func TestSettingsViewFailedModelSaveStopsProbeUntilNextSave(t *testing.T) {
 		probes := 0
 		v := NewView(TabServices, current, Actions{
 			GetSettings: func() config.Settings { return current },
-			SaveSettings: func(s config.Settings) error {
+			SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
 				if failed {
-					return errors.New("disk full")
+					return ServiceSaveResult{}, errors.New("disk full")
 				}
-				current = s
-				return nil
+				applyServiceTestOptions(&current, name, changes)
+				return ServiceSaveResult{}, nil
 			},
 			TestService: func(_ context.Context, _ string) string { probes++; return "" },
 		})
 		defer v.Dispose()
-		v.mu.Lock()
-		next := cloneSettings(v.settings)
-		next.Services.OpenAI.Model = "new-model"
-		v.enqueueSaveLocked(next)
-		v.mu.Unlock()
-		v.testConnection("openai")
-		time.Sleep(20 * time.Millisecond)
+		v.editServiceModel("openai", "new-model")
+		v.saveService("openai")
 		synctest.Wait()
-		v.mu.Lock()
+		v.testConnection("openai")
+		synctest.Wait()
 		status := v.testStatuses["openai"]
-		v.mu.Unlock()
-		if probes != 0 || status.testing || !status.isError {
-			t.Fatalf("failed save still probed: calls=%d status=%+v", probes, status)
+		if probes != 0 || status.testing || !status.isError || current.Services.OpenAI.Model == "new-model" {
+			t.Fatalf("failed save changed settings or probed: calls=%d status=%+v", probes, status)
 		}
 		failed = false
-		v.mu.Lock()
-		v.enqueueSaveLocked(next)
-		v.mu.Unlock()
+		v.saveService("openai")
 		synctest.Wait()
 		v.testConnection("openai")
 		synctest.Wait()
 		if probes != 1 || current.Services.OpenAI.Model != "new-model" {
-			t.Fatal("successful save did not unblock the probe")
+			t.Fatal("retry lost the draft or did not unblock the probe")
 		}
 	})
 }
@@ -1013,7 +1175,7 @@ func TestSettingsViewDragOnlySavesCompletedDrop(t *testing.T) {
 			v := NewView(TabServices, current, Actions{
 				GetSettings:  func() config.Settings { return current },
 				SaveSettings: func(s config.Settings) error { current = s; saved = append(saved, cloneSettings(s)); return nil },
-				Credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+				Credentials:  func(string) (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
 			})
 			defer v.Dispose()
 			waitSettingsIdle(t, v)
@@ -1053,7 +1215,7 @@ func TestSettingsViewDragOnlySavesCompletedDrop(t *testing.T) {
 				t.Fatalf("drop did not reorder: saved=%d order=%v", len(saved), current.Services.Order)
 			}
 			v.mu.Lock()
-			draft := v.serviceDrafts["openai"][keys.OpenAIKey]
+			draft := v.serviceDrafts["openai"].credentials[keys.OpenAIKey].value
 			expanded := v.expanded["openai"]
 			v.mu.Unlock()
 			if draft != "draft-secret" || !expanded || !slices.Contains(current.Services.Enabled, "openai") {
@@ -1072,7 +1234,7 @@ func TestSettingsViewDragBackToOriginalPosition(t *testing.T) {
 				v := NewView(TabServices, current, Actions{
 					GetSettings:  func() config.Settings { return current },
 					SaveSettings: func(s config.Settings) error { current = s; saves++; return nil },
-					Credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+					Credentials:  func(string) (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
 				})
 				defer v.Dispose()
 				waitSettingsIdle(t, v)
@@ -1164,8 +1326,13 @@ func TestSettingsCredentialJobsPublishInOrder(t *testing.T) {
 		release := make(chan struct{})
 		calls := 0
 		v := NewView(TabServices, testSettingsConfig(), Actions{
-			SetSecret: func(k, val string) error { stored[k] = true; return nil },
-			Credentials: func() (CredentialStatus, error) {
+			SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+				for key := range changes.Credentials {
+					stored[key] = true
+				}
+				return ServiceSaveResult{}, nil
+			},
+			Credentials: func(string) (CredentialStatus, error) {
 				calls++
 				status := CredentialStatus{}
 				for k := range stored {
@@ -1185,13 +1352,11 @@ func TestSettingsCredentialJobsPublishInOrder(t *testing.T) {
 		})
 		defer v.Dispose()
 		synctest.Wait()
-		v.mu.Lock()
-		v.serviceDrafts["openai"] = map[string]string{keys.OpenAIKey: "a"}
-		v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "b"}
-		v.mu.Unlock()
-		v.saveCredentials("openai")
+		v.editServiceCredential("openai", keys.OpenAIKey, "a")
+		v.editServiceCredential("deepl", keys.DeeplKey, "b")
+		v.saveService("openai")
 		synctest.Wait()
-		v.saveCredentials("deepl")
+		v.saveService("deepl")
 		synctest.Wait()
 		if stored[keys.DeeplKey] {
 			t.Fatal("second credential job overtook the first refresh")
@@ -1310,7 +1475,7 @@ func TestSettingsServiceSwitchKeepsFocusAfterRollback(t *testing.T) {
 	v := NewView(TabServices, cfg, Actions{
 		GetSettings:  func() config.Settings { return cfg },
 		SaveSettings: func(config.Settings) error { <-release; return errors.New("disk full") },
-		Credentials:  func() (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
+		Credentials:  func(string) (CredentialStatus, error) { return CredentialStatus{Configured: []string{"openai"}}, nil },
 	})
 	defer v.Dispose()
 	waitSettingsIdle(t, v)
@@ -1339,14 +1504,16 @@ func TestSettingsQuitWaitsForQueuedWrites(t *testing.T) {
 		release := make(chan struct{})
 		current := testSettingsConfig()
 		retries := 0
-		v := NewView(TabGeneral, current, Actions{SaveSettings: func(s config.Settings) error { <-release; current = s; return nil }})
+		v := NewView(TabServices, current, Actions{SaveSettings: func(s config.Settings) error { <-release; current = s; return nil }})
 		v.mu.Lock()
-		draft := "https://quit.example/v1"
-		v.baseURLDraft = &draft
+		next := cloneSettings(v.settings)
+		next.TargetLanguage = "ja"
+		v.enqueueSaveLocked(next)
 		v.mu.Unlock()
+		v.editServiceBaseURL("openai", "https://unsaved.example/v1")
 		retry := func() { retries++ }
 		if v.PrepareQuit(retry) {
-			t.Fatal("quit proceeded with an unsaved draft")
+			t.Fatal("quit proceeded with a queued write")
 		}
 		if v.PrepareQuit(retry) {
 			t.Fatal("repeated quit bypassed the pending write")
@@ -1357,7 +1524,7 @@ func TestSettingsQuitWaitsForQueuedWrites(t *testing.T) {
 		}
 		close(release)
 		synctest.Wait()
-		if retries != 1 || current.Services.OpenAI.BaseURL != draft || !v.PrepareQuit(retry) {
+		if retries != 1 || current.TargetLanguage != "ja" || current.Services.OpenAI.BaseURL != config.Default().Services.OpenAI.BaseURL || !v.PrepareQuit(retry) {
 			t.Fatal("quit did not drain writes and retry exactly once")
 		}
 	})

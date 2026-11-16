@@ -177,7 +177,6 @@ func (v *View) submitHotkeyLocked(id, value string) {
 		v.mu.Lock()
 		v.pendingWrites--
 		v.hotkeyPending = ""
-		v.saveFailed = err != nil
 		if current != nil {
 			if v.pendingWrites == 0 {
 				v.settings = cloneSettings(*current)

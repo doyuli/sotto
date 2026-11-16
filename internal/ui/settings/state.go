@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
 	"sotto/internal/keys"
+	"sotto/internal/ui/shared"
 )
 
 // CredentialStatus contains presence information without exposing stored values.
@@ -29,14 +31,37 @@ type DeeplUsage struct {
 type Actions struct {
 	GetSettings  func() config.Settings
 	SaveSettings func(config.Settings) error
-	Credentials  func() (CredentialStatus, error)
-	SetSecret    func(name, value string) error
+	Credentials  func(service string) (CredentialStatus, error)
+	SaveService  func(name string, changes ServiceChanges) (ServiceSaveResult, error)
 	TestService  func(ctx context.Context, name string) string
 	OpenKeyPage  func(service string) error
 	DeeplUsage   func(context.Context) (DeeplUsage, error)
 	SaveHotkey   func(action, accel string) error
 	HotkeyErrors func() map[string]string
 	Invalidate   func()
+}
+
+// ServiceChanges contains only edited fields. Nil options are unchanged,
+// empty options restore defaults, and empty credential values remove credentials.
+type ServiceChanges struct {
+	BaseURL     *string
+	Model       *string
+	Credentials map[string]string
+}
+
+type ServiceSaveResult struct {
+	Disabled bool
+}
+
+type serviceDraft struct {
+	baseURL     *string
+	model       *string
+	credentials map[string]credentialDraft
+}
+
+type credentialDraft struct {
+	value  string
+	remove bool
 }
 
 type serviceTestStatus struct {
@@ -52,7 +77,6 @@ type View struct {
 	activeTab        Tab
 	settings         config.Settings
 	pendingWrites    int
-	saveFailed       bool
 	tasks            []func()
 	taskWake         chan struct{}
 	taskStop         chan struct{}
@@ -70,13 +94,12 @@ type View struct {
 
 	credentialsLoaded bool
 	credentials       CredentialStatus
-	credentialsErr    string
+	credentialErrors  map[string]string
+	credentialReads   map[string]bool
 
 	expanded       map[string]bool
-	serviceDrafts  map[string]map[string]string
-	baseURLDraft   *string
-	modelDrafts    map[string]string
-	credentialBusy map[string]bool
+	serviceDrafts  map[string]serviceDraft
+	serviceSaving  map[string]bool
 	testStatuses   map[string]serviceTestStatus
 	deeplUsageText string
 	deeplUsagePct  float64
@@ -95,22 +118,23 @@ func NewView(initialTab Tab, cfg config.Settings, actions Actions) *View {
 		initialTab = TabGeneral
 	}
 	v := &View{
-		actions:         actions,
-		probeCancels:    make(map[string]context.CancelFunc),
-		switchHandles:   make(map[string]*ui.Handle),
-		activeTab:       initialTab,
-		settings:        cloneSettings(cfg),
-		taskWake:        make(chan struct{}, 1),
-		taskStop:        make(chan struct{}),
-		taskDone:        make(chan struct{}),
-		expanded:        make(map[string]bool),
-		serviceDrafts:   make(map[string]map[string]string),
-		modelDrafts:     make(map[string]string),
-		credentialBusy:  make(map[string]bool),
-		testStatuses:    make(map[string]serviceTestStatus),
-		deeplUsageText:  "额度查询中…",
-		hotkeyConflicts: make(map[string]string),
-		hotkeyRecorders: map[string]*ui.Handle{"panel": {}, "selection": {}, "ocr": {}},
+		actions:          actions,
+		probeCancels:     make(map[string]context.CancelFunc),
+		credentialErrors: make(map[string]string),
+		credentialReads:  make(map[string]bool),
+		switchHandles:    make(map[string]*ui.Handle),
+		activeTab:        initialTab,
+		settings:         cloneSettings(cfg),
+		taskWake:         make(chan struct{}, 1),
+		taskStop:         make(chan struct{}),
+		taskDone:         make(chan struct{}),
+		expanded:         make(map[string]bool),
+		serviceDrafts:    make(map[string]serviceDraft),
+		serviceSaving:    make(map[string]bool),
+		testStatuses:     make(map[string]serviceTestStatus),
+		deeplUsageText:   "额度查询中…",
+		hotkeyConflicts:  make(map[string]string),
+		hotkeyRecorders:  map[string]*ui.Handle{"panel": {}, "selection": {}, "ocr": {}},
 	}
 	go v.runTaskLoop()
 	v.RefreshCredentialsAsync()
@@ -131,8 +155,8 @@ func (v *View) Dispose() {
 		v.mu.Unlock()
 		return
 	}
-	v.flushTextDraftsLocked()
 	v.disposed = true
+	clear(v.serviceDrafts)
 	v.resetUsageLocked()
 	for _, cancel := range v.probeCancels {
 		cancel()
@@ -153,8 +177,11 @@ func (v *View) SetActiveTab(tab Tab) {
 		v.hotkeyListening = ""
 		v.hotkeyEditor = ""
 	}
-	if tab != TabServices {
-		v.flushTextDraftsLocked()
+	if v.activeTab == TabServices && tab != TabServices {
+		for name := range v.serviceDrafts {
+			delete(v.testStatuses, name)
+		}
+		clear(v.serviceDrafts)
 	}
 	v.activeTab = tab
 	disposed := v.disposed
@@ -174,23 +201,6 @@ func (v *View) ApplyExternalSettings(cfg config.Settings) {
 	if !disposed {
 		v.invalidate()
 	}
-}
-
-func (v *View) flushTextDraftsLocked() {
-	if v.baseURLDraft == nil && len(v.modelDrafts) == 0 {
-		return
-	}
-	next := cloneSettings(v.settings)
-	if v.baseURLDraft != nil {
-		next.Services.OpenAI.BaseURL = strings.TrimSpace(*v.baseURLDraft)
-		v.baseURLDraft = nil
-	}
-	for svc, val := range v.modelDrafts {
-		trimmed := strings.TrimSpace(val)
-		setServiceModel(&next, svc, trimmed)
-		delete(v.modelDrafts, svc)
-	}
-	v.enqueueSaveLocked(next)
 }
 
 // Tasks serialize persistent mutations and their readbacks across window reopenings.
@@ -215,6 +225,7 @@ func (v *View) enqueueSaveLocked(next config.Settings) {
 	if v.disposed {
 		return
 	}
+	previousEnabled := v.settings.Services.Enabled
 	v.settings = cloneSettings(next)
 	v.pendingWrites++
 	snap := cloneSettings(next)
@@ -223,13 +234,26 @@ func (v *View) enqueueSaveLocked(next config.Settings) {
 		if v.actions.SaveSettings != nil {
 			// Ordinary settings edits must not restore an older shortcut snapshot.
 			if v.actions.GetSettings != nil {
-				snap.Hotkeys = v.actions.GetSettings().Hotkeys
+				current := v.actions.GetSettings()
+				snap.Hotkeys = current.Hotkeys
+				// Apply only this action's enablement change. A queued service
+				// save may have removed credentials and disabled another service.
+				desired := snap.Services
+				snap.Services = current.Services
+				snap.Services.Order = desired.Order
+				snap.Services.Enabled = slices.DeleteFunc(slices.Clone(current.Services.Enabled), func(name string) bool {
+					return slices.Contains(previousEnabled, name) && !slices.Contains(desired.Enabled, name)
+				})
+				for _, name := range desired.Enabled {
+					if !slices.Contains(previousEnabled, name) && !slices.Contains(snap.Services.Enabled, name) {
+						snap.Services.Enabled = append(snap.Services.Enabled, name)
+					}
+				}
 			}
 			err = v.actions.SaveSettings(snap)
 		}
 		v.mu.Lock()
 		v.pendingWrites--
-		v.saveFailed = err != nil
 		if err != nil {
 			v.pendingToast = "保存失败：" + err.Error()
 		}
@@ -272,8 +296,8 @@ func (v *View) runTaskLoop() {
 // releasing transient UI state. A new native window reuses this controller.
 func (v *View) DetachWindow() {
 	v.mu.Lock()
-	v.flushTextDraftsLocked()
 	v.windowGeneration++
+	clear(v.serviceDrafts)
 	v.resetUsageLocked()
 	for name, cancel := range v.probeCancels {
 		cancel()
@@ -281,7 +305,6 @@ func (v *View) DetachWindow() {
 	}
 	v.hotkeyListening = ""
 	v.hotkeyEditor = ""
-	v.serviceDrafts = make(map[string]map[string]string)
 	v.expanded = make(map[string]bool)
 	v.testStatuses = make(map[string]serviceTestStatus)
 	v.drag.clear()
@@ -291,28 +314,65 @@ func (v *View) DetachWindow() {
 }
 
 func (v *View) RefreshCredentialsAsync() {
-	if v.actions.Credentials == nil {
+	v.refreshCredentialsAsync("")
+}
+
+func (v *View) refreshCredentialsAsync(name string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.disposed || v.actions.Credentials == nil || v.credentialReads[name] {
 		return
 	}
-	v.enqueueTask(func() {
-		status, err := v.actions.Credentials()
+	v.credentialReads[name] = true
+	v.enqueueTaskLocked(func() {
+		status, err := v.actions.Credentials(name)
 		v.mu.Lock()
 		disposed := v.disposed
+		delete(v.credentialReads, name)
 		if !disposed {
-			if err != nil {
-				v.credentialsErr = "读取服务状态失败：" + err.Error()
-				v.pendingToast = v.credentialsErr
-			} else {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
+			v.applyCredentialStatusLocked(name, status, err)
 		}
+		loadUsage := !disposed && err == nil && (name == "" || name == "deepl") &&
+			v.expanded["deepl"] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
 		v.mu.Unlock()
+		if loadUsage {
+			v.loadDeeplUsageAsync()
+		}
 		if !disposed {
 			v.invalidate()
 		}
 	})
+}
+
+func (v *View) applyCredentialStatusLocked(name string, status CredentialStatus, err error) {
+	if err != nil {
+		v.credentialErrors[name] = "读取服务状态失败：" + err.Error()
+		return
+	}
+	if name == "" {
+		v.credentialsLoaded = true
+		v.credentials = status
+		clear(v.credentialErrors)
+		return
+	}
+
+	delete(v.credentialErrors, name)
+	fields := keys.ForServices(name)
+	stored := slices.DeleteFunc(slices.Clone(v.credentials.Stored), func(key string) bool {
+		return slices.Contains(fields, key)
+	})
+	for _, key := range fields {
+		if slices.Contains(status.Stored, key) {
+			stored = append(stored, key)
+		}
+	}
+	configured := slices.DeleteFunc(slices.Clone(v.credentials.Configured), func(service string) bool {
+		return service == name
+	})
+	if slices.Contains(status.Configured, name) {
+		configured = append(configured, name)
+	}
+	v.credentials = CredentialStatus{Stored: stored, Configured: configured}
 }
 
 func (v *View) openKeyPageAsync(service string) {
@@ -358,7 +418,8 @@ func (v *View) loadDeeplUsageAsync() {
 		return
 	}
 	v.mu.Lock()
-	if v.disposed || !v.expanded["deepl"] || v.usageCancel != nil || v.usageLoaded || v.credentialBusy["deepl"] {
+	if v.disposed || !v.expanded["deepl"] || v.usageCancel != nil || v.usageLoaded ||
+		v.serviceSaving["deepl"] || v.credentialErrors["deepl"] != "" {
 		v.mu.Unlock()
 		return
 	}
@@ -402,151 +463,173 @@ func (v *View) serviceOnLocked(name string) bool {
 		(keyless || slices.Contains(v.credentials.Configured, name))
 }
 
-func (v *View) hasServiceDraftLocked(name string) bool {
-	for _, val := range v.serviceDrafts[name] {
-		if strings.TrimSpace(val) != "" {
-			return true
-		}
-	}
-	return false
+func (v *View) canEditServiceLocked(name string) bool {
+	return !v.disposed && v.activeTab == TabServices && !v.serviceSaving[name] && !v.testStatuses[name].testing
 }
 
-func (v *View) saveCredentials(name string) {
+func (v *View) updateServiceDraftLocked(name string, draft serviceDraft) {
+	if draft.baseURL == nil && draft.model == nil && len(draft.credentials) == 0 {
+		delete(v.serviceDrafts, name)
+	} else {
+		v.serviceDrafts[name] = draft
+	}
+	delete(v.testStatuses, name)
+}
+
+func changedOption(value, saved string) *string {
+	if value == saved {
+		return nil
+	}
+	return &value
+}
+
+func (v *View) editServiceBaseURL(name, value string) {
 	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing || !v.hasServiceDraftLocked(name) {
-		v.mu.Unlock()
+	defer v.mu.Unlock()
+	if !v.canEditServiceLocked(name) || name != "openai" {
 		return
 	}
-	fields := serviceCredentialFields[name]
-	toWrite := make(map[string]string)
-	for _, f := range fields {
-		if val := strings.TrimSpace(v.serviceDrafts[name][f.name]); val != "" {
-			toWrite[f.name] = val
+	draft := v.serviceDrafts[name]
+	draft.baseURL = changedOption(value, v.settings.Services.OpenAI.BaseURL)
+	v.updateServiceDraftLocked(name, draft)
+}
+
+func (v *View) editServiceModel(name, value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	saved := v.settings.Services.Model(name)
+	if !v.canEditServiceLocked(name) || saved == nil {
+		return
+	}
+	draft := v.serviceDrafts[name]
+	draft.model = changedOption(value, *saved)
+	v.updateServiceDraftLocked(name, draft)
+}
+
+func (v *View) editServiceCredential(name, field, value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.canEditServiceLocked(name) {
+		return
+	}
+	draft := v.serviceDrafts[name]
+	if strings.TrimSpace(value) == "" {
+		delete(draft.credentials, field)
+	} else {
+		if draft.credentials == nil {
+			draft.credentials = make(map[string]credentialDraft)
+		}
+		draft.credentials[field] = credentialDraft{value: value}
+	}
+	v.updateServiceDraftLocked(name, draft)
+}
+
+func (v *View) toggleCredentialRemoval(name, field string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.canEditServiceLocked(name) {
+		return
+	}
+	draft := v.serviceDrafts[name]
+	edit := draft.credentials[field]
+	edit.remove = !edit.remove
+	if !edit.remove && edit.value == "" {
+		delete(draft.credentials, field)
+	} else {
+		if draft.credentials == nil {
+			draft.credentials = make(map[string]credentialDraft)
+		}
+		draft.credentials[field] = edit
+	}
+	v.updateServiceDraftLocked(name, draft)
+}
+
+func (v *View) discardService(name string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.serviceSaving[name] {
+		delete(v.serviceDrafts, name)
+		delete(v.testStatuses, name)
+	}
+}
+
+func (v *View) saveService(name string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	draft, dirty := v.serviceDrafts[name]
+	if !v.canEditServiceLocked(name) || !dirty {
+		return
+	}
+	changes := ServiceChanges{BaseURL: draft.baseURL, Model: draft.model}
+	if len(draft.credentials) != 0 {
+		changes.Credentials = make(map[string]string, len(draft.credentials))
+		for field, edit := range draft.credentials {
+			if edit.remove {
+				changes.Credentials[field] = ""
+			} else {
+				changes.Credentials[field] = strings.TrimSpace(edit.value)
+			}
 		}
 	}
 	if name == "deepl" {
 		v.resetUsageLocked()
 	}
-	v.credentialBusy[name] = true
+	v.serviceSaving[name] = true
 	v.testStatuses[name] = serviceTestStatus{}
-	v.mu.Unlock()
-	v.invalidate()
-
-	v.enqueueTask(func() {
+	v.enqueueTaskLocked(func() {
+		var result ServiceSaveResult
 		var writeErr error
-		for _, f := range fields {
-			val, ok := toWrite[f.name]
-			if !ok {
-				continue
-			}
-			if v.actions.SetSecret != nil {
-				if err := v.actions.SetSecret(f.name, val); err != nil {
-					writeErr = err
-					break
-				}
-			}
+		if v.actions.SaveService != nil {
+			result, writeErr = v.actions.SaveService(name, changes)
+		} else {
+			writeErr = errors.New("无法写入服务配置")
 		}
 		var status CredentialStatus
 		var credErr error
-		if v.actions.Credentials != nil {
-			status, credErr = v.actions.Credentials()
+		readCredentials := len(changes.Credentials) != 0 && v.actions.Credentials != nil
+		if readCredentials {
+			status, credErr = v.actions.Credentials(name)
 		}
-
 		v.mu.Lock()
 		disposed := v.disposed
 		if !disposed {
-			v.credentialBusy[name] = false
+			v.serviceSaving[name] = false
 			if writeErr != nil {
-				v.testStatuses[name] = serviceTestStatus{
-					result:  "更新失败：" + writeErr.Error(),
-					isError: true,
-				}
+				v.testStatuses[name] = serviceTestStatus{result: "保存失败：" + writeErr.Error(), isError: true}
 			} else {
-				for key := range toWrite {
-					if v.serviceDrafts[name] != nil {
-						delete(v.serviceDrafts[name], key)
+				delete(v.serviceDrafts, name)
+				v.testStatuses[name] = serviceTestStatus{result: "配置已保存"}
+				if result.Disabled {
+					v.pendingToast = shared.ServiceName(name) + " 已停用"
+				}
+			}
+			if readCredentials {
+				v.applyCredentialStatusLocked(name, status, credErr)
+			}
+			if credErr != nil && writeErr == nil {
+				// The write succeeded. Keep confirmed edits visible even if
+				// the keyring cannot confirm the rest of the service's status.
+				stored := slices.DeleteFunc(slices.Clone(v.credentials.Stored), func(key string) bool {
+					_, changed := changes.Credentials[key]
+					return changed
+				})
+				for key, value := range changes.Credentials {
+					if value != "" {
+						stored = append(stored, key)
 					}
 				}
-				v.testStatuses[name] = serviceTestStatus{result: "凭证已保存"}
-			}
-			if credErr != nil {
-				v.credentialsErr = "读取服务状态失败：" + credErr.Error()
-				v.pendingToast = v.credentialsErr
-			} else if v.actions.Credentials != nil {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
-		}
-		loadUsage := !disposed && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
-		v.mu.Unlock()
-		if loadUsage {
-			v.loadDeeplUsageAsync()
-		}
-		if !disposed {
-			v.invalidate()
-		}
-	})
-}
-
-func (v *View) clearSecret(name, key string) {
-	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing {
-		v.mu.Unlock()
-		return
-	}
-	if name == "deepl" {
-		v.resetUsageLocked()
-	}
-	v.credentialBusy[name] = true
-	v.testStatuses[name] = serviceTestStatus{}
-	v.mu.Unlock()
-	v.invalidate()
-
-	v.enqueueTask(func() {
-		var writeErr error
-		if v.actions.SetSecret != nil {
-			writeErr = v.actions.SetSecret(key, "")
-		}
-		var status CredentialStatus
-		var credErr error
-		if v.actions.Credentials != nil {
-			status, credErr = v.actions.Credentials()
-		}
-		var refreshedSettings *config.Settings
-		if v.actions.GetSettings != nil {
-			s := v.actions.GetSettings()
-			refreshedSettings = &s
-		}
-
-		v.mu.Lock()
-		disposed := v.disposed
-		if !disposed {
-			v.credentialBusy[name] = false
-			if writeErr != nil {
-				v.testStatuses[name] = serviceTestStatus{
-					result:  "更新失败：" + writeErr.Error(),
-					isError: true,
+				v.credentials.Stored = stored
+				if result.Disabled {
+					v.credentials.Configured = slices.DeleteFunc(slices.Clone(v.credentials.Configured), func(service string) bool {
+						return service == name
+					})
 				}
-			} else {
-				if v.serviceDrafts[name] != nil {
-					delete(v.serviceDrafts[name], key)
-				}
-				v.testStatuses[name] = serviceTestStatus{result: "凭证已清除"}
 			}
-			if credErr != nil {
-				v.credentialsErr = "读取服务状态失败：" + credErr.Error()
-				v.pendingToast = v.credentialsErr
-			} else if v.actions.Credentials != nil {
-				v.credentialsLoaded = true
-				v.credentials = status
-				v.credentialsErr = ""
-			}
-			if refreshedSettings != nil && v.pendingWrites == 0 {
-				v.settings = cloneSettings(*refreshedSettings)
+			if v.pendingWrites == 0 && v.actions.GetSettings != nil {
+				v.settings = cloneSettings(v.actions.GetSettings())
 			}
 		}
-		loadUsage := !disposed && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
+		loadUsage := !disposed && credErr == nil && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
 		v.mu.Unlock()
 		if loadUsage {
 			v.loadDeeplUsageAsync()
@@ -559,7 +642,8 @@ func (v *View) clearSecret(name, key string) {
 
 func (v *View) testConnection(name string) {
 	v.mu.Lock()
-	if v.credentialBusy[name] || v.testStatuses[name].testing || v.hasServiceDraftLocked(name) {
+	_, dirty := v.serviceDrafts[name]
+	if !v.canEditServiceLocked(name) || dirty || v.credentialErrors[name] != "" {
 		v.mu.Unlock()
 		return
 	}
@@ -573,23 +657,9 @@ func (v *View) testConnection(name string) {
 	v.enqueueTask(func() {
 		v.mu.Lock()
 		disposed := v.disposed || generation != v.windowGeneration
-		saveFailed := v.saveFailed
 		v.mu.Unlock()
 		if disposed {
 			cancel()
-			return
-		}
-		if saveFailed {
-			cancel()
-			v.mu.Lock()
-			disposed = v.disposed || generation != v.windowGeneration
-			if !disposed {
-				v.testStatuses[name] = serviceTestStatus{result: "设置保存失败，请重新保存后测试", isError: true}
-			}
-			v.mu.Unlock()
-			if !disposed {
-				v.invalidate()
-			}
 			return
 		}
 		go func() {
@@ -673,28 +743,6 @@ func (v *View) finishDragLocked(enabled []string) {
 		v.applyDragOrderLocked(v.drag.preview)
 	}
 	v.drag.clear()
-}
-
-func serviceModel(cfg config.Settings, svc string) string {
-	switch svc {
-	case "openai":
-		return cfg.Services.OpenAI.Model
-	case "siliconflow":
-		return cfg.Services.SiliconFlow.Model
-	case "zhipu":
-		return cfg.Services.Zhipu.Model
-	}
-	return ""
-}
-func setServiceModel(cfg *config.Settings, svc, value string) {
-	switch svc {
-	case "openai":
-		cfg.Services.OpenAI.Model = value
-	case "siliconflow":
-		cfg.Services.SiliconFlow.Model = value
-	case "zhipu":
-		cfg.Services.Zhipu.Model = value
-	}
 }
 
 // Keep the native loop available while queued writes may marshal back to it.

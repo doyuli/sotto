@@ -64,6 +64,8 @@ The settings window adds a navigation rail, service cards, and recessed fields. 
 
 The service title strip is darker than the card in light mode and lighter in dark mode. Badges use a borderless tint.
 
+Each service drawer has a draft for its configuration fields. “保存配置” applies the draft, “放弃更改” restores saved values, and “测试连接” uses the saved configuration when the draft is clean. Collapsing the drawer retains pending edits. Switching away from the translation services tab or closing Settings discards unsaved drafts. An explicit save already in progress continues. The card shows when it has an unsaved draft. Undoing a staged credential removal restores any replacement value already entered in the draft. Removing a required credential from an enabled service shows the effect before saving. Previously saved credentials are never displayed.
+
 ## Type and shape
 
 - System UI sans; input 14 DIP / 1.55, card text 15 DIP / 1.65, labels 13 DIP, badge 12 DIP.

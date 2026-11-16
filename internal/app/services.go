@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -30,44 +31,133 @@ func (s ConfigSvc) Set(settings config.Settings) error {
 	return s.app.updateSettings(settings)
 }
 
-// SetSecret stores a credential; an empty value deletes it.
-func (s ConfigSvc) SetSecret(name, value string) error {
-	if !slices.Contains(keys.Names, name) {
-		return errors.New("unknown credential: " + name)
-	}
-	s.app.configWriteMu.Lock()
-	defer s.app.configWriteMu.Unlock()
+// SaveService commits the changed fields against the latest settings. Credentials
+// live in the keyring and are restored if a later write fails.
+func (s ConfigSvc) SaveService(name string, changes settings.ServiceChanges) (settings.ServiceSaveResult, error) {
+	a := s.app
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
 
-	// Disable services that would lose a required credential before removing
-	// it, so a failed settings write cannot leave an enabled service behind.
-	if value == "" {
-		cfg := s.app.settings()
-		enabled := translate.WithoutCredential(cfg, name)
-		if !slices.Equal(enabled, cfg.Services.Enabled) {
-			cfg.Services.Enabled = enabled
-			if err := s.app.saveSettings(cfg); err != nil {
-				return err
+	previous := a.settings()
+	next := previous
+	if changes.BaseURL != nil {
+		if name != "openai" {
+			return settings.ServiceSaveResult{}, errors.New("该服务不支持修改 Base URL")
+		}
+		next.Services.OpenAI.BaseURL = strings.TrimSpace(*changes.BaseURL)
+	}
+	if changes.Model != nil {
+		model := next.Services.Model(name)
+		if model == nil {
+			return settings.ServiceSaveResult{}, errors.New("该服务不支持修改模型")
+		}
+		*model = strings.TrimSpace(*changes.Model)
+	}
+	names := slices.Sorted(maps.Keys(changes.Credentials))
+	allowed := keys.ForServices(name)
+	for _, key := range names {
+		if !slices.Contains(allowed, key) {
+			return settings.ServiceSaveResult{}, errors.New("该服务不支持此凭证")
+		}
+		if changes.Credentials[key] == "" && slices.Contains(next.Services.Enabled, name) &&
+			!slices.Contains(translate.WithoutCredential(next, key), name) {
+			next.Services.Enabled = slices.DeleteFunc(slices.Clone(next.Services.Enabled), func(enabled string) bool {
+				return enabled == name
+			})
+		}
+	}
+
+	var original keys.Snapshot
+	if len(names) != 0 {
+		original = a.keys.Snapshot(names)
+		if err := original.Err(names...); err != nil {
+			return settings.ServiceSaveResult{}, fmt.Errorf("读取原有凭证：%w", err)
+		}
+	}
+	var written []string
+	rollback := func(err error) error {
+		for _, key := range slices.Backward(written) {
+			if restoreErr := a.keys.Set(key, original.Get(key)); restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("恢复原有凭证失败：%w", restoreErr))
 			}
 		}
-	} else if value = strings.TrimSpace(value); value == "" {
-		return errors.New("请输入凭证")
+		return err
 	}
-	if err := s.app.keys.Set(name, value); err != nil {
-		return fmt.Errorf("更新凭证：%w", err)
+	for _, key := range names {
+		value := changes.Credentials[key]
+		if value != "" {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				return settings.ServiceSaveResult{}, rollback(errors.New("请输入凭证"))
+			}
+		}
+		if value == original.Get(key) {
+			continue
+		}
+		if err := a.keys.Set(key, value); err != nil {
+			return settings.ServiceSaveResult{}, rollback(fmt.Errorf("写入凭证：%w", err))
+		}
+		written = append(written, key)
 	}
-	return nil
+	disabled := !slices.Equal(next.Services.Enabled, previous.Services.Enabled)
+	if changes.BaseURL != nil || changes.Model != nil || disabled {
+		if err := a.saveSettings(config.Normalize(next)); err != nil {
+			return settings.ServiceSaveResult{}, rollback(err)
+		}
+	}
+	return settings.ServiceSaveResult{Disabled: disabled}, nil
 }
 
-// Credentials reports which credentials are stored and which services can be enabled.
-func (s ConfigSvc) Credentials() (settings.CredentialStatus, error) {
-	credentials := s.app.keys.Snapshot(keys.Names)
-	if err := credentials.Err(); err != nil {
+// translationCredentials keeps the saved options and credentials in step for
+// keyed requests. Keyless requests can use the in-memory config they already have.
+func (a *application) translationCredentials(ctx context.Context, services *config.ServiceSettings, retry string) (keys.Snapshot, error) {
+	if len(translationCredentialNames(*services, retry)) == 0 {
+		return nil, ctx.Err()
+	}
+
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	*services = a.settings().Services
+	names := translationCredentialNames(*services, retry)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	return a.keys.Snapshot(names), nil
+}
+
+func translationCredentialNames(services config.ServiceSettings, retry string) []string {
+	if retry != "" {
+		return keys.ForServices(retry)
+	}
+	return keys.ForServices(services.Enabled...)
+}
+
+// Credentials reports presence and enablement eligibility for one service,
+// or for every service when name is empty.
+func (s ConfigSvc) Credentials(name string) (settings.CredentialStatus, error) {
+	a := s.app
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+
+	names := keys.Names
+	if name != "" {
+		names = keys.ForServices(name)
+	}
+	credentials := a.keys.Snapshot(names)
+	if err := credentials.Err(names...); err != nil {
 		return settings.CredentialStatus{}, errors.New(translate.UserMessage(err))
 	}
-	status := settings.CredentialStatus{Stored: []string{}, Configured: translate.Configured(s.app.settings(), credentials)}
-	for _, name := range keys.Names {
-		if credentials.Get(name) != "" {
-			status.Stored = append(status.Stored, name)
+	configured := translate.Configured(a.settings(), credentials)
+	if name != "" {
+		configured = slices.DeleteFunc(configured, func(service string) bool { return service != name })
+	}
+	status := settings.CredentialStatus{Stored: []string{}, Configured: configured}
+	for _, key := range names {
+		if credentials.Get(key) != "" {
+			status.Stored = append(status.Stored, key)
 		}
 	}
 	return status, nil
@@ -77,7 +167,16 @@ func (s ConfigSvc) Credentials() (settings.CredentialStatus, error) {
 func (s ConfigSvc) TestService(ctx context.Context, name string) string {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	return translate.UserMessage(translate.Test(ctx, name, s.app.settings(), s.app.keys.Snapshot(keys.ForServices(name))))
+	a := s.app
+	a.configWriteMu.Lock()
+	if err := ctx.Err(); err != nil {
+		a.configWriteMu.Unlock()
+		return translate.UserMessage(err)
+	}
+	cfg := a.settings()
+	credentials := a.keys.Snapshot(keys.ForServices(name))
+	a.configWriteMu.Unlock()
+	return translate.UserMessage(translate.Test(ctx, name, cfg, credentials))
 }
 
 // serviceKeyPages maps a service to the console page where its
@@ -109,7 +208,14 @@ func (s ConfigSvc) DeeplUsage(ctx context.Context) (settings.DeeplUsage, error) 
 	if err := ctx.Err(); err != nil {
 		return settings.DeeplUsage{}, err
 	}
-	credentials := s.app.keys.Snapshot([]string{keys.DeeplKey})
+	a := s.app
+	a.configWriteMu.Lock()
+	if err := ctx.Err(); err != nil {
+		a.configWriteMu.Unlock()
+		return settings.DeeplUsage{}, err
+	}
+	credentials := a.keys.Snapshot([]string{keys.DeeplKey})
+	a.configWriteMu.Unlock()
 	if err := credentials.Err(); err != nil {
 		return settings.DeeplUsage{}, errors.New(translate.UserMessage(err))
 	}

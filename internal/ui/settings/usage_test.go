@@ -102,9 +102,14 @@ func TestSettingsUsageSaveFinishingAfterCloseDoesNotQuery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		release := make(chan struct{})
 		calls := 0
+		var saved string
 		v := NewView(TabServices, testSettingsConfig(), Actions{
-			SetSecret: func(string, string) error { <-release; return nil },
-			Credentials: func() (CredentialStatus, error) {
+			SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+				<-release
+				saved = changes.Credentials[keys.DeeplKey]
+				return ServiceSaveResult{}, nil
+			},
+			Credentials: func(string) (CredentialStatus, error) {
 				return CredentialStatus{Stored: []string{keys.DeeplKey}}, nil
 			},
 			DeeplUsage: func(context.Context) (DeeplUsage, error) { calls++; return DeeplUsage{}, nil },
@@ -112,14 +117,20 @@ func TestSettingsUsageSaveFinishingAfterCloseDoesNotQuery(t *testing.T) {
 		defer v.Dispose()
 		synctest.Wait()
 		v.expanded["deepl"] = true
-		v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "new-key"}
-		v.saveCredentials("deepl")
+		v.editServiceCredential("deepl", keys.DeeplKey, "new-key")
+		v.saveService("deepl")
 		synctest.Wait()
 		v.DetachWindow()
+		if len(v.serviceDrafts) != 0 {
+			t.Fatal("closing retained the in-flight service draft")
+		}
 		close(release)
 		synctest.Wait()
 		v.loadDeeplUsageAsync()
 		synctest.Wait()
+		if saved != "new-key" {
+			t.Fatal("closing dropped the credential from the submitted save")
+		}
 		if calls != 0 {
 			t.Fatal("credential save started a query after window closure")
 		}
@@ -148,8 +159,12 @@ func TestSettingsUsageKeyChangeCancelsAndRejectsOldResult(t *testing.T) {
 						}
 						return DeeplUsage{Used: 2, Limit: 10}, nil
 					},
-					SetSecret: func(_, value string) error { <-writeRelease; stored = value != ""; return nil },
-					Credentials: func() (CredentialStatus, error) {
+					SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+						<-writeRelease
+						stored = changes.Credentials[keys.DeeplKey] != ""
+						return ServiceSaveResult{}, nil
+					},
+					Credentials: func(string) (CredentialStatus, error) {
 						if stored {
 							return CredentialStatus{Stored: []string{keys.DeeplKey}}, nil
 						}
@@ -162,10 +177,11 @@ func TestSettingsUsageKeyChangeCancelsAndRejectsOldResult(t *testing.T) {
 				v.loadDeeplUsageAsync()
 				synctest.Wait()
 				if clear {
-					v.clearSecret("deepl", keys.DeeplKey)
+					v.toggleCredentialRemoval("deepl", keys.DeeplKey)
+					v.saveService("deepl")
 				} else {
-					v.serviceDrafts["deepl"] = map[string]string{keys.DeeplKey: "new-key"}
-					v.saveCredentials("deepl")
+					v.editServiceCredential("deepl", keys.DeeplKey, "new-key")
+					v.saveService("deepl")
 				}
 				synctest.Wait()
 				if oldContext.Err() != context.Canceled {

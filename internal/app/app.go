@@ -375,7 +375,7 @@ func (a *application) showSettings(services bool) {
 			GetSettings:  svc.Get,
 			SaveSettings: svc.Set,
 			Credentials:  svc.Credentials,
-			SetSecret:    svc.SetSecret,
+			SaveService:  svc.SaveService,
 			TestService:  svc.TestService,
 			OpenKeyPage:  svc.OpenKeyPage,
 			DeeplUsage:   svc.DeeplUsage,
@@ -455,11 +455,11 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 	if !accepted {
 		return
 	}
-	requestedServices := cfg.Services.Enabled
-	if req.Service != "" {
-		requestedServices = []string{req.Service}
+	credentials, err := a.translationCredentials(ctx, &cfg.Services, req.Service)
+	if err != nil {
+		a.bubbles.FinishRun(win, req.ReqID)
+		return
 	}
-	credentials := a.keys.Snapshot(keys.ForServices(requestedServices...))
 	services := cfg.Services.Enabled
 	if req.Service != "" {
 		cfg.Services.Enabled = nil

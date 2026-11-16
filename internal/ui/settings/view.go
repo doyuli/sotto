@@ -2,8 +2,8 @@ package settings
 
 import (
 	"fmt"
+	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -13,6 +13,7 @@ import (
 	"sotto/internal/languages"
 	"sotto/internal/naming"
 	"sotto/internal/platform"
+	"sotto/internal/translate"
 	"sotto/internal/ui/shared"
 )
 
@@ -199,10 +200,7 @@ var serviceNotes = map[string]string{
 	"volcengine":  "需开通「机器翻译」并授权 Access Key。",
 }
 
-var defaultServiceModels = func() map[string]string {
-	cfg := config.Default()
-	return map[string]string{"openai": serviceModel(cfg, "openai"), "siliconflow": serviceModel(cfg, "siliconflow"), "zhipu": serviceModel(cfg, "zhipu")}
-}()
+var defaultServiceSettings = config.Default().Services
 
 type copyFormatOption struct {
 	style   string
@@ -411,7 +409,8 @@ func (v *View) renderSettingRow(c *ui.Context, p settingsPalette, title, sub str
 func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 	v.mu.Lock()
 	loaded := v.credentialsLoaded
-	credErr := v.credentialsErr
+	credErr := v.credentialErrors[""]
+	readingCredentials := v.credentialReads[""]
 	cfg := cloneSettings(v.settings)
 	var enabledNames, disabledNames []string
 	for _, svc := range cfg.Services.Order {
@@ -434,7 +433,7 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 
 	ui.Text(c, "翻译服务").FontSize(18).FontWeight(600).TextColor(p.fg)
 
-	if !loaded {
+	if !loaded || credErr != "" {
 		ui.Row(c).Padding(14).Radius(12).Background(p.card).Border(1, p.border).AlignItems(ui.Center).Gap(12).Children(func() {
 			msg := "正在读取服务状态…"
 			color := p.muted
@@ -444,12 +443,12 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 			}
 			ui.Text(c, msg).FontSize(12).TextColor(color).Grow(1)
 			if credErr != "" {
-				v.renderSecondaryButton(c, p, "重试", func() {
-					v.RefreshCredentialsAsync()
-				})
+				v.renderSecondaryButtonDisabled(c, p, "重试", "重试", readingCredentials, v.RefreshCredentialsAsync)
 			}
 		})
-		return
+		if !loaded {
+			return
+		}
 	}
 
 	ui.Column(c).Gap(3).Children(func() {
@@ -517,9 +516,12 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 	keyless := len(fields) == 0
 
 	v.mu.Lock()
-	isConfigured := slices.Contains(v.credentials.Configured, svc)
+	credentialError := v.credentialErrors[svc] != ""
+	isConfigured := keyless || slices.Contains(v.credentials.Configured, svc)
+	editable := !keyless || svc == "openai" || v.settings.Services.Model(svc) != nil
 	isExpanded := v.expanded[svc]
-	busy := v.credentialBusy[svc]
+	_, dirty := v.serviceDrafts[svc]
+	busy := v.serviceSaving[svc]
 	dragAnimating := v.drag.preview != nil
 	v.mu.Unlock()
 
@@ -532,6 +534,16 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 		}
 	} else if keyless || isConfigured {
 		stateHint = "打开开关后参与翻译"
+	}
+
+	if credentialError {
+		stateHint = "凭证状态待确认"
+	}
+	if !isExpanded && dirty {
+		stateHint = "有未保存的更改"
+	}
+	if !isExpanded && busy {
+		stateHint = "正在保存配置…"
 	}
 
 	card := ui.Column(c).
@@ -584,7 +596,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 
 	card.Children(func() {
 		head := ui.Row(c).FillWidth().Padding(12, 16).AlignItems(ui.Center).Gap(12)
-		if !keyless && isExpanded {
+		if editable && isExpanded {
 			head.Background(p.cardHead)
 		}
 		if enabled && isExpanded {
@@ -626,6 +638,8 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 							badgeText = "免配置"
 							badgeBg = p.pill
 							badgeFg = p.badgeInk
+						} else if credentialError {
+							badgeText = "读取失败"
 						} else if isConfigured {
 							badgeText = "已配置"
 							badgeBg = p.accentSoft
@@ -640,7 +654,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-				if !keyless {
+				if editable {
 					cfgLabel := "配置"
 					accessLabel := "配置" + title
 					if isExpanded {
@@ -650,9 +664,6 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 					v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, func() {
 						v.mu.Lock()
 						nextExpanded := !v.expanded[svc]
-						if !nextExpanded {
-							v.flushTextDraftsLocked()
-						}
 						v.expanded[svc] = nextExpanded
 						loadUsage := nextExpanded && svc == "deepl" && slices.Contains(v.credentials.Stored, keys.DeeplKey)
 						v.mu.Unlock()
@@ -681,9 +692,13 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 				sw := ui.Switch(c, &on).
 					Label("启用" + title).
 					Bind(handle).
-					Disabled(busy || (!keyless && !isConfigured))
+					Disabled(busy || (!enabled && (!isConfigured || credentialError)))
 				if sw.Changed() {
 					v.mu.Lock()
+					if on && v.credentialErrors[svc] != "" {
+						v.mu.Unlock()
+						return
+					}
 					v.focusService = svc
 					next := cloneSettings(v.settings)
 					next.Services.Enabled = slices.DeleteFunc(slices.Clone(next.Services.Enabled), func(s string) bool {
@@ -692,7 +707,6 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 					if on {
 						next.Services.Enabled = append(next.Services.Enabled, svc)
 					} else {
-						v.flushTextDraftsLocked()
 						v.expanded[svc] = false
 					}
 					v.enqueueSaveLocked(next)
@@ -701,261 +715,197 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 			})
 		})
 
-		if !keyless && isExpanded {
-			v.renderServiceDrawer(c, p, svc, fields, isConfigured)
+		if editable && isExpanded {
+			v.renderServiceDrawer(c, p, svc, fields, enabled, isConfigured)
 		}
 	})
 	return dragging, overTarget
 }
 
-func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string, fields []serviceCredentialField, isConfigured bool) {
+func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string, fields []serviceCredentialField, enabled, isConfigured bool) {
 	v.mu.Lock()
-	busy := v.credentialBusy[svc]
-	testStatus := v.testStatuses[svc]
-	locked := busy || testStatus.testing
-	hasDraft := v.hasServiceDraftLocked(svc)
-	baseURLVal := v.settings.Services.OpenAI.BaseURL
-	if v.baseURLDraft != nil {
-		baseURLVal = *v.baseURLDraft
-	}
-	modelVal, ok := v.modelDrafts[svc]
-	if !ok {
-		modelVal = serviceModel(v.settings, svc)
-	}
-
-	storedMap := make(map[string]bool, len(fields))
-	draftMap := make(map[string]string, len(fields))
-	for _, f := range fields {
-		storedMap[f.name] = slices.Contains(v.credentials.Stored, f.name)
-		if v.serviceDrafts[svc] != nil {
-			draftMap[f.name] = v.serviceDrafts[svc][f.name]
-		}
-	}
-	deeplHasKey := slices.Contains(v.credentials.Stored, keys.DeeplKey)
+	busy := v.serviceSaving[svc]
+	status := v.testStatuses[svc]
+	credErr := v.credentialErrors[svc]
+	readingCredentials := v.credentialReads[svc]
+	locked := busy || status.testing
+	cfg := v.settings
+	saved := cfg.Services
+	draft, dirty := v.serviceDrafts[svc]
+	draft.credentials = maps.Clone(draft.credentials)
+	stored := v.credentials.Stored
 	deeplText := v.deeplUsageText
 	deeplPct := v.deeplUsagePct
 	v.mu.Unlock()
 
+	willDisable := enabled && slices.ContainsFunc(fields, func(field serviceCredentialField) bool {
+		return draft.credentials[field.name].remove && !slices.Contains(translate.WithoutCredential(cfg, field.name), svc)
+	})
 	ui.Box(c).FillWidth().Height(1).Background(p.border)
 	ui.Column(c).FillWidth().Background(p.card).Padding(14, 16).Gap(12).Children(func() {
-		// Link to console
-		ui.Row(c).Children(func() {
-			link := ui.ButtonBase(c).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
-			if link.Clicked() {
-				v.openKeyPageAsync(svc)
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, "保存后应用更改").FontSize(12).TextColor(p.muted).Grow(1)
+			if len(fields) != 0 {
+				link := ui.ButtonBase(c.Key("console")).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
+				link.OnClick(func() { v.openKeyPageAsync(svc) })
+				link.Children(func() {
+					txt := ui.Text(c, "前往控制台获取凭证").FontSize(12).TextColor(p.accentText)
+					if link.Hovered() {
+						txt.Underline()
+					}
+				})
 			}
-			link.Children(func() {
-				txt := ui.Text(c, "前往控制台获取凭证 →").FontSize(12).TextColor(p.accentText)
-				if link.Hovered() {
-					txt.Underline()
-				}
-			})
 		})
 
-		if svc == "openai" {
-			v.mu.Lock()
-			hasBaseURLDraft := v.baseURLDraft != nil
-			v.mu.Unlock()
-			v.renderDrawerInputRow(c, p, "Base URL", "任何 OpenAI 兼容接口", &baseURLVal, "https://api.openai.com/v1", locked, hasBaseURLDraft,
-				func(val string) {
-					v.mu.Lock()
-					copyVal := val
-					v.baseURLDraft = &copyVal
-					v.testStatuses[svc] = serviceTestStatus{}
-					v.mu.Unlock()
-				},
-				func(val string) {
-					v.mu.Lock()
-					next := cloneSettings(v.settings)
-					next.Services.OpenAI.BaseURL = strings.TrimSpace(val)
-					v.baseURLDraft = nil
-					v.testStatuses[svc] = serviceTestStatus{}
-					v.enqueueSaveLocked(next)
-					v.mu.Unlock()
-				},
-			)
-		}
-
-		if defaultModel, hasModel := defaultServiceModels[svc]; hasModel {
-			v.mu.Lock()
-			_, hasModelDraft := v.modelDrafts[svc]
-			v.mu.Unlock()
-			v.renderDrawerInputRow(c, p, "模型", "留空恢复默认模型", &modelVal, defaultModel, locked, hasModelDraft,
-				func(val string) {
-					v.mu.Lock()
-					v.modelDrafts[svc] = val
-					v.testStatuses[svc] = serviceTestStatus{}
-					v.mu.Unlock()
-				},
-				func(val string) {
-					v.mu.Lock()
-					next := cloneSettings(v.settings)
-					trimmed := strings.TrimSpace(val)
-					setServiceModel(&next, svc, trimmed)
-					delete(v.modelDrafts, svc)
-					v.testStatuses[svc] = serviceTestStatus{}
-					v.enqueueSaveLocked(next)
-					v.mu.Unlock()
-				},
-			)
-		}
-
-		for _, f := range fields {
-			isStored := storedMap[f.name]
-			sub := ""
-			if f.name == keys.AzureRegion {
-				sub = "可选，全局资源留空"
-			}
-			ph := f.placeholder
-			if isStored {
-				ph = "已保存，留空不变"
-			}
-			val := draftMap[f.name]
-			field := f
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
-				ui.Column(c).Width(136).Gap(2).Children(func() {
-					ui.Text(c, field.label).FontSize(13).FontWeight(500).TextColor(p.fg)
-					if sub != "" {
-						ui.Text(c, sub).FontSize(12).TextColor(p.muted)
-					}
-				})
-				ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(8).Children(func() {
-					inp := ui.TextInput(c, &val).
-						Label("编辑"+field.label).
-						Password().
-						Placeholder(ph).
-						Disabled(locked).
-						Grow(1).
-						Padding(7, 10).
-						Radius(8).
-						FontSize(13)
-					if inp.Changed() {
-						v.mu.Lock()
-						if v.serviceDrafts[svc] == nil {
-							v.serviceDrafts[svc] = make(map[string]string)
-						}
-						v.serviceDrafts[svc][field.name] = val
-						v.testStatuses[svc] = serviceTestStatus{}
-						v.mu.Unlock()
-					}
-					if inp.Submitted() {
-						v.saveCredentials(svc)
-					}
-					if isStored {
-						clr := ui.ButtonBase(c).Label("清除"+field.label).Disabled(locked).Cursor(ui.CursorPointer).Padding(4, 6)
-						if clr.Clicked() {
-							v.clearSecret(svc, field.name)
-						}
-						clr.Children(func() {
-							col := p.accentText
-							if locked {
-								col = p.muted.Alpha(0.5)
-							}
-							txt := ui.Text(c, "清除").FontSize(12).TextColor(col)
-							if !locked && clr.Hovered() {
-								txt.Underline()
-							}
-						})
-					}
+		if credErr != "" {
+			ui.Row(c.Key("credential-error")).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Text(c, credErr).FontSize(12).TextColor(p.error).Grow(1)
+				v.renderSecondaryButtonDisabled(c, p, "重试", "重试读取"+shared.ServiceName(svc)+"状态", readingCredentials, func() {
+					v.refreshCredentialsAsync(svc)
 				})
 			})
+		}
+
+		if svc == "openai" {
+			value := saved.OpenAI.BaseURL
+			if draft.baseURL != nil {
+				value = *draft.baseURL
+			}
+			v.renderServiceField(c.Key("baseURL"), p, svc, serviceEditorField{
+				label: "Base URL", help: "兼容接口地址",
+				placeholder: defaultServiceSettings.OpenAI.BaseURL, value: value,
+			}, locked, func(value string) { v.editServiceBaseURL(svc, value) })
+		}
+		if model := saved.Model(svc); model != nil {
+			value := *model
+			if draft.model != nil {
+				value = *draft.model
+			}
+			v.renderServiceField(c.Key("model"), p, svc, serviceEditorField{
+				label: "模型", help: "留空恢复默认模型",
+				placeholder: *defaultServiceSettings.Model(svc), value: value,
+			}, locked, func(value string) { v.editServiceModel(svc, value) })
+		}
+
+		for _, field := range fields {
+			isStored := slices.Contains(stored, field.name)
+			edit := draft.credentials[field.name]
+			value := edit.value
+			help := ""
+			if field.name == keys.AzureRegion {
+				help = "可选，全局资源留空"
+			}
+			placeholder := field.placeholder
+			if isStored {
+				placeholder = "已保存，留空保留"
+			}
+			if edit.remove {
+				placeholder = "保存后清除"
+				value = ""
+			}
+			v.renderServiceField(c.Key(field.name), p, svc, serviceEditorField{
+				credential: field.name, label: field.label, help: help, placeholder: placeholder, value: value,
+				stored: isStored, remove: edit.remove,
+			}, locked, func(value string) { v.editServiceCredential(svc, field.name, value) })
 		}
 
 		if note, ok := serviceNotes[svc]; ok {
-			ui.Text(c, note).FontSize(11).TextColor(p.muted)
+			ui.Text(c, note).FontSize(12).TextColor(p.muted)
 		}
 
-		if svc == "deepl" && deeplHasKey {
+		if svc == "deepl" && slices.Contains(stored, keys.DeeplKey) {
 			ui.Column(c).FillWidth().Gap(4).Children(func() {
-				ui.Text(c, deeplText).FontSize(11).TextColor(p.muted)
+				ui.Text(c, deeplText).FontSize(12).TextColor(p.muted)
 				ui.Progress(c, deeplPct).FillWidth().Height(6)
 			})
 		}
 
-		// Footer
-		ui.Row(c).FillWidth().Padding(4, 0, 0, 0).AlignItems(ui.Center).Gap(8).Children(func() {
-			statusText := "未测试"
-			statusColor := p.muted
-			dotColor := p.muted.Alpha(0.5)
-			if testStatus.result != "" {
-				statusText = testStatus.result
-				if testStatus.isError {
-					statusColor = p.error
-					dotColor = p.error
-				} else if !testStatus.testing {
-					statusColor = p.success
-					dotColor = p.success
-				} else {
-					dotColor = p.accent
-				}
+		ui.Box(c).FillWidth().Height(1).Background(p.border)
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			message, color := status.result, p.muted
+			switch {
+			case busy:
+				message = "正在保存配置…"
+			case status.isError:
+				color = p.error
+			case willDisable:
+				message, color = "保存后将停用此服务", p.warning
+			case dirty:
+				message = "有未保存的更改"
+			case message != "" && !status.testing:
+				color = p.success
 			}
-			ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(6).Children(func() {
-				ui.Box(c).Size(6, 6).Radius(999).Background(dotColor)
-				ui.Text(c, statusText).FontSize(12).TextColor(statusColor)
-			})
+			if message != "" {
+				ui.Text(c.Key("status"), message).FontSize(12).TextColor(color)
+			}
+			ui.Row(c.Key("actions")).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+				v.renderSecondaryButtonDisabled(c.Key("test"), p, "测试连接", "测试连接", !isConfigured || locked || dirty || credErr != "", func() {
+					v.testConnection(svc)
+				})
+				ui.Box(c).Grow(1)
+				v.renderSecondaryButtonDisabled(c.Key("discard"), p, "放弃更改", "放弃更改", !dirty || locked, func() {
+					v.discardService(svc)
+				})
 
-			testDisabled := !isConfigured || locked || hasDraft
-			v.renderSecondaryButtonDisabled(c, p, "测试连接", "测试连接", testDisabled, func() {
-				v.testConnection(svc)
-			})
-
-			saveDisabled := !hasDraft || locked
-			saveBtn := ui.ButtonBase(c).
-				Label("保存凭证").
-				Disabled(saveDisabled).
-				Cursor(ui.CursorPointer).
-				Padding(6, 14).
-				Radius(8).
-				Background(p.primaryBg)
-			if saveDisabled {
-				saveBtn.Opacity(0.45)
-			} else if saveBtn.Hovered() {
-				if p.dark {
-					saveBtn.Background(p.accent.Alpha(0.88))
-				} else {
-					saveBtn.Background(p.accent)
+				disabled := !dirty || locked
+				save := ui.ButtonBase(c.Key("save")).
+					Label("保存配置").
+					Disabled(disabled).
+					Cursor(ui.CursorPointer).
+					Padding(6, 14).
+					Radius(8).
+					Background(p.primaryBg)
+				ink := p.onAccent
+				if disabled {
+					save.Background(p.control)
+					ink = p.muted
+				} else if save.Hovered() {
+					save.Background(p.primaryBg.Mix(p.onAccent, 0.08))
 				}
-			}
-			if saveBtn.Clicked() {
-				v.saveCredentials(svc)
-			}
-			saveBtn.Children(func() {
-				ui.Text(c, "保存凭证").FontSize(12).FontWeight(600).TextColor(p.onAccent).SingleLine()
+				save.OnClick(func() { v.saveService(svc) })
+				save.Children(func() {
+					ui.Text(c, "保存配置").FontSize(12).FontWeight(600).TextColor(ink).SingleLine()
+				})
 			})
 		})
 	})
 }
 
-func (v *View) renderDrawerInputRow(
-	c *ui.Context,
-	p settingsPalette,
-	label, sub string,
-	val *string,
-	placeholder string,
-	disabled, hasDraft bool,
-	onDraft func(string),
-	onCommit func(string),
-) {
+type serviceEditorField struct {
+	credential, label, help, placeholder, value string
+	stored, remove                              bool
+}
+
+func (v *View) renderServiceField(c *ui.Context, p settingsPalette, svc string, field serviceEditorField, locked bool, onChange func(string)) {
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
 		ui.Column(c).Width(136).Gap(2).Children(func() {
-			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(p.fg)
-			if sub != "" {
-				ui.Text(c, sub).FontSize(12).TextColor(p.muted)
+			ui.Text(c, field.label).FontSize(13).FontWeight(500).TextColor(p.fg)
+			if field.help != "" {
+				ui.Text(c, field.help).FontSize(12).TextColor(p.muted)
 			}
 		})
-		inp := ui.TextInput(c, val).
-			Label("编辑"+label).
-			Placeholder(placeholder).
-			Disabled(disabled).
+		input := ui.TextInput(c.Key("input"), &field.value).
+			Label("编辑"+field.label).
+			Placeholder(field.placeholder).
+			Disabled(locked).
 			Grow(1).
 			Padding(7, 10).
 			Radius(8).
 			FontSize(13)
-		if inp.Changed() && onDraft != nil {
-			onDraft(*val)
+		if field.credential != "" {
+			input.Password()
 		}
-		if (inp.Submitted() || (hasDraft && !inp.Focused())) && onCommit != nil {
-			onCommit(*val)
+		if input.Changed() && !locked {
+			onChange(field.value)
+		}
+		if field.stored {
+			action := "清除"
+			if field.remove {
+				action = "撤销清除"
+			}
+			v.renderSecondaryButtonDisabled(c.Key("remove"), p, action, action+field.label, locked, func() {
+				v.toggleCredentialRemoval(svc, field.credential)
+			})
 		}
 	})
 }

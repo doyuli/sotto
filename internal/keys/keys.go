@@ -5,8 +5,9 @@ package keys
 import (
 	"errors"
 	"fmt"
-	"github.com/egoist/mygo"
 	"slices"
+
+	"github.com/egoist/mygo"
 )
 
 // The keyring entries, by service.
@@ -72,13 +73,18 @@ var serviceKeys = map[string][]string{
 
 // Snapshot owns the values and read failures for a single operation. Missing
 // entries are empty; failures remain observable rather than disabling services.
-type Snapshot struct {
+type Snapshot interface {
+	Get(name string) string
+	Err(names ...string) error
+}
+
+type snapshotData struct {
 	values   map[string]string
 	failures map[string]error
 }
 
-func (s Snapshot) Get(name string) string { return s.values[name] }
-func (s Snapshot) Err(names ...string) error {
+func (s snapshotData) Get(name string) string { return s.values[name] }
+func (s snapshotData) Err(names ...string) error {
 	var errs []error
 	if len(names) == 0 {
 		names = Names
@@ -91,8 +97,8 @@ func (s Snapshot) Err(names ...string) error {
 	return errors.Join(errs...)
 }
 func (Store) Snapshot(names []string) Snapshot { return snapshot(names, mygo.Secrets.Get) }
-func snapshot(names []string, read func(string) ([]byte, error)) Snapshot {
-	out := Snapshot{values: make(map[string]string), failures: make(map[string]error)}
+func snapshot(names []string, read func(string) ([]byte, error)) snapshotData {
+	out := snapshotData{values: make(map[string]string), failures: make(map[string]error)}
 	for _, name := range names {
 		value, err := read(name)
 		switch {

@@ -26,6 +26,19 @@ type ServiceSettings struct {
 	Zhipu       ModelOptions  `json:"zhipu"`
 }
 
+// Model returns the editable model, or nil for services with a fixed model.
+func (s *ServiceSettings) Model(service string) *string {
+	switch service {
+	case "openai":
+		return &s.OpenAI.Model
+	case "siliconflow":
+		return &s.SiliconFlow.Model
+	case "zhipu":
+		return &s.Zhipu.Model
+	}
+	return nil
+}
+
 const (
 	DefaultSiliconFlowModel = "tencent/Hunyuan-MT-7B"
 	DefaultZhipuModel       = "glm-4.7-flash"
