@@ -99,9 +99,9 @@ Unlike the Windows build, which bundles ONNX Runtime DLLs and PP-OCRv6 neural ne
 
 ### ScreenCaptureKit Capture (`internal/capture/capture_darwin.go`)
 
-- Captures screen regions using `SCScreenshotManager.captureImageWithFilter:configuration:completionHandler:`.
+- Lists shareable content once per shortcut and takes available display snapshots before showing the selection overlays using `SCScreenshotManager.captureImageWithFilter:configuration:completionHandler:`. A failed display leaves the other snapshots usable.
 - **Self-Window Exclusion**: The capture filter (`SCContentFilter`) explicitly excludes Sotto's own transparent selection overlay window and active translation bubbles so they never appear in the captured image.
-- **DIP to Physical Pixel Geometry**: Translates display-local DIP coordinates into exact physical pixel rectangles matching the target display's backing scale factor.
+- The preview and the OCR crop share the same display snapshot. Selection geometry accounts for the actual overlay client origin and the snapshot's physical pixel dimensions.
 
 ### Apple Vision OCR (`internal/ocr/vision_darwin.go`)
 

@@ -17,7 +17,7 @@ CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # Requires a local desktop se
 |---|---|
 | `TestDPIAwarenessAlreadyInitialized` | The test process uses the same per-monitor DPI V2 mode as the app. Repeated initialization confirms the existing mode rather than treating "already set" as failure. Requires no desktop session and can run separately in CI. |
 | `TestPanelAndSelectionShareBubble` | The panel hotkey opens and focuses the input bubble. Three repeated invocations while visible retain the same window and focus. After blur hides it, the selection hotkey with no selected text opens an editable fallback page, reusing the same HWND. |
-| `TestSnipOverlay` | The OCR hotkey opens a native screenshot overlay using a transparent DirectComposition window without whole-window fading. Confirms DWM has uncloaked it, `MyGoSurface` exists, and there is no WebView child window; it remains present after 700 ms. Twenty open/cancel cycles without dragging alternate Esc and right-click and verify per-display HWND reuse. Canceling after a drag and reopening replaces that display's HWND while other displays continue reusing theirs. |
+| `TestSnipOverlay` | The OCR hotkey opens a native screenshot overlay using a transparent DirectComposition window without whole-window fading. Confirms DWM has uncloaked it, `MyGoSurface` exists, and there is no WebView child window; it remains present after 700 ms. Twenty open/cancel cycles alternate Esc and right-click and verify that each round destroys all its HWNDs. Canceling during a drag also destroys each overlay and a new capture can open. |
 
 Hotkey combinations are parsed from the app startup log's "hotkeys in force" line and sent as synthesized input. Tests follow changes to defaults or user bindings rather than hardcoding Alt+A/S/D.
 
@@ -42,15 +42,15 @@ Requires a Windows desktop session. Host unit tests and Windows cross-compilatio
 
 ## Manual Native Screenshot Acceptance and Measurement
 
-Pure logic and `ui.NewTester` cover forward/reverse/out-of-bounds selection drags, client-bound validation and negative-coordinate anchors, the 8-DIP size threshold, Esc/right-click/capture-loss cancellation, stale rounds and duplicate input, restoration after hiding, display removal, and retaining HWNDs for in-flight capture. Tester cannot replace actual Windows composition and multi-display validation.
+Pure logic and `ui.NewTester` cover selection gestures, cancellation, stale tasks, and cropping the same pixels displayed in the preview. Tester cannot replace actual Windows composition and multi-display validation.
 
-Relevant tests are in `internal/ui/snip/view_test.go`. `internal/ui/snip/capture_test.go` uses injected callbacks to verify lease release on cancellation and entry invalidation, without actual capture.
-
-- On single and multiple displays, secondary displays with negative coordinates, and mixed 100% / 125% / 150% / 200% scaling, verify that the transparent input layer covers its display. Before dragging, show a dark veil at roughly 10% opacity without instruction text. During dragging, add a translucent light-blue fill inside the selection and retain the light veil outside. Selection borders, DIP size labels, and the final physical screenshot must agree. Select cross-display content in separate operations.
-- After dragging, submit normally or cancel with Esc/right-click, then quickly reopen capture. From the first frame, show only the light veil, without flashing the previous selection, size badge, or blue fill. Displays canceled without dragging continue reusing their windows.
+- On single and multiple displays, including negative coordinates and mixed 100% / 125% / 150% / 200% scaling, verify the frozen preview covers each display. The selection border and DIP size label must agree with the final physical crop. Select cross-display content in separate operations.
+- Open a native dropdown or Explorer context menu, then press the screenshot shortcut. Check that the first preview still shows the menu and that OCR receives its text. Try a Chromium menu as well.
+- Submit or cancel with Esc/right-click, change the desktop, then reopen capture. The first frame shows the new desktop with a light veil and no previous selection or size label. Repeat with the pointer on an auto-hidden taskbar and with visible taskbars on multiple screens.
+- While dragging a selection, press the screenshot shortcut again. The replacement preview and crop contain no trace of the first overlay. Press Esc before a slow snapshot opens and confirm no overlay appears later.
 - Repeatedly trigger screenshots, invoke input/selection during capture, switch apps, lose pointer capture, and use Alt+F4. End the current unpinned bubble session; cancellation must not submit OCR or create stale ghost windows. Cross-display focus changes and startup must not cause unintended hiding.
-- Disconnect a display or change resolution/layout/scaling during selection. Old overlays disappear; submitted but unfinished captures are canceled, and their HWNDs remain valid until GDI returns. Reopening uses the current layout.
-- After selection, the capture contains no selection tint/border/size label, retaining the 120 ms hide wait. Real Chinese/English recognition, system fallback, and OCR's 5-minute idle release continue working.
+- Disconnect a display or change resolution/layout/scaling during selection. Pending snapshots and active selections are canceled. Reopening uses the current layout.
+- After selection, the crop contains no selection tint, border, or size label. Real Chinese/English recognition, system fallback, and OCR's 5-minute idle release continue working.
 - Check border and size-label readability on light/dark desktops. Quitting from the tray must actually close all native windows.
 
 ## Manual Bubble Edge and Long-Text Acceptance

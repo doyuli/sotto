@@ -8,7 +8,6 @@ import (
 	"image"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/ebitengine/purego/objc"
 
@@ -38,101 +37,80 @@ var loadCapture = sync.OnceValue(func() error {
 	return nil
 })
 
-var captureAdmission = make(chan struct{}, 1)
-
-func grabDisplayWindow(ctx context.Context, _ uintptr, displayID int64, r Rect) (image.Image, error) {
+func captureDisplays(ctx context.Context, ids []int64, emit func(snapshotResult)) (err error) {
 	if err := loadCapture(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := macnative.RequireScreenRecording(false); err != nil {
-		return nil, err
+		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	type result struct {
-		img image.Image
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		select {
-		case captureAdmission <- struct{}{}:
-		case <-ctx.Done():
-			done <- result{err: ctx.Err()}
-			return
-		}
-		defer func() { <-captureAdmission }()
-		// SCK has no cancellation API for a screenshot. This worker owns the
-		// gate, blocks and retained objects until native completion, even if
-		// the entry's caller has already returned on cancellation.
-		img, err := captureDisplay(ctx, displayID, macnative.NewRect(float64(r.X), float64(r.Y), float64(r.W), float64(r.H)))
-		done <- result{img, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case got := <-done:
-		return got.img, got.err
-	}
-}
-
-func captureDisplay(ctx context.Context, displayID int64, r macnative.Rect) (img image.Image, err error) {
 	macnative.Pool(func() {
-		type contentResult struct {
-			content objc.ID
-			err     error
-		}
-		contents := make(chan contentResult, 1)
-		contentBlock := objc.NewBlock(func(_ objc.Block, content, nativeErr objc.ID) {
-			macnative.Pool(func() {
-				if nativeErr != 0 || content == 0 {
-					contents <- contentResult{err: macnative.NativeError("list shareable content", nativeErr)}
-					return
-				}
-				content.Send(macnative.Sel("retain"))
-				contents <- contentResult{content: content}
-			})
-		})
-		macnative.Class("SCShareableContent").Send(macnative.Sel("getShareableContentExcludingDesktopWindows:onScreenWindowsOnly:completionHandler:"), false, true, contentBlock)
-		got := <-contents
-		contentBlock.Release()
-		if got.err != nil {
-			err = got.err
-			return
-		}
-		defer got.content.Send(macnative.Sel("release"))
 		if err = ctx.Err(); err != nil {
 			return
 		}
-		var display objc.ID
-		for _, d := range macnative.Items(got.content.Send(macnative.Sel("displays"))) {
-			if int64(objc.Send[uint32](d, macnative.Sel("displayID"))) == displayID {
-				display = d
-				break
-			}
-		}
-		if display == 0 {
-			err = fmt.Errorf("capture display no longer available")
+		content, listErr := shareableContent()
+		if listErr != nil {
+			err = listErr
 			return
 		}
-		dw, dh := objc.Send[int64](display, macnative.Sel("width")), objc.Send[int64](display, macnative.Sel("height"))
-		if r.Origin.X < 0 || r.Origin.Y < 0 || r.Size.Width <= 0 || r.Size.Height <= 0 || r.Origin.X+r.Size.Width > float64(dw) || r.Origin.Y+r.Size.Height > float64(dh) {
-			err = fmt.Errorf("capture outside display")
-			return
+		defer content.Send(macnative.Sel("release"))
+		displays := make(map[int64]objc.ID)
+		for _, display := range macnative.Items(content.Send(macnative.Sel("displays"))) {
+			id := int64(objc.Send[uint32](display, macnative.Sel("displayID")))
+			displays[id] = display
 		}
 		excluded := macnative.Array()
-		for _, w := range macnative.Items(got.content.Send(macnative.Sel("windows"))) {
-			owner := w.Send(macnative.Sel("owningApplication"))
+		for _, window := range macnative.Items(content.Send(macnative.Sel("windows"))) {
+			owner := window.Send(macnative.Sel("owningApplication"))
 			if objc.Send[int32](owner, macnative.Sel("processID")) == int32(os.Getpid()) {
-				excluded.Send(macnative.Sel("addObject:"), w)
+				excluded.Send(macnative.Sel("addObject:"), window)
 			}
 		}
+		captureEachDisplay(ctx, ids, func(id int64, maxPixels int) (image.Image, error) {
+			display := displays[id]
+			if display == 0 {
+				return nil, fmt.Errorf("capture display no longer available")
+			}
+			return captureDisplay(ctx, display, excluded, maxPixels)
+		}, emit)
+	})
+	return err
+}
+
+// The capture worker owns the block until ScreenCaptureKit completes, even if
+// the UI's deadline has expired. The returned content is retained for the batch.
+func shareableContent() (objc.ID, error) {
+	type result struct {
+		content objc.ID
+		err     error
+	}
+	results := make(chan result, 1)
+	block := objc.NewBlock(func(_ objc.Block, content, nativeErr objc.ID) {
+		macnative.Pool(func() {
+			if nativeErr != 0 || content == 0 {
+				results <- result{err: macnative.NativeError("list shareable content", nativeErr)}
+				return
+			}
+			content.Send(macnative.Sel("retain"))
+			results <- result{content: content}
+		})
+	})
+	defer block.Release()
+	macnative.Class("SCShareableContent").Send(macnative.Sel("getShareableContentExcludingDesktopWindows:onScreenWindowsOnly:completionHandler:"), false, true, block)
+	got := <-results
+	return got.content, got.err
+}
+
+func captureDisplay(ctx context.Context, display, excluded objc.ID, maxPixels int) (img image.Image, err error) {
+	macnative.Pool(func() {
+		dw, dh := objc.Send[int64](display, macnative.Sel("width")), objc.Send[int64](display, macnative.Sel("height"))
+		r := macnative.NewRect(0, 0, float64(dw), float64(dh))
 		filter := macnative.Class("SCContentFilter").Send(macnative.Sel("alloc")).Send(macnative.Sel("initWithDisplay:excludingWindows:"), display, excluded)
 		defer filter.Send(macnative.Sel("release"))
 		info := macnative.Class("SCShareableContent").Send(macnative.Sel("infoForFilter:"), filter)
 		scale := float64(objc.Send[float32](info, macnative.Sel("pointPixelScale")))
 		limits := pipeline.DefaultConfig()
-		width, height, dimErr := macnative.CaptureDimensions(r, scale, limits.MaxImageSide, limits.MaxImagePixels)
+		width, height, dimErr := macnative.CaptureDimensions(r, scale, limits.MaxImageSide, maxPixels)
 		if dimErr != nil {
 			err = fmt.Errorf("%w: %w", ErrLimit, dimErr)
 			return
@@ -175,7 +153,7 @@ func captureDisplay(ctx context.Context, displayID int64, r macnative.Rect) (img
 		}
 		// Convert while the retained CGImage is alive; only owned Go pixels
 		// escape into OCR. CoreGraphics performs the source-to-sRGB conversion.
-		img, err = macnative.CopyNativeImage(shot.image)
+		img, err = macnative.CopyNativeImage(shot.image, maxPixels)
 	})
 	return img, err
 }

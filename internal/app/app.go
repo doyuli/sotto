@@ -97,6 +97,7 @@ func (a *application) ready() {
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
+		a.snip.HideStale()
 		a.mu.Lock()
 		sv := a.settingsView
 		a.mu.Unlock()
@@ -116,9 +117,11 @@ func (a *application) ready() {
 	mygo.Screen.OnDisplaysChanged(a.bubbles.RefreshDisplays)
 	a.snip.IsQuitting = a.isQuitting
 	a.snip.Done = a.snipDone
+	a.snip.Failed = a.snipFailed
+	a.shortcutBackend = hotkey.NewBackend()
+	a.snip.RegisterEscape = a.shortcutBackend.RegisterEscape
 	mygo.Screen.OnDisplaysChanged(a.snip.RefreshDisplays)
 	a.readyPlatform()
-	a.shortcutBackend = hotkey.NewBackend()
 	mygo.App.OnQuit(a.shortcutBackend.Close)
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		a.notify("Sotto", err.Error())
@@ -208,6 +211,7 @@ func (a *application) startEntry(action string) {
 		a.bubbles.HideTransient()
 		go a.grabSelection(task, grab)
 	case "ocr":
+		a.snip.HideStale()
 		a.bubbles.HideTransient()
 		a.startScreenshot(task)
 	}

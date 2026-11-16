@@ -34,6 +34,7 @@ var (
 	procEnumWindows                   = modUser32.NewProc("EnumWindows")
 	procEnumChildWindows              = modUser32.NewProc("EnumChildWindows")
 	procGetClassNameW                 = modUser32.NewProc("GetClassNameW")
+	procIsWindow                      = modUser32.NewProc("IsWindow")
 	procIsWindowVisible               = modUser32.NewProc("IsWindowVisible")
 	procGetWindowLongW                = modUser32.NewProc("GetWindowLongW")
 	procGetLayeredWindowAttributes    = modUser32.NewProc("GetLayeredWindowAttributes")

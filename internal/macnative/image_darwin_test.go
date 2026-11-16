@@ -63,7 +63,7 @@ func TestNativeImagePixelsAndLifetime(t *testing.T) {
 		}
 		defer release(cg)
 		var err error
-		copied, err = CopyNativeImage(cg)
+		copied, err = CopyNativeImage(cg, 16<<20)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +76,7 @@ func TestNativeImagePixelsAndLifetime(t *testing.T) {
 	for range 20 {
 		err := WithNativeImage(crop, func(cg uintptr) error {
 			var err error
-			copied, err = CopyNativeImage(cg)
+			copied, err = CopyNativeImage(cg, 16<<20)
 			return err
 		})
 		if err != nil {

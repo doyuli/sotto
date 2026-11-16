@@ -122,9 +122,9 @@ When UIA returns empty or unsupported, Sotto falls back to simulating `Ctrl+C`:
 
 Implemented in `internal/capture/capture_windows.go`:
 - Uses Win32 GDI: captures the virtual screen DC using `CreateCompatibleDC`, `CreateDIBSection`, and `BitBlt`.
-- Physical coordinate calculations account for display layout bounds, DPI scale factors, and client-bound clipping.
-- The application enters through `capture.GrabDisplayWindow` using the leased overlay HWND and overlay-local DIPs. The opt-in `TestBitBltSmoke` checks the shared GDI core's physical pixel output; it does not replace mixed-DPI overlay acceptance.
-- Image budgets: selections exceeding 16 Mi pixels or 16,384 pixels on a side are rejected before memory allocation, asking the user to choose a smaller region.
+- `capture.SnapshotDisplays` resolves each MyGo display ID as an `HMONITOR` and reads its physical bounds before capture. Available snapshots are ready before showing selection overlays. `TestBitBltSmoke` exercises this path on the primary display.
+- The selection overlay projects its display snapshot into client coordinates. The OCR crop uses the inverse projection, including mixed DPI and negative screen origins.
+- Snapshots have a combined 64 Mi pixel budget. Selections remain limited to 16 Mi pixels or 16,384 pixels per side before crop allocation.
 
 ---
 

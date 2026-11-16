@@ -141,6 +141,7 @@ func Keys(goos string) []string {
 
 type Backend interface {
 	Register(string, func()) error
+	RegisterEscape(func()) (release func(), err error)
 	Unregister(string)
 	Close()
 }

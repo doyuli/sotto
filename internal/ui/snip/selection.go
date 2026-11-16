@@ -20,7 +20,7 @@ func snipCaptureAnchor(content mygo.Rectangle, r *Rect) *mygo.Point {
 }
 
 // Selection stays in overlay-local logical units. The capture boundary maps
-// these to display-local points on macOS; Windows resolves them through the HWND.
+// these to pixels in the display snapshot.
 type snipSelection struct {
 	width, height float32
 	start, end    snipPoint

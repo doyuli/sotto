@@ -11,46 +11,22 @@ const snipBackground = "#10141c1a"
 
 type snipRound struct {
 	task      Task
+	frame     *snapshotFrame
+	content   mygo.Rectangle
 	selection snipSelection
 }
 
-// The UI thread owns the screen, its round and its capture leases. Retiring a
-// screen hides it immediately but waits for GrabWindow before destroying HWND.
 type snipScreen struct {
-	display     mygo.Display
-	win         *mygo.Window
-	round       *snipRound
-	submit      func(*snipRound, *Rect)
-	dispose     func()
-	captures    int
-	captureTask Task
-	used        bool
-	retired     bool
-	disposed    bool
+	win    *mygo.Window
+	round  *snipRound
+	submit func(*snipRound, *Rect)
 }
 
-func (s *snipScreen) retire() {
-	s.retired, s.round = true, nil
-	if s.captureTask != nil {
-		s.captureTask.Cancel()
-	}
-	s.destroyIfUnused()
-}
-
-func (s *snipScreen) releaseCapture() {
-	s.captures--
-	if s.captures == 0 {
-		s.captureTask = nil
-	}
-	s.destroyIfUnused()
-}
-
-func (s *snipScreen) destroyIfUnused() {
-	if s.retired && s.captures == 0 && !s.disposed {
-		s.disposed = true
-		if s.dispose != nil {
-			s.dispose()
-		}
+// The last UI frame can still retain the round until the renderer detaches.
+func (s *snipScreen) clearRound() {
+	if s.round != nil {
+		s.round.frame = nil
+		s.round = nil
 	}
 }
 
@@ -62,10 +38,18 @@ func (s *snipScreen) view(c *ui.Context) {
 		return
 	}
 	round.selection.width, round.selection.height = c.Size()
-	ui.Box(c.Key(round.task.ID())).Fill().Background(ui.Hex(snipBackground)).
+	ui.Box(c.Key(round.task.ID())).Fill().
 		Cursor(ui.CursorCrosshair).Focusable().AutoFocus().Label("截图框选").
 		HandleInput(func(ev ui.InputEvent) bool { return s.input(round, ev) }).
-		Draw(func(p *ui.Painter, r ui.Rect) { drawSnip(p, r, &round.selection) })
+		Draw(func(p *ui.Painter, r ui.Rect) {
+			if frame := round.frame; frame != nil {
+				p.Clip(r, 0, func() {
+					p.ImageRegion(frame.bitmap, ui.Rect{}, frame.inContent(round.content), ui.ImageOptions{})
+				})
+			}
+			p.Fill(r, ui.Hex(snipBackground), 0)
+			drawSnip(p, r, &round.selection)
+		})
 }
 
 func (s *snipScreen) input(round *snipRound, ev ui.InputEvent) bool {
@@ -81,8 +65,6 @@ func (s *snipScreen) input(round *snipRound, ev ui.InputEvent) bool {
 		switch ev.Button {
 		case 0:
 			if round.selection.begin(ev.X, ev.Y) {
-				// A press can paint a 0×0 size badge before the pointer moves.
-				s.used = true
 				return true
 			}
 		case 1:

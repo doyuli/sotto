@@ -62,7 +62,7 @@ main.go               # Embeds the app icon and calls app.Run
 internal/app          # Lifecycle, controllers, hotkeys, service assembly, entry tasks, screenshot orchestration
 internal/ui/bubble    # Bubble window pool, native views, layout, and translation sessions
 internal/ui/settings  # Native settings view and asynchronous save state
-internal/ui/snip      # Selection overlays, display lifecycle, and capture window leases
+internal/ui/snip      # Selection overlays, display snapshots, and screenshot sessions
 internal/ui/shared    # Display names and icons shared by bubbles and settings
 internal/platform     # URLs, updates, CLI diagnostics, and platform window policies
 internal/config       # Settings + atomic reads/writes (keys use mygo.Secrets, never JSON)
@@ -85,4 +85,4 @@ internal/macnative    # Purego macOS system bridge (workspace, geometry, permiss
 - Put shared logic and Tester cases in ordinary `_test.go` files, and platform API tests in `_windows_test.go` / `_darwin_test.go`. Pure functions that accept a platform parameter must cover both platforms on every host; do not duplicate tests.
 - Real capture, permissions, and desktop interaction require explicit opt-in. Use `SOTTO_CAPTURE_NATIVE=1` for Windows capture, `SOTTO_MACOS_NATIVE=1` for Mac native engines/isolated pasteboards, and additionally `SOTTO_DESKTOP=1` for desktop tests. See `e2e/README.md` for entry points and verification boundaries.
 - Record symbol loading, compilation, Tester coverage, real system calls, and desktop acceptance separately. Do not report cross-compilation as a platform test pass.
-- UI/global-screen coordinates use MyGo logical space; snip gestures are overlay-local. `capture.GrabDisplayWindow` accepts overlay-local DIPs on Windows and display-local points with a stable display ID on Mac. Output images and OCR quadrilaterals use physical pixels.
+- UI/global-screen coordinates use MyGo logical space; snip gestures are overlay-local. `capture.SnapshotDisplays` takes MyGo display IDs and returns physical pixels for the displays it captured. The framework displays and crops the snapshot using the same projection from display bounds into the overlay content area. OCR quadrilaterals use physical pixels.

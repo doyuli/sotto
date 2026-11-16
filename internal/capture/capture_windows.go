@@ -3,6 +3,7 @@
 package capture
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 var (
 	modUser32 = windows.NewLazySystemDLL("user32.dll")
 	modGdi32  = windows.NewLazySystemDLL("gdi32.dll")
+	modDwmapi = windows.NewLazySystemDLL("dwmapi.dll")
 
 	procGetDC     = modUser32.NewProc("GetDC")
 	procReleaseDC = modUser32.NewProc("ReleaseDC")
@@ -28,8 +30,10 @@ var (
 	procCreateDIBSection   = modGdi32.NewProc("CreateDIBSection")
 	procDeleteObject       = modGdi32.NewProc("DeleteObject")
 	procSelectObject       = modGdi32.NewProc("SelectObject")
+	procGetMonitorInfo     = modUser32.NewProc("GetMonitorInfoW")
 	procBitBlt             = modGdi32.NewProc("BitBlt")
 	procGdiFlush           = modGdi32.NewProc("GdiFlush")
+	procDwmFlush           = modDwmapi.NewProc("DwmFlush")
 )
 
 const (
@@ -59,8 +63,8 @@ type bitmapInfo struct {
 }
 
 // bitBlt takes pw×ph physical pixels at px,py of the virtual screen.
-func bitBlt(px, py, pw, ph int) (image.Image, error) {
-	bytes, err := pixelBytes(int64(px), int64(py), int64(pw), int64(ph))
+func bitBlt(px, py, pw, ph, maxPixels int) (image.Image, error) {
+	bytes, err := pixelBytes(int64(px), int64(py), int64(pw), int64(ph), maxPixels)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +115,7 @@ func bitBlt(px, py, pw, ph int) (image.Image, error) {
 		return nil, fmt.Errorf("capture: GdiFlush failed")
 	}
 
-	img := image.NewNRGBA(image.Rect(0, 0, pw, ph))
+	img := image.NewRGBA(image.Rect(0, 0, pw, ph))
 	// native through the DIB's memory pointer, as internal/selection
 	// does, so go vet sees a legal conversion.
 	src := unsafe.Slice((*byte)(native(bits)), bytes)
@@ -129,27 +133,28 @@ func native(addr uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
 }
 
-// The overlay has one DPI per display. ClientToScreen preserves the physical
-// monitor origin, including negative coordinates, without scaling that origin.
-func grabWindow(hwnd uintptr, r Rect) (image.Image, error) {
-	if hwnd == 0 || r.X < 0 || r.Y < 0 || r.W <= 0 || r.H <= 0 {
-		return nil, fmt.Errorf("capture: invalid selection")
+func captureDisplays(ctx context.Context, ids []int64, emit func(snapshotResult)) error {
+	// The UI has hidden the old overlays and transient bubble. Wait for
+	// composition on the capture worker before reading any desktop pixels.
+	if status, _, _ := procDwmFlush.Call(); int32(status) < 0 {
+		return fmt.Errorf("capture: DwmFlush failed (HRESULT %#x)", uint32(status))
 	}
-	dpi, _, _ := modUser32.NewProc("GetDpiForWindow").Call(hwnd)
-	if dpi == 0 {
-		return nil, fmt.Errorf("capture: window DPI unavailable")
+	captureEachDisplay(ctx, ids, snapshot, emit)
+	return nil
+}
+
+// MyGo's Windows display ID is an HMONITOR. Resolve its physical rectangle
+// directly so the capture needs no overlay HWND and keeps negative origins.
+func snapshot(displayID int64, maxPixels int) (image.Image, error) {
+	var info struct {
+		size          uint32
+		monitor, work rect
+		flags         uint32
 	}
-	var origin struct{ X, Y int32 }
-	if ok, _, _ := modUser32.NewProc("ClientToScreen").Call(hwnd, uintptr(unsafe.Pointer(&origin))); ok == 0 {
-		return nil, fmt.Errorf("capture: window origin unavailable")
+	info.size = uint32(unsafe.Sizeof(info))
+	if ok, _, err := procGetMonitorInfo.Call(uintptr(displayID), uintptr(unsafe.Pointer(&info))); ok == 0 {
+		return nil, fmt.Errorf("capture: get display bounds: %w", err)
 	}
-	var bounds rect
-	if ok, _, _ := modUser32.NewProc("GetClientRect").Call(hwnd, uintptr(unsafe.Pointer(&bounds))); ok == 0 {
-		return nil, fmt.Errorf("capture: window bounds unavailable")
-	}
-	pixels, err := windowCaptureRect(r, int(dpi), origin.X, origin.Y, bounds.Right, bounds.Bottom)
-	if err != nil {
-		return nil, err
-	}
-	return bitBlt(pixels.X, pixels.Y, pixels.W, pixels.H)
+	r := info.monitor
+	return bitBlt(int(r.Left), int(r.Top), int(r.Right)-int(r.Left), int(r.Bottom)-int(r.Top), maxPixels)
 }

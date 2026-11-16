@@ -65,6 +65,19 @@ func (b *systemBackend) Register(value string, fn func()) error {
 	if err != nil {
 		return err
 	}
+	return b.registerShortcut(s, fn)
+}
+
+func (b *systemBackend) RegisterEscape(fn func()) (func(), error) {
+	// The temporary cancel key is separate from configurable entry shortcuts,
+	// which still require at least one modifier.
+	if err := b.registerShortcut(Shortcut{Key: "Escape"}, fn); err != nil {
+		return nil, err
+	}
+	return func() { b.Unregister("Escape") }, nil
+}
+
+func (b *systemBackend) registerShortcut(s Shortcut, fn func()) error {
 	code, ok := macKeyCodes[s.Key]
 	if !ok {
 		return fmt.Errorf("macOS 暂不支持按键 %s", s.Key)
@@ -72,7 +85,7 @@ func (b *systemBackend) Register(value string, fn func()) error {
 	if err := loadCarbon(); err != nil {
 		return fmt.Errorf("加载快捷键组件：%w", err)
 	}
-	err = fmt.Errorf("应用已退出，无法注册快捷键")
+	err := fmt.Errorf("应用已退出，无法注册快捷键")
 	mygo.RunOnMain(func() {
 		if b.closed {
 			return

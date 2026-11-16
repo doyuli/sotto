@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -56,11 +57,11 @@ var loadImage = sync.OnceValue(func() error {
 
 // imageContext owns native pixel memory. No Go buffer is retained by CoreGraphics.
 // CoreGraphics' premultiplied-last, big-endian RGBA matches image.RGBA.
-func imageContext(width, height int) (uintptr, *image.RGBA, error) {
+func imageContext(width, height, maxPixels int) (uintptr, *image.RGBA, error) {
 	if err := loadImage(); err != nil {
 		return 0, nil, err
 	}
-	if width <= 0 || height <= 0 || width > (16<<20)/height {
+	if width <= 0 || height <= 0 || width > min(maxPixels, math.MaxInt/4)/height {
 		return 0, nil, fmt.Errorf("native image dimensions exceed budget")
 	}
 	const rgba = uint32(1 | 4<<12)
@@ -78,8 +79,9 @@ func imageContext(width, height int) (uintptr, *image.RGBA, error) {
 }
 
 // CopyNativeImage converts arbitrary CGImage color spaces and row layouts to
-// owned sRGB Go pixels. The caller retains the source until this call returns.
-func CopyNativeImage(source uintptr) (*image.RGBA, error) {
+// owned sRGB Go pixels. The caller retains the source and supplies the same
+// pixel budget it validated before requesting the image.
+func CopyNativeImage(source uintptr, maxPixels int) (*image.RGBA, error) {
 	if err := loadImage(); err != nil {
 		return nil, err
 	}
@@ -87,10 +89,10 @@ func CopyNativeImage(source uintptr) (*image.RGBA, error) {
 		return nil, fmt.Errorf("empty native image")
 	}
 	w, h := nativeImage.width(source), nativeImage.height(source)
-	if w == 0 || h == 0 || h > 16<<20 || w > (16<<20)/h {
+	if w == 0 || h == 0 || maxPixels <= 0 || w > uint64(maxPixels)/h {
 		return nil, fmt.Errorf("native image dimensions exceed budget")
 	}
-	context, pixels, err := imageContext(int(w), int(h))
+	context, pixels, err := imageContext(int(w), int(h), maxPixels)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +112,7 @@ func WithNativeImage(img image.Image, use func(uintptr) error) error {
 		return fmt.Errorf("empty image")
 	}
 	bounds := img.Bounds()
-	context, pixels, err := imageContext(bounds.Dx(), bounds.Dy())
+	context, pixels, err := imageContext(bounds.Dx(), bounds.Dy(), 16<<20)
 	if err != nil {
 		return err
 	}

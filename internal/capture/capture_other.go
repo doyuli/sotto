@@ -3,10 +3,10 @@
 package capture
 
 import (
+	"context"
 	"errors"
-	"image"
 )
 
-func grabWindow(uintptr, Rect) (image.Image, error) {
-	return nil, errors.New("capture is only supported on Windows and macOS")
+func captureDisplays(context.Context, []int64, func(snapshotResult)) error {
+	return errors.New("capture is only supported on Windows and macOS")
 }

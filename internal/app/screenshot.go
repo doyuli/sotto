@@ -12,8 +12,12 @@ import (
 	"sotto/internal/ui/snip"
 )
 
-// snipDone starts recognition after snip has hidden the overlays and leased
-// the source window. The capture releases its lease before OCR or networking.
+func (a *application) snipFailed(task snip.Task, err error) {
+	log.Printf("capture: %v", err)
+	go a.bubbles.ShowTask(a.settings(), "ocr", "", nil, "error", capture.SnapshotUserMessage(err), task.Valid, task.Cancel)
+}
+
+// snipDone crops the snapshot and starts recognition after the overlays close.
 func (a *application) snipDone(shot *snip.Capture) {
 	task := shot.Task
 	anchor := &bubble.Anchor{X: shot.Anchor.X, Y: shot.Anchor.Y}

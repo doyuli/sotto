@@ -111,53 +111,6 @@ func TestNativeSnipDrawsLightVeilAndTranslucentSelection(t *testing.T) {
 	}
 }
 
-func TestSnipUsedSurfaceIsReplacedBeforeReuse(t *testing.T) {
-	for _, cancel := range []bool{false, true} {
-		screen, tt, _ := snipTestScreen(t)
-		clean := &snipScreen{}
-		manager := Manager{screens: map[int64]*snipScreen{1: screen, 2: clean}}
-		if manager.reusableScreen(1) != screen {
-			t.Fatal("unused overlay was not reused")
-		}
-		tt.Press(100, 100)
-		tt.Move(500, 400)
-		if cancel {
-			tt.Key(0, ui.KeyEscape)
-		} else {
-			tt.Release(500, 400)
-		}
-		// Hiding clears the model before a clean frame is guaranteed to
-		// replace the surface's previous contents.
-		screen.round = nil
-		closes := 0
-		screen.dispose = func() { closes++ }
-		if manager.reusableScreen(1) != nil || !screen.disposed || closes != 1 {
-			t.Fatal("a surface with an old selection could be shown again")
-		}
-		if _, retained := manager.screens[1]; retained || manager.reusableScreen(2) != clean {
-			t.Fatal("replacement did not preserve the other display's unused overlay")
-		}
-	}
-}
-
-func TestSnipUsedSurfaceKeepsBorrowedHWNDUntilCaptureReturns(t *testing.T) {
-	screen, tt, _ := snipTestScreen(t)
-	tt.Press(100, 100)
-	tt.Release(500, 400)
-	screen.round = nil
-	screen.captures = 1
-	closes := 0
-	screen.dispose = func() { closes++ }
-	manager := Manager{screens: map[int64]*snipScreen{1: screen}}
-	if manager.reusableScreen(1) != nil || !screen.retired || closes != 0 {
-		t.Fatal("replacement destroyed a borrowed HWND")
-	}
-	screen.releaseCapture()
-	if closes != 1 {
-		t.Fatal("capture completion did not dispose the old surface")
-	}
-}
-
 func TestNativeSnipCaptureClampsOutsideDisplay(t *testing.T) {
 	_, tt, results := snipTestScreen(t)
 	tt.Press(10, 10)
@@ -261,7 +214,7 @@ func TestSnipTaskAndWindowOwnership(t *testing.T) {
 	old := gate.Begin()
 	current := gate.Begin()
 	win, other := &mygo.Window{}, &mygo.Window{}
-	screen := &snipScreen{win: win}
+	screen := &snipScreen{win: win, round: &snipRound{task: current}}
 	s := Manager{task: current, screens: map[int64]*snipScreen{1: screen}}
 	if task, _ := s.take(old.ID(), win); task != nil || s.task != current {
 		t.Fatal("stale task consumed the new shot")
@@ -274,37 +227,5 @@ func TestSnipTaskAndWindowOwnership(t *testing.T) {
 	}
 	if task, _ := s.take(current.ID(), win); task != nil {
 		t.Fatal("duplicate completion consumed a shot twice")
-	}
-}
-
-func TestSnipDisplayChangesRetireAfterCapture(t *testing.T) {
-	for _, scale := range []float64{1, 1.25, 1.5, 2} {
-		display := mygo.Display{ID: 7, Bounds: mygo.Rectangle{X: -1920, Y: -100, Width: 1920, Height: 1080}, ScaleFactor: scale}
-		closes := 0
-		var gate testGate
-		task := gate.Begin()
-		screen := &snipScreen{display: display, captures: 1, captureTask: task, dispose: func() { closes++ }}
-		s := Manager{screens: map[int64]*snipScreen{7: screen}}
-		s.prune([]mygo.Display{display})
-		if screen.retired || closes != 0 {
-			t.Fatal("unchanged display was not reused")
-		}
-		changed := display
-		changed.Bounds.X = 0
-		s.prune([]mygo.Display{changed})
-		if !screen.retired || len(s.screens) != 0 || closes != 0 || task.Valid() {
-			t.Fatal("display change destroyed an in-flight capture HWND")
-		}
-		screen.releaseCapture()
-		screen.retire()
-		if closes != 1 {
-			t.Fatal("retired capture did not close exactly once")
-		}
-		removed := &snipScreen{display: display, dispose: func() { closes++ }}
-		s.screens[display.ID] = removed
-		s.prune(nil)
-		if !removed.disposed || closes != 2 || len(s.screens) != 0 {
-			t.Fatal("disconnected display was retained")
-		}
 	}
 }

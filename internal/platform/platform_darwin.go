@@ -5,7 +5,6 @@ package platform
 import (
 	_ "embed"
 	"errors"
-	"time"
 
 	"github.com/egoist/mygo"
 
@@ -13,7 +12,6 @@ import (
 )
 
 func WorkspaceGeneration() uint64 { return macnative.WorkspaceGeneration() }
-func CaptureDelay() time.Duration { return 0 }
 
 // Keep the menu bar silhouette independent of the app icon's colors and tile.
 //

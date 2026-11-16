@@ -12,8 +12,7 @@
 //   - the panel hotkey opens the input bubble, which takes focus and goes away
 //     when something else takes it (the "click elsewhere" behavior)
 //   - the OCR hotkey opens translucent native screenshot overlays;
-//     Escape/right-click cancel, unused windows are reused, and a dragged
-//     surface is replaced before it can show a previous selection
+//     Escape/right-click cancel and destroy the windows, including after a drag
 package e2e
 
 import (
@@ -182,7 +181,7 @@ func TestPanelAndSelectionShareBubble(t *testing.T) {
 }
 
 // TestSnipOverlay verifies the transparent composition window, native content,
-// keyboard/mouse cancellation and clean surface reuse over the live desktop.
+// keyboard/mouse cancellation and window cleanup over the live desktop.
 func TestSnipOverlay(t *testing.T) {
 	pid, stop := start(t)
 	defer stop()
@@ -200,18 +199,23 @@ func TestSnipOverlay(t *testing.T) {
 		t.Fatal("native screenshot overlay never presented after the OCR hotkey")
 		return nil
 	}
-	waitHidden := func() {
+	waitClosed := func(handles []uintptr) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
-		for len(visibleHandles(pid)) != 0 {
+		for slices.ContainsFunc(handles, func(hwnd uintptr) bool {
+			alive, _, _ := procIsWindow.Call(hwnd)
+			return alive != 0
+		}) {
 			if time.Now().After(deadline) {
-				t.Fatal("overlay did not cancel")
+				t.Fatal("canceled overlays did not release their windows")
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
+		if len(visibleHandles(pid)) != 0 {
+			t.Fatal("canceling a screenshot left a visible window")
+		}
 	}
 	first := open()
-	slices.Sort(first)
 	for _, hwnd := range first {
 		ex, _, _ := procGetWindowLongW.Call(hwnd, gwlExStyle)
 		if ex&wsExNoRedirectionBitmap == 0 {
@@ -230,12 +234,12 @@ func TestSnipOverlay(t *testing.T) {
 	if _, ready := nativeSnipReady(pid); !ready {
 		t.Fatal("native overlay hid itself after presentation")
 	}
+	handles := first
 	for cycle := range 20 {
 		if cycle != 0 {
-			handles := open()
-			slices.Sort(handles)
-			if !slices.Equal(first, handles) {
-				t.Fatal("opening/canceling screenshots did not reuse the per-display windows")
+			handles = open()
+			if len(handles) != len(first) {
+				t.Fatalf("reopen showed %d overlays, want %d", len(handles), len(first))
 			}
 		}
 		if cycle%2 == 0 {
@@ -243,7 +247,7 @@ func TestSnipOverlay(t *testing.T) {
 		} else {
 			rightClick()
 		}
-		waitHidden()
+		waitClosed(handles)
 	}
 	before := open()
 	active, _, _ := procGetForegroundWindow.Call()
@@ -257,19 +261,14 @@ func TestSnipOverlay(t *testing.T) {
 	defer release()
 	time.Sleep(150 * time.Millisecond)
 	tapAccel("Escape")
-	waitHidden()
+	waitClosed(before)
 	release()
 	after := open()
-	if len(before) != len(after) || slices.Contains(after, active) {
-		t.Fatal("a surface with a previous selection was shown again")
-	}
-	for _, hwnd := range before {
-		if hwnd != active && !slices.Contains(after, hwnd) {
-			t.Fatal("an unused display's overlay was unnecessarily replaced")
-		}
+	if len(before) != len(after) {
+		t.Fatalf("reopen after canceled drag showed %d overlays, want %d", len(after), len(before))
 	}
 	tapAccel("Escape")
-	waitHidden()
+	waitClosed(after)
 }
 
 // Use the app's DPI context so window rectangles and synthesized drags share
