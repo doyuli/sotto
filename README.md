@@ -37,10 +37,10 @@ When reading documentation, researching foreign language resources, or coding, c
 ## Features
 
 - **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold, copy, or retry cards independently.
-- **Non-Intrusive Selection & Clipboard Protection**: Windows reads text via UI Automation (UIA) and macOS via Accessibility without stealing focus. The simulated copy fallback restores readable clipboard content when safe. On Windows, clipboard history exclusion markers apply only to Sotto’s own restore writes.
-- **Offline Screen OCR**: Snip a screen region to recognize text locally, then send the text for translation. Windows uses embedded PP-OCR with a WinRT OCR fallback, and macOS uses native Vision. Images stay on your device.
+- **Non-Intrusive Selection & Clipboard Protection**: Windows reads text via UIA and macOS via Accessibility without stealing focus; simulated copy automatically and fully restores the clipboard with history exclusion markers attached.
+- **Offline Screen OCR**: Snip any screen region for instant local recognition and translation; Windows embeds PP-OCR and WinRT OCR, macOS uses native Vision, and images are never uploaded to the cloud.
 - **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
-- **Credential Protection & Zero Telemetry**: Zero tracking. API keys are protected by the system credential manager or keychain.
+- **Credential Protection & Zero Telemetry**: Zero tracking, with API keys protected by the system credential manager or keychain.
 - **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects system themes, hides on blur, or pins in place.
 
 ---

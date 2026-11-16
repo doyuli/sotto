@@ -3,8 +3,30 @@ name: CI
 on:
   workflow_dispatch:
   pull_request:
+    paths-ignore:
+      - README.md
+      - README_CN.md
+      - AGENTS.md
+      - DESIGN.md
+      - PRODUCT.md
+      - 'docs/**'
+      - 'e2e/*.md'
+      - '.agents/**'
+      - '.vscode/**'
+      - '.github/pull_request_template.md'
   push:
     branches: [main]
+    paths-ignore:
+      - README.md
+      - README_CN.md
+      - AGENTS.md
+      - DESIGN.md
+      - PRODUCT.md
+      - 'docs/**'
+      - 'e2e/*.md'
+      - '.agents/**'
+      - '.vscode/**'
+      - '.github/pull_request_template.md'
 
 permissions:
   contents: read
