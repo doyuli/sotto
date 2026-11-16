@@ -12,7 +12,7 @@ import (
 
 type hotkeyItem struct{ id, label string }
 
-var settingsHotkeys = []hotkeyItem{{"panel", "翻译面板"}, {"selection", "划词翻译"}, {"ocr", "截图翻译"}}
+var settingsHotkeys = []hotkeyItem{{"panel", "翻译面板"}, {"ocr", "截图翻译"}, {"selection", "划词翻译"}}
 
 func displayHotkey(value string) string { return hotkeyDisplayForPlatform(value, runtime.GOOS) }
 func hotkeyDisplayForPlatform(value, goos string) string {
