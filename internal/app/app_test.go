@@ -1,6 +1,34 @@
 package app
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"sotto/internal/config"
+	"sotto/internal/translate"
+)
+
+func TestPrepareTranslationRequestCleansAndValidatesSource(t *testing.T) {
+	// Cleanup can make the input empty or expand an identifier past the limit.
+	cfg := config.Default()
+	cfg.Identifier.StripMarkdown = true
+	for _, tc := range []struct {
+		name, text, want string
+		wantErr          error
+	}{
+		{name: "trim and split", text: " \tgetUserInfo\n ", want: "get User Info"},
+		{name: "empty after cleanup", text: " \n---\n ", wantErr: translate.ErrEmptySource},
+		{name: "too long after splitting", text: strings.Repeat("aB", translate.MaxInputRunes/2), wantErr: translate.ErrInputLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := prepareTranslationRequest(tc.text, "", "", cfg)
+			if !errors.Is(err, tc.wantErr) || req.Text != tc.want {
+				t.Fatalf("request text length=%d, err=%v, want length=%d and err=%v", len(req.Text), err, len(tc.want), tc.wantErr)
+			}
+		})
+	}
+}
 
 func TestExplicitTargetWins(t *testing.T) {
 	cases := []struct{ script, requested, configured, want string }{

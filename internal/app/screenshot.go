@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"image"
 	"log"
+	"strings"
 	"time"
 
 	"sotto/internal/capture"
@@ -45,30 +47,34 @@ func (a *application) snipDone(shot *snip.Capture) {
 		if shown.Win == nil || err != nil || !task.Valid() {
 			return
 		}
-		ctx, cancel := context.WithTimeout(task.Context(), 30*time.Second)
-		defer cancel()
-		result, err := ocr.Recognize(ctx, img)
+		text, message := recognizeScreenshot(task.Context(), img)
 		if !task.Valid() {
 			return
 		}
-		message = ""
-		if err != nil {
-			message = ocr.UserMessage(err)
-			log.Printf("ocr: %v", err)
-		} else if result.Text == "" {
-			message = "未识别到文字，请框选完整文字后重试。"
-		}
-		if message == "" {
-			if err := translate.ValidateInput(result.Text); err != nil {
-				result.Text = ""
-				message = translate.UserMessage(err)
-			}
-		}
-		if !a.bubbles.CompleteCapture(a.settings(), shown, result.Text, message) {
+		if !a.bubbles.CompleteCapture(a.settings(), shown, text, message) {
 			return
 		}
 		if message == "" && task.Valid() {
-			a.runTranslation(shown.Win, bubble.RunReq{ReqID: shown.ReqID, SessionID: shown.ReqID, Revision: 0, Source: "ocr", Text: result.Text})
+			a.runTranslation(shown.Win, bubble.RunReq{ReqID: shown.ReqID, SessionID: shown.ReqID, Revision: 0, Source: "ocr", Text: text})
 		}
 	}()
+}
+
+func recognizeScreenshot(ctx context.Context, img image.Image) (text, message string) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := ocr.Recognize(ctx, img)
+	if err != nil {
+		if ctx.Err() != context.Canceled {
+			log.Printf("ocr: %v", err)
+		}
+		return "", ocr.UserMessage(err)
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		return "", "未识别到文字，请框选完整文字后重试。"
+	}
+	if err := translate.ValidateInput(result.Text); err != nil {
+		return "", translate.UserMessage(err)
+	}
+	return result.Text, ""
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
+	"sotto/internal/translate"
 )
 
 func testBubbleConfig() config.Settings {
@@ -70,6 +71,41 @@ func TestBubbleViewComposerSubmitAndClear(t *testing.T) {
 	tt.Key(0, ui.KeyEscape)
 	if !closed {
 		t.Fatal("Escape did not invoke close")
+	}
+}
+
+func TestBubbleViewInputErrorKeepsSourceAndAllowsResubmit(t *testing.T) {
+	// Cleanup failures belong to the input and should be visible even before choosing services.
+	cfg := testBubbleConfig()
+	var runs []RunReq
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		run: func(req RunReq) { runs = append(runs, req) },
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "invalid-selection", ShowID: 1,
+		ReqID: "invalid-source", Trigger: "selection", Text: "---", Settings: cfg,
+	}, true)
+	tt := ui.NewTester(v.render, 480, 420)
+	message := translate.UserMessage(translate.ErrEmptySource)
+	v.applyMeta(RunMetaMsg{ReqID: "invalid-source", InputError: message})
+	tt.Frame()
+	if !tt.HasText(message) || v.composerText != "---" || len(v.showingServices()) != 0 ||
+		tt.HasText("没有可用的翻译服务") {
+		t.Fatalf("validation should show a single input error and keep the source: %v", tt.Texts())
+	}
+
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("review")
+	tt.Key(0, ui.KeyEnter)
+	if len(runs) != 1 || runs[0].Text != "review" {
+		t.Fatalf("edited source was not submitted: %+v", runs)
+	}
+	v.applyMeta(RunMetaMsg{ReqID: "invalid-source", InputError: message})
+	v.applyMeta(RunMetaMsg{ReqID: runs[0].ReqID, Services: []string{"google"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: runs[0].ReqID, Service: "google", Text: "审查"})
+	tt.Frame()
+	if tt.HasText(message) || !tt.HasText("审查") {
+		t.Fatalf("a previous input error affected the new result: %v", tt.Texts())
 	}
 }
 

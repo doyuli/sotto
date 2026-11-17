@@ -40,12 +40,14 @@ type TranslationUpdateMsg struct {
 
 // RunMetaMsg tells the page the languages a request resolved to, so its
 // badge and selectors can follow the automatic detection, and the
-// services that will answer it.
+// services that will answer it. An input error ends a full run before
+// any services are chosen.
 type RunMetaMsg struct {
 	ReqID      string   `json:"reqID"`
 	SourceLang string   `json:"sourceLang"`
 	TargetLang string   `json:"targetLang"`
 	Services   []string `json:"services"`
+	InputError string   `json:"inputError,omitempty"`
 }
 
 type BubblePresentedMsg struct {

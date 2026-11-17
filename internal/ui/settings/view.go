@@ -352,7 +352,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 		})
 
 		simple := cfg.SimpleTranslation
-		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文。支持中英文，使用排在首位的已启用服务。", true, func() {
+		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文，使用排在首位的已启用服务。", true, func() {
 			ui.Switch(c, &simple).Label("切换简约翻译模式").OnClick(func() {
 				v.mu.Lock()
 				defer v.mu.Unlock()

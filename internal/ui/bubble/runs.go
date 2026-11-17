@@ -97,7 +97,7 @@ func (m *Manager) PushMeta(win *mygo.Window, meta RunMetaMsg, retry string) bool
 					}
 				}
 			}
-			if b.reqID == meta.ReqID {
+			if b.reqID == meta.ReqID && meta.InputError == "" {
 				b.sourceLang, b.targetLang = meta.SourceLang, meta.TargetLang
 			}
 			view := b.view

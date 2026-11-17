@@ -11,8 +11,6 @@ import (
 	"sotto/internal/capture"
 	"sotto/internal/config"
 	"sotto/internal/keys"
-	"sotto/internal/langdetect"
-	"sotto/internal/ocr"
 	"sotto/internal/platform"
 	"sotto/internal/translate"
 	"sotto/internal/ui/overlay"
@@ -141,53 +139,17 @@ func (a *application) simpleScreenshot(ctx context.Context, shot *snip.Capture, 
 		log.Printf("capture: %v", err)
 		return translate.Result{Err: capture.UserMessage(err)}
 	}
-	ocrCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	result, err := ocr.Recognize(ocrCtx, img)
-	cancel()
-	if err != nil {
-		log.Printf("ocr: %v", err)
-		return translate.Result{Err: ocr.UserMessage(err)}
+	text, message := recognizeScreenshot(ctx, img)
+	if message != "" {
+		return translate.Result{Err: message}
 	}
-	if strings.TrimSpace(result.Text) == "" {
-		return translate.Result{Err: "未识别到文字，请框选完整文字后重试。"}
-	}
-	return a.simpleTranslation(ctx, result.Text, progress)
-}
-
-func simpleLanguages(text, configured string) (source, target string) {
-	switch langdetect.Detect(text) {
-	case "zh":
-		source, target = "zh-HANS", "en"
-	case "latin":
-		source, target = "en", "zh-HANS"
-	default:
-		return "", ""
-	}
-	if configured == "zh-HANS" || configured == "en" {
-		target = configured
-	}
-	return source, target
+	return a.simpleTranslation(ctx, text, progress)
 }
 
 func (a *application) simpleTranslation(ctx context.Context, text string, progress func(string)) translate.Result {
-	if err := translate.ValidateInput(text); err != nil {
+	request, err := prepareTranslationRequest(text, "", "", a.settings())
+	if err != nil {
 		return translate.Result{Err: translate.UserMessage(err)}
-	}
-	cfg := a.settings()
-	original := strings.TrimSpace(text)
-	text = strings.TrimSpace(prepareTranslationSource(text, cfg.Identifier))
-	if text == "" {
-		return translate.Result{Err: "清理后的原文为空，请修改原文或调整命名转换设置。"}
-	}
-	if err := translate.ValidateInput(text); err != nil {
-		return translate.Result{Err: translate.UserMessage(err)}
-	}
-	source, target := simpleLanguages(text, cfg.TargetLanguage)
-	if source == "" {
-		return translate.Result{Err: "简约翻译仅支持中文和英文。"}
-	}
-	if source == target {
-		return translate.Result{Text: original}
 	}
 	cfg, credentials, err := a.simpleService(ctx)
 	if ctx.Err() != nil {
@@ -201,7 +163,7 @@ func (a *application) simpleTranslation(ctx context.Context, text string, progre
 	}
 	var final translate.Result
 	var partial string
-	translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target}, func(result translate.Result) {
+	translate.Run(ctx, cfg, credentials, request, func(result translate.Result) {
 		if result.Streaming {
 			if result.Text != partial && strings.TrimSpace(result.Text) != "" {
 				partial = result.Text

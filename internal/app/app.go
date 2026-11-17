@@ -461,22 +461,23 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 	}
 	cfg := a.settings()
 
-	text := prepareTranslationSource(req.Text, cfg.Identifier)
-
-	// A lone English word also gets a dictionary card: the phonetics
-	// and the main senses, beside the translations.
-	singleWord := isSingleWord(text)
-
-	detected := langdetect.Detect(text)
-	source := req.SourceLang
-	if source == "" {
-		source = "auto"
+	request, inputErr := prepareTranslationRequest(req.Text, req.SourceLang, req.TargetLang, cfg)
+	if inputErr == nil {
+		// Resolve the actual request before publishing metadata or starting I/O.
+		req.SourceLang, req.TargetLang = request.SourceLang, request.TargetLang
 	}
-	target := resolveTarget(detected, req.TargetLang, cfg.TargetLanguage)
-	// Resolve the actual request before publishing metadata or starting I/O.
-	req.SourceLang, req.TargetLang = source, target
 	ctx, accepted := a.bubbles.StartRun(win, req)
 	if !accepted {
+		return
+	}
+	if inputErr != nil {
+		defer a.bubbles.FinishRun(win, req.ReqID)
+		message := translate.UserMessage(inputErr)
+		if req.Service == "" {
+			a.bubbles.PushMeta(win, bubble.RunMetaMsg{ReqID: req.ReqID, InputError: message}, "")
+		} else {
+			a.bubbles.PushResult(win, bubble.TranslationUpdateMsg{ReqID: req.ReqID, Service: req.Service, Err: message})
+		}
 		return
 	}
 	credentials, err := a.translationCredentials(ctx, &cfg.Services, req.Service)
@@ -491,7 +492,7 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 			cfg.Services.Enabled = []string{req.Service}
 		}
 	}
-	meta := bubble.RunMetaMsg{ReqID: req.ReqID, SourceLang: source, TargetLang: target, Services: services}
+	meta := bubble.RunMetaMsg{ReqID: req.ReqID, SourceLang: request.SourceLang, TargetLang: request.TargetLang, Services: services}
 	if !a.bubbles.PushMeta(win, meta, req.Service) {
 		a.bubbles.FinishRun(win, req.ReqID)
 		return
@@ -511,29 +512,37 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 			msg := bubble.TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err, Streaming: res.Streaming}
 			a.bubbles.PushResult(win, msg)
 		}
-		if text == "" {
-			for _, service := range cfg.Services.Enabled {
-				if slices.Contains(services, service) {
-					emit(translate.Result{Service: service, Err: "清理后的原文为空，请修改原文或调整命名转换设置"})
-				}
-			}
-			return
-		}
-		translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target, SingleWord: singleWord}, emit)
+		translate.Run(ctx, cfg, credentials, request, emit)
 	}()
 }
 
-func prepareTranslationSource(text string, options config.IdentifierSettings) string {
-	if translate.ValidateInput(text) == nil {
-		text = translate.PrepareSource(text, options)
+func prepareTranslationRequest(text, source, target string, cfg config.Settings) (translate.Request, error) {
+	if err := translate.ValidateInput(text); err != nil {
+		return translate.Request{}, err
 	}
+	text = strings.TrimSpace(translate.PrepareSource(text, cfg.Identifier))
+	if text == "" {
+		return translate.Request{}, translate.ErrEmptySource
+	}
+	if err := translate.ValidateInput(text); err != nil {
+		return translate.Request{}, err
+	}
+	detected := langdetect.Detect(text)
 	// Identifiers translate better as words: getUserInfo goes to the
-	// services as "get user info".
-	if translate.ValidateInput(text) == nil && options.AutoSplit && naming.DetectStyle(text) != naming.None &&
-		langdetect.Detect(text) == "latin" {
+	// services as "get User Info".
+	if cfg.Identifier.AutoSplit && detected == "latin" && naming.DetectStyle(text) != naming.None {
 		text = strings.Join(naming.SplitWords(text), " ")
+		if err := translate.ValidateInput(text); err != nil {
+			return translate.Request{}, err
+		}
 	}
-	return text
+	if source == "" {
+		source = "auto"
+	}
+	return translate.Request{
+		Text: text, SourceLang: source, TargetLang: resolveTarget(detected, target, cfg.TargetLanguage),
+		SingleWord: isSingleWord(text),
+	}, nil
 }
 
 // isSingleWord reports whether text is one bare English word — letters

@@ -12,6 +12,7 @@ const maxResultBytes = 256 << 10
 
 var ErrInputLimit = errors.New("translation input exceeds budget")
 var ErrResultLimit = errors.New("translation result exceeds budget")
+var ErrEmptySource = errors.New("translation source is empty after cleanup")
 
 func ValidateInput(text string) error {
 	if len(text) > MaxInputRunes*utf8.UTFMax || utf8.RuneCountInString(text) > MaxInputRunes {

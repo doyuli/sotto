@@ -178,32 +178,47 @@ func (k *simpleTestKeyring) Snapshot(names []string) keys.Snapshot {
 	return k.serviceTestKeyring.Snapshot(names)
 }
 
-func TestSimpleLanguages(t *testing.T) {
-	for _, tc := range []struct{ text, configured, source, target string }{
-		{"请审查这个 PR。", "auto", "zh-HANS", "en"},
-		{"Review the change.", "auto", "en", "zh-HANS"},
-		{"请审查这个 PR。", "en", "zh-HANS", "en"},
-		{"Review the change.", "zh-HANS", "en", "zh-HANS"},
-		{"请审查这个 PR。", "zh-HANS", "zh-HANS", "zh-HANS"},
-		{"Review the change.", "en", "en", "en"},
-		{"请审查这个 PR。", "ja", "zh-HANS", "en"},
-		{"Review the change.", "ko", "en", "zh-HANS"},
-		{"今日は晴れです。", "en", "", ""},
-		{"안녕하세요", "zh-HANS", "", ""},
+func TestSimpleTranslationUsesBubbleLanguageRules(t *testing.T) {
+	// The overlay used to infer the source language and override the saved target.
+	for _, tc := range []struct{ name, text, configured, target string }{
+		{"Chinese with default target", "请审查这次改动。", "zh-HANS", "English"},
+		{"English with Greek symbol", "\t The angle θ is measured in radians. \n", "zh-HANS", "Simplified Chinese"},
+		{"configured Japanese target", "Review the change.", "ja", "Japanese"},
+		{"French with English target", "Bonjour, comment allez-vous ?", "en", "English"},
+		{"automatic target", "今日は晴れです。", "auto", "Simplified Chinese"},
 	} {
-		if source, target := simpleLanguages(tc.text, tc.configured); source != tc.source || target != tc.target {
-			t.Errorf("%q with %s: got %s to %s, want %s to %s", tc.text, tc.configured, source, target, tc.source, tc.target)
-		}
-	}
-}
-
-func TestSimpleTranslationSkipsProviderForTextAlreadyInConfiguredLanguage(t *testing.T) {
-	cfg := config.Default()
-	cfg.TargetLanguage = "en"
-	cfg.Services.Enabled = []string{"openai"}
-	a := &application{cfg: cfg, keys: &unusedKeyring{t: t}}
-	if got := a.simpleTranslation(t.Context(), "getUserInfo", func(string) { t.Fatal("unexpected stream") }); got.Text != "getUserInfo" || got.Err != "" {
-		t.Fatalf("result=%+v, want the original text", got)
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload struct {
+					Messages []struct{ Role, Content string }
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Errorf("decode translation request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if !slices.ContainsFunc(payload.Messages, func(m struct{ Role, Content string }) bool {
+					return m.Role == "system" && strings.Contains(m.Content, "Translate the user's input into "+tc.target+".")
+				}) {
+					t.Errorf("expected auto source and target %q, messages=%+v", tc.target, payload.Messages)
+				}
+				if !slices.ContainsFunc(payload.Messages, func(m struct{ Role, Content string }) bool {
+					return m.Role == "user" && m.Content == strings.TrimSpace(tc.text)
+				}) {
+					t.Errorf("expected trimmed source %q, messages=%+v", strings.TrimSpace(tc.text), payload.Messages)
+				}
+				io.WriteString(w, `{"choices":[{"message":{"content":"translated"}}]}`)
+			}))
+			defer server.Close()
+			cfg := config.Default()
+			cfg.TargetLanguage = tc.configured
+			cfg.Services.Enabled = []string{"openai"}
+			cfg.Services.OpenAI.BaseURL = server.URL
+			a := &application{cfg: cfg, keys: &serviceTestKeyring{values: map[string]string{keys.OpenAIKey: "test"}}}
+			if got := a.simpleTranslation(t.Context(), tc.text, func(string) {}); got.Text != "translated" || got.Err != "" {
+				t.Fatalf("expected provider result, got %+v", got)
+			}
+		})
 	}
 }
 

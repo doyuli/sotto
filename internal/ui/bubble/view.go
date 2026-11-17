@@ -391,6 +391,9 @@ func (v *bubbleView) applyMeta(meta RunMetaMsg) {
 	if meta.TargetLang != "" {
 		v.targetLang = meta.TargetLang
 	}
+	if meta.InputError != "" {
+		v.phase, v.message = "error", meta.InputError
+	}
 	if v.retryService == "" {
 		v.runServices = make(map[string]bool, len(meta.Services))
 		for _, svc := range meta.Services {
@@ -979,7 +982,7 @@ func (v *bubbleView) renderBanners(c *ui.Context, p bubblePalette) {
 						v.renderLinkButton(c, p, "取消识别", v.closeBubble)
 					} else if v.trigger == "ocr" {
 						v.renderLinkButton(c, p, "重新框选", v.actions.startOCR)
-					} else if isError {
+					} else if isError && v.trigger == "selection" {
 						v.renderLinkButton(c, p, "截图翻译", v.actions.startOCR)
 					}
 				})
@@ -1210,7 +1213,7 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 func (v *bubbleView) renderResults(c *ui.Context, p bubblePalette) {
 	showing := v.showingServices()
 	if len(showing) == 0 {
-		if !v.isRecognizing() && v.submittedText != "" && len(v.enabledServices()) == 0 {
+		if v.phase == "" && v.submittedText != "" && len(v.enabledServices()) == 0 {
 			ui.Row(c).Padding(12, 0).Gap(12).Wrap().Center().Children(func() {
 				ui.Text(c, "没有可用的翻译服务").FontSize(12).TextColor(p.muted)
 				v.renderLinkButton(c, p, "配置翻译服务", v.actions.openSettings)
