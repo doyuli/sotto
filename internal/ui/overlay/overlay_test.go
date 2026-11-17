@@ -18,7 +18,6 @@ func TestLoadingViewSettlesOnResultAndRespectsReduceMotion(t *testing.T) {
 	if !tt.HasText("正在翻译") || v.measured.height != 35 || v.measured.width >= 160 {
 		t.Fatalf("loading state is missing or oversized: %+v", v.measured)
 	}
-	tt.SetSize(v.measured.width, v.measured.height)
 	first := bytes.Clone(tt.Image().Pix)
 	tt.Advance(170 * time.Millisecond)
 	if bytes.Equal(first, tt.Image().Pix) {
@@ -33,10 +32,11 @@ func TestLoadingViewSettlesOnResultAndRespectsReduceMotion(t *testing.T) {
 	tt.SetPreferences(ui.Preferences{})
 	v.setText(strings.Repeat("译文已经就绪。", 7), false)
 	tt.Frame()
-	measured := v.measured
-	tt.SetSize(measured.width, measured.height)
-	if measured != v.measured || measured.width != 320 || measured.height <= 35 || measured.height >= 150 {
-		t.Fatalf("result resized again after expanding from loading: was %+v, now %+v", measured, v.measured)
+	tt.Frame()
+	tt.Advance(resultResizeDuration)
+	if v.bounds.Width != v.measured.width || v.bounds.Height != v.measured.height ||
+		v.bounds.Height <= 35 || v.bounds.Height >= 150 {
+		t.Fatalf("result did not settle at its measured size: bounds=%+v target=%+v", v.bounds, v.measured)
 	}
 	if tt.HasText("正在翻译") || !tt.HasText(v.text) {
 		t.Fatal("translation did not replace the loading state")
@@ -45,6 +45,58 @@ func TestLoadingViewSettlesOnResultAndRespectsReduceMotion(t *testing.T) {
 	tt.Advance(170 * time.Millisecond)
 	if !bytes.Equal(finished, tt.Image().Pix) || tt.FramePending() {
 		t.Fatal("completed result kept animating")
+	}
+}
+
+func TestStreamingViewAnimatesHeightInsideFixedWindow(t *testing.T) {
+	// A short first chunk used to fill the full-height window.
+	v := resultView{pending: true, limit: size{320, 150}, alignBottom: true, measure: func() {}}
+	tt := ui.NewTester(v.render, v.limit.width, v.limit.height)
+	tt.Frame()
+
+	v.setText("First line.", true)
+	tt.Frame()
+	tt.Advance(resultResizeDuration)
+	if !tt.HasText(v.text) || v.bounds.Height != lineHeight+2*paddingY ||
+		tt.Image().RGBAAt(30, 20).A != 0 {
+		t.Fatalf("one line should leave the rest of the native window transparent: bounds=%+v", v.bounds)
+	}
+
+	v.setText("First line.\nSecond line.\nThird line.", true)
+	tt.Frame()
+	tt.Frame()
+	tt.Advance(resultResizeDuration / 2)
+	mid := v.bounds
+	if mid.Height <= lineHeight+2*paddingY || mid.Height >= 3*lineHeight+2*paddingY ||
+		mid.Y+mid.Height != v.limit.height {
+		t.Fatalf("expansion should ease toward the content around a stable bottom edge: %+v", mid)
+	}
+
+	v.setText(v.text+"\nFourth line.", true)
+	tt.Frame()
+	tt.Frame()
+	if v.bounds.Height < mid.Height || v.bounds.Height >= 4*lineHeight+2*paddingY {
+		t.Fatalf("retargeting should continue from the displayed height: before=%+v now=%+v", mid, v.bounds)
+	}
+	tt.Advance(resultResizeDuration)
+	v.setText(v.text, false)
+	tt.Frame()
+	tt.Advance(resultResizeDuration)
+	if v.bounds.Width >= v.limit.width || v.bounds.Height != 4*lineHeight+2*paddingY || !tt.HasText(v.text) {
+		t.Fatalf("completed result did not size to its content: bounds=%+v", v.bounds)
+	}
+}
+
+func TestResultResizeRespectsReduceMotion(t *testing.T) {
+	// The system preference also applies to the panel's size transition.
+	v := resultView{pending: true, limit: size{320, 150}, measure: func() {}}
+	tt := ui.NewTester(v.render, 320, 150)
+	tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+	v.setText("First line.\nSecond line.", true)
+	tt.Frame()
+	tt.Frame()
+	if v.bounds.Height != 2*lineHeight+2*paddingY || tt.FramePending() {
+		t.Fatalf("reduced motion should settle without animation: bounds=%+v", v.bounds)
 	}
 }
 
@@ -62,6 +114,8 @@ func TestStreamingViewFollowsNewLinesUntilReaderScrollsBack(t *testing.T) {
 	long := strings.Repeat("另一个已经译好的句子。\n", 12)
 	v.setText(v.text+"\n"+long+"接下来的内容。", true)
 	tt.Frame()
+	tt.Frame()
+	tt.Advance(resultResizeDuration)
 	if v.scroll.MaxY <= 0 || v.scroll.Y != v.scroll.MaxY {
 		t.Fatalf("stream did not follow its end: Y=%g MaxY=%g", v.scroll.Y, v.scroll.MaxY)
 	}
@@ -96,26 +150,33 @@ func TestStreamingViewFollowsNewLinesUntilReaderScrollsBack(t *testing.T) {
 	}
 }
 
-func TestResizingResultKeepsSourceVisibleAndRespectsDragging(t *testing.T) {
-	// An anchored status near a screen edge used to grow over its source.
-	work := mygo.Rectangle{Width: 1200, Height: 800}
-	source := mygo.Rectangle{X: 400, Y: 747, Width: 100, Height: 40}
-	loading := place(work, source, size{100, 35}, nil)
-	grown := resize(work, source, loading, size{320, 150}, false, nil)
-	if overlap(grown, source) != 0 || grown.Y+grown.Height != loading.Y+loading.Height {
-		t.Fatalf("growing above the source moved the anchored edge or covered the source: loading=%+v grown=%+v", loading, grown)
-	}
-
-	source.Y = 250
-	loading = place(work, source, size{100, 35}, nil)
-	neighbor := mygo.Rectangle{X: 515, Y: loading.Y, Width: 320, Height: 150}
-	grown = resize(work, source, loading, size{320, 150}, false, []mygo.Rectangle{neighbor})
-	if overlap(grown, neighbor) != 0 || overlap(grown, source) != 0 {
-		t.Fatalf("growing result did not avoid occupied space: %+v", grown)
-	}
-	dragged := resize(work, source, loading, size{320, 150}, true, []mygo.Rectangle{neighbor})
-	if dragged.X != loading.X || dragged.Y != loading.Y {
-		t.Fatalf("resizing moved a manually placed result: was %+v, got %+v", loading, dragged)
+func TestStreamChoosesRoomToGrowAwayFromSource(t *testing.T) {
+	// One line fitted below the source but grew upward over it at the screen edge.
+	for _, source := range []mygo.Rectangle{
+		{X: 400, Y: 700, Width: 200, Height: 30},
+		{X: 1000, Y: 80, Width: 100, Height: 620},
+	} {
+		work := mygo.Rectangle{Width: 1200, Height: 800}
+		limit := limits(work)
+		panel := initialPanel(work, source, size{100, 35}, limit, nil)
+		frame, inset, right, bottom := reservePanel(work, panel, limit,
+			panel.X+panel.Width <= source.X, panel.Y+panel.Height <= source.Y)
+		p := Result{view: resultView{
+			text: "第一行。", pending: true, limit: limit, inset: inset,
+			alignRight: right, alignBottom: bottom, measure: func() {},
+		}}
+		tt := ui.NewTester(p.view.render, frame.Width, frame.Height)
+		tt.Frame()
+		if got := p.visibleBounds(frame); overlap(got, source) != 0 {
+			t.Fatalf("initial panel covers source: panel=%+v source=%+v", got, source)
+		}
+		p.view.setText(strings.Repeat("继续显示译文。\n", 8), true)
+		tt.Frame()
+		tt.Frame()
+		tt.Advance(resultResizeDuration)
+		if got := p.visibleBounds(frame); overlap(got, source) != 0 {
+			t.Fatalf("stream grew over source: panel=%+v source=%+v", got, source)
+		}
 	}
 }
 
@@ -137,6 +198,8 @@ func TestResultViewScrollsAndClosesIndependently(t *testing.T) {
 	st := ui.NewTester(short.render, 320, 150)
 	tt.Frame()
 	st.Frame()
+	tt.Frame()
+	tt.Advance(resultResizeDuration)
 	if long.measured.height != 150 || short.measured.height != 35 || short.measured.width >= 320 {
 		t.Fatalf("unexpected measured sizes: long=%+v short=%+v", long.measured, short.measured)
 	}
@@ -152,9 +215,66 @@ func TestResultViewScrollsAndClosesIndependently(t *testing.T) {
 		t.Fatalf("left drag: focus=%d position=%+v", focused, initial)
 	}
 	tt.Key(0, ui.KeyEscape)
+	st.RightClickAt(20, 110)
+	if shortClosed != 0 {
+		t.Fatal("the space outside the visible panel received a click")
+	}
 	st.RightClickAt(20, 20)
 	if closed != 1 || shortClosed != 1 {
 		t.Fatalf("dismissals: long=%d short=%d", closed, shortClosed)
+	}
+}
+
+func TestDraggedPanelReachesScreenEdgeWithRoomToGrow(t *testing.T) {
+	// The larger native frame should not keep a short visible panel away from the edge.
+	work := mygo.Rectangle{X: -900, Y: -100, Width: 900, Height: 700}
+	visible := mygo.Rectangle{X: -112, Y: 553, Width: 100, Height: 35}
+	frame, inset, right, bottom := reservePanel(work, visible, limits(work), false, false)
+	if !right || !bottom || overlap(work, frame) != frame.Width*frame.Height {
+		t.Fatalf("the native frame should reserve space above and to the left: %+v", frame)
+	}
+	if frame.X+frame.Width-inset.X != visible.X+visible.Width ||
+		frame.Y+frame.Height-inset.Y != visible.Y+visible.Height {
+		t.Fatalf("reserving space moved the panel away from the drop point: frame=%+v inset=%+v", frame, inset)
+	}
+}
+
+func TestCompactPanelStaysBelowSourceWhenBackingDoesNotFit(t *testing.T) {
+	// Placing the full transparent frame first used to put the visible line over the source.
+	work := mygo.Rectangle{Width: 1200, Height: 800}
+	source := mygo.Rectangle{X: 135, Y: 30, Width: 1000, Height: 700}
+	limit := limits(work)
+	panel := initialPanel(work, source, size{320, 35}, limit, nil)
+	frame, inset, right, bottom := reservePanel(work, panel, limit, false, false)
+	p := Result{view: resultView{
+		text: "译文。", pending: true, limit: limit, inset: inset,
+		alignRight: right, alignBottom: bottom, measure: func() {},
+	}}
+	tt := ui.NewTester(p.view.render, frame.Width, frame.Height)
+	tt.Frame()
+	if got := p.visibleBounds(frame); got != panel || overlap(got, source) != 0 {
+		t.Fatalf("reserved frame moved the visible panel over the source: got=%+v want=%+v", got, panel)
+	}
+}
+
+func TestPanelKeepsPositionAfterWorkAreaChanges(t *testing.T) {
+	// Rebuilding the native frame must use the visible panel's position and anchor.
+	work := mygo.Rectangle{X: -900, Y: -100, Width: 900, Height: 700}
+	panel := mygo.Rectangle{X: -150, Y: 530, Width: 100, Height: 35}
+	frame, inset, right, bottom := reservePanel(work, panel, limits(work), false, false)
+	p := Result{view: resultView{
+		text: "短译文", pending: true, limit: limits(work), inset: inset,
+		alignRight: right, alignBottom: bottom, measure: func() {},
+	}}
+	tt := ui.NewTester(p.view.render, frame.Width, frame.Height)
+	tt.Frame()
+	before := p.visibleBounds(frame)
+	work.Height -= 100
+	frame, inset, right, bottom = reservePanel(work, before, limits(work), right, bottom)
+	p.view.inset, p.view.alignRight, p.view.alignBottom = inset, right, bottom
+	tt.Frame()
+	if got := p.visibleBounds(frame); got != fit(work, before) {
+		t.Fatalf("work-area change moved the panel beyond clamping: got=%+v want=%+v", got, fit(work, before))
 	}
 }
 

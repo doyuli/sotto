@@ -29,6 +29,31 @@ func fit(work, rect mygo.Rectangle) mygo.Rectangle {
 	return rect
 }
 
+// Reserve a stable native frame around the visible panel. Grow away from the
+// source when possible, flipping at the work-area edge to preserve placement.
+func reservePanel(work, visible mygo.Rectangle, limit size, right, bottom bool) (mygo.Rectangle, mygo.Point, bool, bool) {
+	visible.Width, visible.Height = min(visible.Width, limit.width), min(visible.Height, limit.height)
+	visible = fit(work, visible)
+	frame := mygo.Rectangle{X: visible.X, Y: visible.Y, Width: limit.width, Height: limit.height}
+	if right {
+		frame.X += visible.Width - frame.Width
+	}
+	if bottom {
+		frame.Y += visible.Height - frame.Height
+	}
+	frame = fit(work, frame)
+	inset := mygo.Point{X: visible.X - frame.X, Y: visible.Y - frame.Y}
+	right = right || inset.X > 0
+	bottom = bottom || inset.Y > 0
+	if right {
+		inset.X = frame.Width - inset.X - visible.Width
+	}
+	if bottom {
+		inset.Y = frame.Height - inset.Y - visible.Height
+	}
+	return frame, inset, right, bottom
+}
+
 func overlap(a, b mygo.Rectangle) int {
 	return max(0, min(a.X+a.Width, b.X+b.Width)-max(a.X, b.X)) *
 		max(0, min(a.Y+a.Height, b.Y+b.Height)-max(a.Y, b.Y))
@@ -42,33 +67,23 @@ func overlapResults(rect mygo.Rectangle, occupied []mygo.Rectangle) int {
 	return area
 }
 
-func resize(work, source, current mygo.Rectangle, s size, moved bool, occupied []mygo.Rectangle) mygo.Rectangle {
-	next := current
-	if !moved {
-		// Grow away from the source when the window sits above or to its left.
-		if current.Y+current.Height <= source.Y {
-			next.Y += current.Height - s.height
+func initialPanel(work, source mygo.Rectangle, measured, limit size, occupied []mygo.Rectangle) mygo.Rectangle {
+	panel := place(work, source, measured, occupied)
+	right, bottom := panel.X+panel.Width <= source.X, panel.Y+panel.Height <= source.Y
+	frame, _, _, _ := reservePanel(work, panel, limit, right, bottom)
+	// Prefer room for the stream to grow when that avoids covering the source.
+	alternative := place(work, source, limit, occupied)
+	if overlap(frame, source) > 0 && overlap(alternative, source) == 0 {
+		panel = alternative
+		if panel.X+panel.Width <= source.X {
+			panel.X += panel.Width - measured.width
 		}
-		if current.X+current.Width <= source.X {
-			next.X += current.Width - s.width
+		if panel.Y+panel.Height <= source.Y {
+			panel.Y += panel.Height - measured.height
 		}
+		panel.Width, panel.Height = measured.width, measured.height
 	}
-	next.Width, next.Height = s.width, s.height
-	next = fit(work, next)
-	if moved {
-		return next
-	}
-	sourceArea, occupiedArea := overlap(next, source), overlapResults(next, occupied)
-	if sourceArea == 0 && occupiedArea == 0 {
-		return next
-	}
-	alternative := place(work, source, s, occupied)
-	alternativeSource := overlap(alternative, source)
-	if alternativeSource < sourceArea ||
-		alternativeSource == sourceArea && overlapResults(alternative, occupied) < occupiedArea {
-		return alternative
-	}
-	return next
+	return panel
 }
 
 func place(work, source mygo.Rectangle, s size, occupied []mygo.Rectangle) mygo.Rectangle {

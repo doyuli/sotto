@@ -8,24 +8,37 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+const (
+	resultResizeDuration = 150 * time.Millisecond
+	loadingLabel         = "正在翻译"
+	loadingFontSize      = 13
+	loadingDotWidth      = 18
+	loadingDotGap        = 7
+)
+
 type resultView struct {
-	text         string
-	pending      bool
-	animate      bool
-	limit        size
-	measured     size
-	scroll       ui.ScrollState
-	scrolledBack bool
-	measure      func()
-	dismiss      func()
-	focus        func()
-	cursor       func() mygo.Point
-	position     func() mygo.Point
-	move         func(mygo.Point)
-	press        mygo.Point
-	origin       mygo.Point
-	dragging     bool
-	pressed      bool
+	text          string
+	pending       bool
+	animate       bool
+	limit         size
+	measured      size
+	bounds        mygo.Rectangle
+	inset         mygo.Point
+	alignRight    bool
+	alignBottom   bool
+	scroll        ui.ScrollState
+	scrolledBack  bool
+	measure       func()
+	boundsChanged func()
+	dismiss       func()
+	focus         func()
+	cursor        func() mygo.Point
+	position      func() mygo.Point
+	move          func(mygo.Point)
+	press         mygo.Point
+	origin        mygo.Point
+	dragging      bool
+	pressed       bool
 }
 
 func (v *resultView) render(c *ui.Context) {
@@ -40,27 +53,60 @@ func (v *resultView) render(c *ui.Context) {
 	if v.dragging {
 		cursor = ui.CursorGrabbing
 	}
-	c.Root().Background(ui.Transparent)
-	ui.Column(c).Fill().Radius(6).Clip().Background(background).Padding(paddingY, paddingX).
+	root := c.Root().Background(ui.Transparent)
+	loading := v.pending && v.text == ""
+	boxWidth := v.limit.width
+	switch {
+	case loading:
+		width, _ := c.MeasureText(0, ui.Span{Text: loadingLabel, Size: loadingFontSize})
+		boxWidth = min(boxWidth, int(math.Ceil(float64(width)))+loadingDotWidth+loadingDotGap+2*paddingX)
+		v.reportSize(boxWidth, lineHeight+2*paddingY)
+	case !v.pending:
+		width, _ := c.MeasureText(0, ui.Span{Text: v.text, Size: 15})
+		boxWidth = min(boxWidth, int(math.Ceil(float64(width)))+2*paddingX)
+	}
+	height := v.measured.height
+	if height == 0 {
+		height = lineHeight + 2*paddingY
+	}
+	width, viewHeight := c.Size()
+	bounds := mygo.Rectangle{
+		X:      v.inset.X,
+		Y:      v.inset.Y,
+		Width:  min(int(width), int(math.Round(float64(root.Animate("result-width", float32(boxWidth), resultResizeDuration))))),
+		Height: min(int(viewHeight), int(math.Round(float64(root.Animate("result-height", float32(min(height, v.limit.height)), resultResizeDuration))))),
+	}
+	if v.alignRight {
+		bounds.X = int(width) - bounds.Width - bounds.X
+	}
+	if v.alignBottom {
+		bounds.Y = int(viewHeight) - bounds.Height - bounds.Y
+	}
+	bounds.X = min(max(0, bounds.X), int(width)-bounds.Width)
+	bounds.Y = min(max(0, bounds.Y), int(viewHeight)-bounds.Height)
+	if bounds != v.bounds {
+		v.bounds = bounds
+		if v.boundsChanged != nil {
+			v.boundsChanged()
+		}
+	}
+	ui.Column(c).Absolute().Left(float32(bounds.X)).Top(float32(bounds.Y)).
+		Size(float32(bounds.Width), float32(bounds.Height)).Radius(6).Clip().Background(background).Padding(paddingY, paddingX).
 		Cursor(cursor).Focusable().HandleInput(v.input).Children(func() {
-		if v.pending && v.text == "" {
+		if loading {
 			v.renderLoading(c, ink)
 			return
 		}
-		boxWidth := v.limit.width
-		if !v.pending {
-			width, _ := c.MeasureText(0, ui.Span{Text: v.text, Size: 15})
-			boxWidth = min(boxWidth, int(math.Ceil(float64(width)))+2*paddingX)
-		}
-		ui.Scroll(c).Fill().Scrollbars(false).TrackScroll(&v.scroll).Children(func() {
-			// Measure at the result's width while its loading window is still narrow.
-			ui.Text(c, v.text).Width(float32(max(1, boxWidth-2*paddingX))).Shrink(0).
-				FontSize(15).FixedLineHeight(lineHeight).TextColor(ink).
-				Draw(func(_ *ui.Painter, r ui.Rect) {
-					if r.H > 0 {
-						v.reportSize(boxWidth, int(math.Ceil(float64(r.H)))+2*paddingY)
-					}
-				})
+		// The animated clip reveals the text without reflowing it or changing its scroll range.
+		textWidth := float32(max(1, boxWidth-2*paddingX))
+		scrollHeight := max(1, min(viewHeight, float32(v.limit.height))-2*paddingY)
+		ui.Scroll(c).Size(textWidth, scrollHeight).Shrink(0).Scrollbars(false).TrackScroll(&v.scroll).Children(func() {
+			ui.Text(c, v.text).Width(textWidth).Shrink(0).
+				FontSize(15).FixedLineHeight(lineHeight).TextColor(ink).Draw(func(_ *ui.Painter, r ui.Rect) {
+				if r.H > 0 {
+					v.reportSize(boxWidth, int(math.Ceil(float64(r.H)))+2*paddingY)
+				}
+			})
 		})
 	})
 }
@@ -74,14 +120,10 @@ func (v *resultView) setText(text string, pending bool) {
 }
 
 func (v *resultView) renderLoading(c *ui.Context, ink ui.Color) {
-	const label = "正在翻译"
-	const fontSize, dotWidth, dotGap = 13, 18, 7
-	width, _ := c.MeasureText(0, ui.Span{Text: label, Size: fontSize})
-	v.reportSize(int(math.Ceil(float64(width)))+dotWidth+dotGap+2*paddingX, lineHeight+2*paddingY)
 	animate := v.animate && !c.Preferences().ReduceMotion
-	ui.Row(c).Height(lineHeight).Gap(dotGap).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, label).FontSize(fontSize).TextColor(ink).SingleLine()
-		ui.Box(c).Size(dotWidth, 4).Draw(func(p *ui.Painter, r ui.Rect) {
+	ui.Row(c).Height(lineHeight).Gap(loadingDotGap).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, loadingLabel).FontSize(loadingFontSize).TextColor(ink).SingleLine()
+		ui.Box(c).Size(loadingDotWidth, 4).Draw(func(p *ui.Painter, r ui.Rect) {
 			phase := 0.0
 			if animate {
 				phase = float64(p.Now().UnixNano()%int64(time.Second)) / float64(time.Second)
