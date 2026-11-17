@@ -8,7 +8,7 @@ Drive the **built production executable** as a user would: synthesize global hot
 
 ```bash
 bun run build                                    # First produce build/windows-amd64/sotto.exe
-CGO_ENABLED=0 go test -tags e2e ./e2e/ -v          # Requires a local desktop session; not suitable for headless CI
+CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v  # Requires a local desktop session
 ```
 
 ## Coverage
@@ -24,7 +24,7 @@ Hotkey combinations are parsed from the app startup log's "hotkeys in force" lin
 ## Known Test Environment Limitations
 
 - At startup, tests confirm per-monitor DPI V2 mode. If it cannot be set and the current mode differs, fail explicitly rather than testing virtualized coordinates under mixed scaling.
-- The Windows job in `.github/workflows/ci.yml` runs all ordinary tests, `go vet -tags e2e ./e2e`, and the separate `TestDPIAwarenessAlreadyInitialized`; it does not run desktop smoke cases that interact with windows. ARM64 currently receives compilation checks only; native OCR preflight runs on x64.
+- The Windows job in `.github/workflows/ci.yml` runs ordinary tests, e2e vet, and the separate `TestDPIAwarenessAlreadyInitialized` with `mygo_nowebview`. Desktop smoke cases require an interactive session. ARM64 currently receives compilation checks only; native OCR preflight runs on x64.
 - Hotkeys are synthesized with `SendInput`. The test process first grants the app foreground permission with `AllowSetForegroundWindow`, modeling the foreground rights of real keyboard hotkeys.
 - This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path is covered by the manual acceptance checklist below. `sotto --ocr <png>` can independently check image recognition.
 

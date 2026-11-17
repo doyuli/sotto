@@ -18,7 +18,7 @@ This document records the architectural structure, Win32/COM subsystem integrati
         |                                 |                                 |
         v                                 v                                 v
 +-------------------+             +---------------+                 +---------------+
-|     MyGo v0.8.3   |             |  Win32 Hotkey |                 | Screen Coords |
+|     MyGo v0.9.2   |             |  Win32 Hotkey |                 | Screen Coords |
 | (DirectComposition|             | (internal/    |                 | (internal/    |
 |   / Win32 HWND)   |             |   hotkey)     |                 |  screencoords)|
 +-------------------+             +-------+-------+                 +-------+-------+
@@ -47,7 +47,7 @@ This document records the architectural structure, Win32/COM subsystem integrati
 
 | Subsystem | Windows Technology / API | Underlying Driver | Package Path | Concurrency Model |
 |---|---|---|---|---|
-| **Window & UI** | Win32 HWND, DirectComposition | MyGo v0.8.3 | `internal/ui/` | Main UI thread |
+| **Window & UI** | Win32 HWND, DirectComposition | MyGo v0.9.2 | `internal/ui/` | Main UI thread |
 | **DPI & Multi-Monitor** | Per-Monitor DPI V2 (`shcore.dll`) | Win32 / `x/sys` | `internal/screencoords` | Layout snapshot under lock |
 | **Global Shortcuts** | `RegisterHotKey`, Win32 Msg Loop | MyGo / Win32 | `internal/hotkey` | Main thread event dispatch |
 | **Selection (Primary)** | UI Automation (`IUIAutomation`) | COM MTA / `go-ole` | `internal/selection` | Dedicated MTA worker thread |

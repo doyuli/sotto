@@ -5,15 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "mygo dev",
-    "build": "mygo build",
+    "build": "export GOFLAGS=\"-tags=mygo_nowebview $GOFLAGS\" && mygo build",
     "build:mac": "mygo build -platform darwin/arm64",
-    "build:win": "mygo build -platform windows/amd64,windows/arm64",
-    "build:win:x64": "mygo build -platform windows/amd64",
-    "build:win:arm64": "mygo build -platform windows/arm64",
+    "build:win": "bun run build -platform windows/amd64,windows/arm64",
+    "build:win:x64": "bun run build -platform windows/amd64",
+    "build:win:arm64": "bun run build -platform windows/arm64",
     "release": "bun scripts/release.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
-    "mygo-cli": "0.8.3"
+    "mygo-cli": "0.9.2"
   }
 }

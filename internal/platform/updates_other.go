@@ -5,10 +5,11 @@ package platform
 import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/updater"
+	"github.com/egoist/mygo/plugins/updater/native"
 )
 
 func InitUpdates(iconPNG []byte) {
-	mygo.Use(updater.New(updater.Options{Language: "zh-Hans", Icon: iconPNG, DisableAutomaticChecks: true}))
+	mygo.Use(native.New(updater.Options{Language: "zh-Hans", Icon: iconPNG, DisableAutomaticChecks: true}))
 	if updater.AutomaticChecks() {
 		updater.SetAutomaticChecks(false)
 	}

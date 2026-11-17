@@ -45,6 +45,7 @@ jobs:
     timeout-minutes: 20
     env:
       GOARCH: amd64
+      GOFLAGS: -tags=mygo_nowebview
     steps:
       - name: Reproduce default Windows line endings
         run: git config --global core.autocrlf true
@@ -65,12 +66,15 @@ jobs:
           SOTTO_OCR_PREFLIGHT: "1"
         run: go test ./internal/ocr -run '^(TestV6SmallRuntimePreflight|TestWinRTNativeRepeatedRequests)$' -count=1 -v
       - name: Check desktop smoke tests
-        run: go vet -tags e2e ./e2e
+        run: go vet -tags e2e,mygo_nowebview ./e2e
       - name: Verify desktop test DPI initialization
-        run: go test -tags e2e ./e2e -run '^TestDPIAwarenessAlreadyInitialized$' -count=1 -v
+        run: go test -tags e2e,mygo_nowebview ./e2e -run '^TestDPIAwarenessAlreadyInitialized$' -count=1 -v
       - name: Build Windows x64 and ARM64 packages
+        env:
+          # Exercise the same build flags as the release workflow.
+          GOFLAGS: ""
         run: bun run build:win -skip-installer
-      - name: Verify packaged Windows OCR assets
+      - name: Verify Windows binaries and packaged OCR assets
         shell: pwsh
         run: |
           foreach ($arch in @("amd64", "arm64")) {
@@ -79,6 +83,10 @@ jobs:
               if (-not (Test-Path -LiteralPath "build/windows-$arch/$file" -PathType Leaf)) {
                 throw "Missing packaged file: windows-$arch/$file"
               }
+            }
+            $exe = [IO.File]::ReadAllBytes((Resolve-Path "build/windows-$arch/Sotto.exe").Path)
+            if ([Text.Encoding]::ASCII.GetString($exe).Contains("CreateCoreWebView2EnvironmentWithOptions")) {
+              throw "Unexpected WebView2 loader in windows-$arch/Sotto.exe"
             }
           }
 

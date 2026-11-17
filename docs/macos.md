@@ -18,7 +18,7 @@ This document records the architectural structure, subsystem bridges, threading 
         |                                 |                                 |
         v                                 v                                 v
 +-------------------+             +---------------+                 +---------------+
-|     MyGo v0.8.3   |             |   Carbon Hotkey |                 |   MacNative     |
+|     MyGo v0.9.2   |             |   Carbon Hotkey |                 |   MacNative     |
 |   (AppKit Windows)|             | (internal/hotkey)               | (internal/     |
 +-------------------+             +-------+-------+                 |   macnative)  |
         |                                 |                         +-------+-------+

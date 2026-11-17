@@ -154,7 +154,7 @@ Windows temporarily installs low-level keyboard and mouse hooks during simulated
 - `ShowTask` attempts display after the native view applies the current snapshot. If the window is not ready, `OnReadyToShow` retries and rechecks entry validity. Under the lock, `claimShow` allows each valid, unclosed presentation to display only once. Reused windows retain native ready state.
 - OCR completion updates only an unclosed presentation still belonging to that sessionID with revision still -1. It does not replace generation or showID, or reopen the window. Asynchronous snapshots return to the UI thread through `Window.Update`; the view's session/request identity checks reject stale work.
 - Clipboard recovery and discarding recovery run in worker goroutines. Completion callbacks return to the UI thread through `Window.Update`; the view checks busy state, stale callbacks, and notices.
-- Local source: mygo v0.8.3 `ui/doc.go` requires view construction on the main thread and asynchronous state publication through `Window.Update`. `SetContentSize` in `window.go` updates window sizes in native logical units.
+- Local source: mygo v0.9.2 `ui/doc.go` requires view construction on the main thread and asynchronous state publication through `Window.Update`. `SetContentSize` in `window.go` updates window sizes in native logical units.
 
 ## macOS Application and Workspace Events
 

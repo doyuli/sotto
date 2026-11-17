@@ -1,6 +1,6 @@
 # Sotto — Agent Working Rules
 
-Translation utility built with mygo v0.8.3 (Go backend, native screenshot overlays, and native `mygo/ui` bubbles and settings). Windows and macOS, pure Go, no cgo.
+Translation utility built with mygo v0.9.2 (Go backend, native screenshot overlays, and native `mygo/ui` bubbles and settings). Windows and macOS, pure Go, no cgo.
 See `PRODUCT.md` for product positioning and `DESIGN.md` for brand and visual guidelines. Local mygo source code is the sole source of truth for its APIs.
 
 ## Development Loop
@@ -12,7 +12,7 @@ CGO_ENABLED=0 go test ./...
 bunx mygo vet .
 bun run build          # Production build (compile + package)
 # Windows: production package and desktop session
-CGO_ENABLED=0 go test -tags e2e ./e2e/ -v
+CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v
 # macOS: skip DMG/notarization; desktop probes require an interactive session
 bun run build:mac -skip-dmg -skip-notarize
 CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
@@ -21,7 +21,7 @@ CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
 ## Hard Rules
 
 1. **Do not invent mygo APIs.** Consult the local source: `go list -m -f '{{.Dir}}' github.com/egoist/mygo`
-   (module cache: `mygo@v0.8.3`). Before using common window/event/clipboard/hotkey signatures, read
+   (module cache: `mygo@v0.9.2`). Before using common window/event/clipboard/hotkey signatures, read
    `window.go`, `ipc.go`, `clipboard.go`, and `modules.go` in that directory; do not write them from memory.
 2. **Dependency allowlist**: `egoist/mygo`, `ebitengine/purego` (including `purego/objc`), `golang.org/x/sys`, `golang.org/x/time`, and `go-ole/go-ole`. Use the standard library for everything else. Report the need for a new dependency before adding one. Bridge macOS system capabilities directly in this project; do not modify mygo.
 3. **Always use CGO_ENABLED=0.** Put platform code in `*_windows.go` / `*_darwin.go`; keep stubs with the appropriate build tags for unimplemented platforms.
