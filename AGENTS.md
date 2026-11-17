@@ -10,8 +10,8 @@ export PATH="/c/Program Files/Go/bin:$PATH"   # Windows Git Bash only, if Go is 
 bun run dev            # Development run (Go + native UI)
 CGO_ENABLED=0 go test ./...
 bunx mygo vet .
-bun run build          # Production build (compile + package)
 # Windows: production package and desktop session
+bun run build:win:x64  # Use build:win:arm64 for ARM64
 CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v
 # macOS: skip DMG/notarization; desktop probes require an interactive session
 bun run build:mac -skip-dmg -skip-notarize

@@ -4,8 +4,8 @@
 // focus, and blur, through real Win32 calls. It needs a desktop session
 // and the production build:
 //
-//	bun run build
-//	CGO_ENABLED=0 go test -tags e2e ./e2e/ -v
+//	bun run build:win:x64
+//	CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v
 //
 // What it covers:
 //   - the app comes up with all three hotkeys registered

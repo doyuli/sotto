@@ -7,7 +7,7 @@ Drive the **built production executable** as a user would: synthesize global hot
 ## Running
 
 ```bash
-bun run build                                    # First produce build/windows-amd64/sotto.exe
+bun run build:win:x64                             # First produce build/windows-amd64/Sotto.exe
 CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v  # Requires a local desktop session
 ```
 

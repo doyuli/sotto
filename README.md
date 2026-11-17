@@ -123,10 +123,10 @@ CGO_ENABLED=0 go test ./...
 # 4. Check native UI usage compliance
 bunx mygo vet .
 
-# 5. Build executable for the current architecture
+# 5. Build for the current architecture on macOS
 bun run build
 
-# 6. Cross-platform builds
+# 6. Build for explicit platform targets
 bun run build:win      # Builds both x64 and arm64 Windows installers
 bun run build:mac      # Builds the macOS Apple Silicon (arm64) DMG
 ```

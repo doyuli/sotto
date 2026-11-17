@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "mygo dev",
-    "build": "export GOFLAGS=\"-tags=mygo_nowebview $GOFLAGS\" && mygo build",
+    "build": "mygo build",
     "build:mac": "mygo build -platform darwin/arm64",
-    "build:win": "bun run build -platform windows/amd64,windows/arm64",
-    "build:win:x64": "bun run build -platform windows/amd64",
-    "build:win:arm64": "bun run build -platform windows/arm64",
+    "build:win": "export GOFLAGS=\"-tags=mygo_nowebview $GOFLAGS\" && mygo build -platform windows/amd64,windows/arm64",
+    "build:win:x64": "export GOFLAGS=\"-tags=mygo_nowebview $GOFLAGS\" && mygo build -platform windows/amd64",
+    "build:win:arm64": "export GOFLAGS=\"-tags=mygo_nowebview $GOFLAGS\" && mygo build -platform windows/arm64",
     "release": "bun scripts/release.ts"
   },
   "devDependencies": {

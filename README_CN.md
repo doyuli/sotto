@@ -123,10 +123,10 @@ CGO_ENABLED=0 go test ./...
 # 4. 检查 mygo/ui 原生组件用法合规性
 bunx mygo vet .
 
-# 5. 打包构建当前架构产物
+# 5. 在 macOS 上构建当前架构的安装包
 bun run build
 
-# 6. 跨平台打包构建
+# 6. 指定平台打包构建
 bun run build:win      # 同时构建 Windows x64 与 arm64 安装包
 bun run build:mac      # 构建 macOS Apple Silicon (arm64) DMG 安装镜像
 ```
