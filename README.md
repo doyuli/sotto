@@ -114,7 +114,7 @@ Visit the [GitHub Releases page](https://github.com/doyuli/sotto/releases/latest
 # 1. Install toolchain dependencies
 bun install
 
-# 2. Start desktop development server (with hot reload)
+# 2. Run the desktop app in development mode with hot reload
 bun run dev
 
 # 3. Run unit tests
@@ -123,13 +123,12 @@ CGO_ENABLED=0 go test ./...
 # 4. Check native UI usage compliance
 bunx mygo vet .
 
-# 5. Build for the current architecture on macOS
-bun run build
-
-# 6. Build for explicit platform targets
-bun run build:win      # Builds both x64 and arm64 Windows installers
-bun run build:mac      # Builds the macOS Apple Silicon (arm64) DMG
+# 5. Build production packages for the supported targets
+bun run build:win      # Windows x64 and arm64 executables, OCR assets, and NSIS installers
+bun run build:mac      # Apple silicon .app bundle and DMG (run on macOS)
 ```
+
+The Windows build scripts exclude WebView2 with `mygo_nowebview`. Use `bun run build:win:x64` or `bun run build:win:arm64` for one architecture. Add `-skip-installer` to build just the executable and its runtime assets. For local macOS verification, `bun run build:mac -skip-dmg -skip-notarize` builds and signs the `.app` bundle.
 
 > For automated test suites, platform probes, and desktop acceptance testing, refer to [e2e/README.md](e2e/README.md).
 

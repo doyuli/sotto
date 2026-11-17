@@ -1,28 +1,33 @@
 # Sotto — Agent Working Rules
 
-Translation utility built with mygo v0.9.2 (Go backend, native screenshot overlays, and native `mygo/ui` bubbles and settings). Windows and macOS, pure Go, no cgo.
+Translation utility built with MyGo (version pinned in `go.mod`) for Windows and macOS. The Go backend, screenshot overlays, translation bubbles, and settings use a pure-Go stack with `CGO_ENABLED=0`.
 See `PRODUCT.md` for product positioning and `DESIGN.md` for brand and visual guidelines. Local mygo source code is the sole source of truth for its APIs.
 
 ## Development Loop
 
 ```bash
-export PATH="/c/Program Files/Go/bin:$PATH"   # Windows Git Bash only, if Go is not already on PATH
-bun run dev            # Development run (Go + native UI)
-CGO_ENABLED=0 go test ./...
-bunx mygo vet .
-# Windows: production package and desktop session
-bun run build:win:x64  # Use build:win:arm64 for ARM64
-CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v
-# macOS: skip DMG/notarization; desktop probes require an interactive session
-bun run build:mac -skip-dmg -skip-notarize
-CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
+bun install --frozen-lockfile  # Install locked dependencies
+bun run dev                    # Run the desktop app with hot reload
+CGO_ENABLED=0 go test ./...     # Run unit and native UI Tester cases
+CGO_ENABLED=0 bunx mygo vet .   # Check Go code and MyGo UI lifetimes
 ```
+
+On Windows, set `GOFLAGS=-tags=mygo_nowebview` for the test and vet commands to match CI.
+
+For local validation of a production build, use the command for the target platform.
+
+```bash
+bun run build:mac -skip-dmg -skip-notarize  # Apple silicon .app
+bun run build:win:x64 -skip-installer       # Windows x64 executable and runtime assets
+```
+
+Use `build:win:arm64` for Windows ARM64. See the [build instructions](README.md#development--building) for release packaging and the [verification guide](e2e/README.md) for platform probes and desktop smoke tests.
 
 ## Hard Rules
 
 1. **Do not invent mygo APIs.** Consult the local source: `go list -m -f '{{.Dir}}' github.com/egoist/mygo`
-   (module cache: `mygo@v0.9.2`). Before using common window/event/clipboard/hotkey signatures, read
-   `window.go`, `ipc.go`, `clipboard.go`, and `modules.go` in that directory; do not write them from memory.
+   from this checkout. Before using common window/event/clipboard/hotkey signatures, read
+   `window.go`, `ipc.go`, `clipboard.go`, and `modules.go` in the resolved directory.
 2. **Dependency allowlist**: `egoist/mygo`, `ebitengine/purego` (including `purego/objc`), `golang.org/x/sys`, `golang.org/x/time`, and `go-ole/go-ole`. Use the standard library for everything else. Report the need for a new dependency before adding one. Bridge macOS system capabilities directly in this project; do not modify mygo.
 3. **Always use CGO_ENABLED=0.** Put platform code in `*_windows.go` / `*_darwin.go`; keep stubs with the appropriate build tags for unimplemented platforms.
 4. **Threading model**:
@@ -46,14 +51,14 @@ CGO_ENABLED=0 SOTTO_DESKTOP=1 go test -tags e2e ./e2e/ -v
 - Control asynchronous results with channels, fake runners/clocks, or `testing/synctest`; do not guess completion times with fixed real `time.Sleep` calls. Reuse existing `Actions` injection and test helpers. Restore replaced global hooks with `t.Cleanup`.
 - For animations or delayed refreshes, advance time with the Tester's `Advance`; do not depend on the real clock's phase. When checking idle refresh budgets, remember that `FramePending()` excludes `After` / `Painter.After` callbacks that are not yet due. It alone cannot prove there will be no later refresh.
 - Verify visuals primarily with rendered images or native windows. Use the existing `SOTTO_SETTINGS_PREVIEW` to export settings previews. Pixel assertions should protect explicit behavior such as overlay coverage and opacity; avoid tying entire images to layout and antialiasing details.
-- After adding or changing UI regression cases, check stability with `CGO_ENABLED=0 go test <package-path> -run '^TestCaseName$' -count=5`. Fix synchronization or assertions when failures are intermittent; do not mask them with automatic retries. Still run the full verification above before committing.
+- After adding or changing UI regression cases, check stability with `CGO_ENABLED=0 go test <package-path> -run '^TestCaseName$' -count=5`. Fix synchronization or assertions when failures are intermittent; do not mask them with automatic retries.
 
 ## Git Conventions
 
 - Use Conventional Commits (`<type>[optional scope]: <description>`) to stay consistent with the project.
 - Follow `.github/pull_request_template.md`, organized into `Summary`, `Verification`, and `Scope`. Describe the final change, actual verification results, and scope, and identify pending validation.
 - Do not commit unrelated clutter; `node_modules/ dist/ build/` are already ignored.
-- Run the verification commands above before committing.
+- Run the routine checks and the applicable [platform verification](e2e/README.md) before committing.
 
 ## Project Structure at a Glance
 

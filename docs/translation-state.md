@@ -1,6 +1,6 @@
 # Translation Window State and Lifecycle
 
-This document records the ownership and lifecycle constraints of translation requests and native views. Pure-logic and native `ui.NewTester` tests do not constitute desktop acceptance on actual hardware. See `e2e/README.md` for Windows execution instructions and desktop acceptance procedures.
+This document records the ownership and lifecycle constraints of translation requests and native views. See [verification entry points](../e2e/README.md) for Tester coverage and desktop acceptance on Windows and macOS.
 
 ## State Ownership
 
@@ -39,7 +39,7 @@ When blur, an outside click, or a new entry dismisses an unpinned bubble, the cu
 |---|---|---|
 | Input panel | If the current entry is valid and the panel is unpinned and visible, reopening only focuses it and advances showID, preserving the draft, languages, and work. Other input entries hide screenshot overlays, end the old presentation, and start a blank session in the shared window. | With auto-hide enabled, blur or an outside click ends the current presentation session: cancel work, clear request identities, emit `RunStopped`, then hide. Esc/the close button also cancels work before hiding. Reopening after hiding replaces the session. |
 | Selection/OCR bubble | Shares the input panel's window; each new entry replaces the session. Selection takes over the window only after capture completes and remains valid. OCR first shows recognition state, then updates the recognition result within the same session. | Blur or an outside click with auto-hide enabled, as well as entry switches or closure, ends the current presentation session: cancel capture/translation, clear request identities, and emit `RunStopped`. Later results must not update or redisplay the hidden window. |
-| Screenshot overlay | The OCR entry first hides the transient bubble, then opens native overlays for the current displays. Input or selection entries revoke old capture work and hide overlays. | Esc, right-click, blur, or native close cancels the current round. Ordinary hiding retains reusable windows; windows that have been dragged in or are still used by capture are replaced or destroyed later under the existing lease rules. |
+| Screenshot overlay | The OCR entry hides the transient bubble, captures display snapshots, and creates a native overlay for each usable snapshot. | Esc, right-click, native close, or focus leaving the overlay group cancels the round. Input and selection entries also revoke it. Submission and cancellation clear the preview state, hide the windows, and queue their destruction on the UI thread. |
 | Pinned bubble | Leaves the shared reuse slot; subsequent entries create a window as needed. Unpinning returns it to the shared slot, canceling and destroying the displaced transient window even if that window is already hidden. | Does not automatically hide on blur. Closing actually destroys the window and stops its work. |
 | Settings window | Independent singleton; reopening calls Show/Focus without acquiring translation entry ownership. | Closing destroys the native window. The app retains the settings controller and the same task queue; reopening inherits pending save state. Opening settings may trigger bubble auto-hide through blur. |
 | Application quit | OnBeforeQuit sets quitting and revokes the entry; new entries are no longer dispatched. | All window OnClose handlers allow closure, preserving separate paths for tray residency and actual quitting. |
@@ -154,7 +154,7 @@ Windows temporarily installs low-level keyboard and mouse hooks during simulated
 - `ShowTask` attempts display after the native view applies the current snapshot. If the window is not ready, `OnReadyToShow` retries and rechecks entry validity. Under the lock, `claimShow` allows each valid, unclosed presentation to display only once. Reused windows retain native ready state.
 - OCR completion updates only an unclosed presentation still belonging to that sessionID with revision still -1. It does not replace generation or showID, or reopen the window. Asynchronous snapshots return to the UI thread through `Window.Update`; the view's session/request identity checks reject stale work.
 - Clipboard recovery and discarding recovery run in worker goroutines. Completion callbacks return to the UI thread through `Window.Update`; the view checks busy state, stale callbacks, and notices.
-- Local source: mygo v0.9.2 `ui/doc.go` requires view construction on the main thread and asynchronous state publication through `Window.Update`. `SetContentSize` in `window.go` updates window sizes in native logical units.
+- MyGo builds views on the main thread (`ui/doc.go`). `Window.Update` queues the state mutation and a redraw on that thread (`content.go`). `SetContentSize` takes the content area's dimensions in window DIPs (`window.go`).
 
 ## macOS Application and Workspace Events
 

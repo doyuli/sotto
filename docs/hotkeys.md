@@ -16,7 +16,7 @@ The commit order in `internal/app/hotkeys.go` is: validate in-app duplicates →
 
 Windows continues to use MyGo's `RegisterHotKey` wrapper. On macOS, the project bridges Carbon directly through purego, uses `kEventHotKeyExclusive`, and calls `CopySymbolicHotKeys` before registration to check enabled system hotkeys. All Carbon operations run on the main thread; registrations and event handlers are released on exit. No event tap or Input Monitoring permission is added.
 
-Source: the `HotKeyOptions`, `RegisterEventHotKey`, and `CopySymbolicHotKeys` definitions in the local Apple SDK's `CarbonEvents.h`. MyGo v0.9.2 uses nonexclusive option 0 in `internal/darwin/hotkey.go`; Apple explicitly states that such registration may succeed while an exclusive owner suppresses delivery. Sotto therefore does not infer the absence of conflicts from MyGo's nonexclusive return value, and does not modify MyGo source.
+MyGo v0.9.2 passes `0` for `HotKeyOptions` in `internal/darwin/hotkey.go`. The local Apple SDK's `CarbonEvents.h` documents that a nonexclusive registration can succeed even when an exclusive owner suppresses event delivery. Sotto checks the enabled system shortcuts and the result of its own exclusive registration.
 
 The system list does not include individual apps' menu shortcuts and cannot cover every third-party interception mechanism. Unexplained missing events must not be labeled as conflicts.
 

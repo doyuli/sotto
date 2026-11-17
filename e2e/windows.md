@@ -6,9 +6,11 @@ Drive the **built production executable** as a user would: synthesize global hot
 
 ## Running
 
+Run from the repository root in an interactive Windows desktop session. The smoke harness launches the x64 `build/windows-amd64/Sotto.exe` with the OCR assets beside it.
+
 ```bash
-bun run build:win:x64                             # First produce build/windows-amd64/Sotto.exe
-CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v  # Requires a local desktop session
+bun run build:win:x64 -skip-installer
+CGO_ENABLED=0 go test -tags e2e,mygo_nowebview ./e2e/ -v
 ```
 
 ## Coverage
@@ -24,7 +26,7 @@ Hotkey combinations are parsed from the app startup log's "hotkeys in force" lin
 ## Known Test Environment Limitations
 
 - At startup, tests confirm per-monitor DPI V2 mode. If it cannot be set and the current mode differs, fail explicitly rather than testing virtualized coordinates under mixed scaling.
-- The Windows job in `.github/workflows/ci.yml` runs ordinary tests, e2e vet, and the separate `TestDPIAwarenessAlreadyInitialized` with `mygo_nowebview`. Desktop smoke cases require an interactive session. ARM64 currently receives compilation checks only; native OCR preflight runs on x64.
+- The Windows CI job uses `mygo_nowebview` for ordinary tests, MyGo vet, and OCR preflight on x64. It also vets the `e2e` package with both `e2e` and `mygo_nowebview` and runs only `TestDPIAwarenessAlreadyInitialized` from that package. CI builds both Windows architectures without installers, checks their OCR assets, and checks both executables for the absence of the `CreateCoreWebView2EnvironmentWithOptions` loader marker. Desktop interaction and native ARM64 execution require separate validation.
 - Hotkeys are synthesized with `SendInput`. The test process first grants the app foreground permission with `AllowSetForegroundWindow`, modeling the foreground rights of real keyboard hotkeys.
 - This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path is covered by the manual acceptance checklist below. `sotto --ocr <png>` can independently check image recognition.
 
@@ -109,3 +111,7 @@ Requires a Windows desktop session.
 - Check all four tabs, long service lists, and minimum window size in both themes at 100% / 125% / 150% / 200% scaling.
 - Operate controls with Tab, Shift+Tab, Enter, Space, and Esc. Check focus and credential drafts after drag reordering and service-group changes.
 - Actually save and clear keys, then restart to check Windows Credential Manager persistence. Model and address fields remain locked during connection tests; results after window closure must not affect the new window.
+
+## Manual Native Updater Acceptance
+
+- In a Windows build with updates configured, open “检查更新…” from the tray and verify that the native updater displays status and release notes. Use a test update to check download progress, installation, and the restart action.

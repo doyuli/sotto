@@ -123,13 +123,12 @@ CGO_ENABLED=0 go test ./...
 # 4. 检查 mygo/ui 原生组件用法合规性
 bunx mygo vet .
 
-# 5. 在 macOS 上构建当前架构的安装包
-bun run build
-
-# 6. 指定平台打包构建
-bun run build:win      # 同时构建 Windows x64 与 arm64 安装包
-bun run build:mac      # 构建 macOS Apple Silicon (arm64) DMG 安装镜像
+# 5. 构建受支持平台的发布产物
+bun run build:win      # 构建 Windows x64 和 arm64 的可执行文件、OCR 资源及 NSIS 安装包
+bun run build:mac      # 构建 Apple 芯片版 .app 和 DMG（在 macOS 上运行）
 ```
+
+Windows 打包脚本通过 `mygo_nowebview` 排除 WebView2。只构建一种架构时，运行 `bun run build:win:x64` 或 `bun run build:win:arm64`。加上 `-skip-installer` 可只生成可执行文件和运行所需的资源。在 macOS 上可用 `bun run build:mac -skip-dmg -skip-notarize` 构建并签署用于本地验证的 `.app`。
 
 > 自动化测试与系统平台端到端验收指南请参阅 [e2e/README.md](e2e/README.md)。
 

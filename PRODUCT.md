@@ -6,12 +6,11 @@ Windows 10/11 (amd64 and arm64) and macOS 14+ on Apple silicon (arm64). Both pla
 
 ## Stack
 
-Existing Windows desktop app: pure-Go backend (`CGO_ENABLED=0`), mygo v0.9.2 native screenshot selection, and native `mygo/ui` bubbles and settings.
+Both desktop apps use a pure-Go backend (`CGO_ENABLED=0`) and MyGo for native screenshot selection, translation bubbles, and settings. The Windows updater uses `mygo/ui`, and the Windows release build scripts exclude WebView2.
 
-The macOS port retains MyGo v0.9.2 and bridges public system APIs through
-`purego` / `purego/objc`: Accessibility selection with a guarded pasteboard
-fallback, ScreenCaptureKit capture, Vision OCR and system speech. It remains
-Accessory for its entire lifetime, with no Dock icon. Nonactivating panels
+On macOS, `purego` and `purego/objc` bridge Accessibility selection with a guarded pasteboard
+fallback, ScreenCaptureKit capture, Vision OCR, and system speech. Sotto runs
+as an accessory app without a Dock icon. Nonactivating panels
 appear in the current full-screen Space; only explicit input, settings and
 screenshot actions take keyboard focus. Background results never activate the
 app.
@@ -26,7 +25,7 @@ app.
 | Speech | SAPI | AVFoundation |
 | Credentials | Credential Manager | Keychain |
 | Default shortcuts | Ctrl+Alt+A/S/D | Option+A/S/D |
-| Updates | Update window | Menu bar discovery and explicit installation |
+| Updates | Native update window | Menu bar discovery and explicit installation |
 | Permissions | System access policies | Accessibility and screen recording |
 
 Explicitly saved shortcuts remain unchanged, including earlier Alt+A/S/D combinations. Missing values use platform defaults; defaults are not inferred from saved values for migration.
@@ -59,7 +58,7 @@ A local Windows and macOS utility that combines selection capture, OCR, and mult
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
 - Selection translation: Windows reads text via UIA with guarded clipboard fallback; macOS uses Accessibility with guarded pasteboard fallback. Both paths snapshot readable clipboard content before simulated copy and retain a recovery backup on restoration failure; ownership/version guards prioritize newer user copies.
 - Offline OCR: Windows uses local PP-OCR with WinRT fallback; macOS uses Apple Vision. Windows releases PP-OCR sessions and stops its system-OCR worker on their idle deadlines (see `resources/windows/ocr/README.md`); macOS creates and releases Vision request/handler objects per recognition call, with no Sotto-managed idle model session.
-- Screen snip: Multi-display native overlays capture regions without freezing the desktop or preloading models. Interaction and visual tokens follow `DESIGN.md`.
+- Screen snip: Sotto takes display snapshots before opening native selection overlays. OCR uses the selected pixels from the same snapshot shown in the preview. Interaction and visual tokens follow `DESIGN.md`.
 - Window presentation: The translation bubble is frameless, fixed-width, skips the taskbar, and sizes dynamically to content within display bounds. Full lifecycle and state contracts follow `docs/translation-state.md`.
 - Long text is chunked and merged; streamed per-service results arrive progressively.
 - English results expose the five naming styles as copy actions.

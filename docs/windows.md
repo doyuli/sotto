@@ -18,7 +18,7 @@ This document records the architectural structure, Win32/COM subsystem integrati
         |                                 |                                 |
         v                                 v                                 v
 +-------------------+             +---------------+                 +---------------+
-|     MyGo v0.9.2   |             |  Win32 Hotkey |                 | Screen Coords |
+|       MyGo        |             |  Win32 Hotkey |                 | Screen Coords |
 | (DirectComposition|             | (internal/    |                 | (internal/    |
 |   / Win32 HWND)   |             |   hotkey)     |                 |  screencoords)|
 +-------------------+             +-------+-------+                 +-------+-------+
@@ -47,7 +47,7 @@ This document records the architectural structure, Win32/COM subsystem integrati
 
 | Subsystem | Windows Technology / API | Underlying Driver | Package Path | Concurrency Model |
 |---|---|---|---|---|
-| **Window & UI** | Win32 HWND, DirectComposition | MyGo v0.9.2 | `internal/ui/` | Main UI thread |
+| **Window & UI** | Win32 HWND, DirectComposition | MyGo | `internal/ui/` | Main UI thread |
 | **DPI & Multi-Monitor** | Per-Monitor DPI V2 (`shcore.dll`) | Win32 / `x/sys` | `internal/screencoords` | Layout snapshot under lock |
 | **Global Shortcuts** | `RegisterHotKey`, Win32 Msg Loop | MyGo / Win32 | `internal/hotkey` | Main thread event dispatch |
 | **Selection (Primary)** | UI Automation (`IUIAutomation`) | COM MTA / `go-ole` | `internal/selection` | Dedicated MTA worker thread |
@@ -66,14 +66,14 @@ This document records the architectural structure, Win32/COM subsystem integrati
 ### Per-Monitor DPI Awareness V2
 
 - Sotto initializes with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2`.
-- `internal/screencoords` maps UIA physical rectangles to MyGo logical units (DIPs). Screenshot selections convert overlay-local DIPs to physical pixels using the leased HWND's client origin and DPI.
+- `internal/screencoords` maps UIA physical rectangles to MyGo logical units (DIPs). Screenshot selections map overlay-local DIPs to physical snapshot pixels using the same client-area projection as the preview.
 - Multi-display setups with mixed scaling (e.g., 100%, 125%, 150%, 200%) and negative coordinate monitors (secondary displays positioned to the left or above the primary monitor) are snapshotted on-demand via `EnumDisplayMonitors` and `GetDpiForMonitor`.
 
 ### Native Screenshot Overlays
 
-- Screenshot region selection uses one transparent DirectComposition window (`MyGoSurface`) per connected monitor.
-- Overlays open over the live desktop without freezing screen updates or preloading OCR engines.
-- **Window Lease Discipline**: Displays canceled without dragging reuse their HWNDs across open/cancel cycles. Once a display begins dragging, that display's HWND is replaced upon cancellation or submission to prevent flashing previous selection rectangles.
+- Screenshot region selection uses one transparent DirectComposition window (`MyGoSurface`) per display with a usable snapshot.
+- Each overlay shows the frozen snapshot captured before the windows opened. OCR receives a crop of that snapshot.
+- On submission or cancellation, Sotto clears the preview state, hides each overlay, and schedules window destruction on the UI thread. The next capture creates new windows.
 - Visual tokens, veil opacity, and selection geometry follow [DESIGN.md](../DESIGN.md).
 
 ### Outside-Click Dismissal
@@ -164,7 +164,13 @@ Dual-engine architecture for Windows offline recognition:
 
 ---
 
-## 7. Desktop Verification and Acceptance
+## 7. Updates and Packaging
+
+- `internal/platform/updates_other.go` registers MyGo's native updater with `plugins/updater/native.New`. The tray menu opens the updater and settings control automatic checks.
+- The `build:win`, `build:win:x64`, and `build:win:arm64` scripts set `mygo_nowebview` for the packaged app. The generic `bun run build` and `bun run dev` scripts use the caller's build flags.
+- The two-architecture build emits `build/windows-amd64/Sotto.exe` and `build/windows-arm64/Sotto.exe` with their respective OCR assets. MyGo also produces NSIS installers when NSIS is available and `-skip-installer` is absent.
+
+## 8. Desktop Verification and Acceptance
 
 - Automated smoke tests are in `e2e/smoke_windows_test.go`, with DPI mode checks in `e2e/dpi_windows_test.go`; execution instructions are in [e2e/windows.md](../e2e/windows.md).
 - Real hardware acceptance tests covering multi-DPI layouts, UIA/clipboard preservation across apps, and PP-OCR memory baselines follow [e2e/windows.md](../e2e/windows.md).
