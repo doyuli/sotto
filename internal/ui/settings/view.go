@@ -351,6 +351,17 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
+		simple := cfg.SimpleTranslation
+		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文。支持中英文，使用排在首位的已启用服务。", true, func() {
+			ui.Switch(c, &simple).Label("切换简约翻译模式").OnClick(func() {
+				v.mu.Lock()
+				defer v.mu.Unlock()
+				next := cloneSettings(v.settings)
+				next.SimpleTranslation = simple
+				v.enqueueSaveLocked(next)
+			})
+		})
+
 		openAtLogin := cfg.OpenAtLogin
 		v.renderSettingRow(c, p, "开机自启", "登录后常驻托盘", true, func() {
 			sw := ui.Switch(c, &openAtLogin).Label("切换开机自启")
@@ -451,10 +462,11 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 		}
 	}
 
-	ui.Column(c).Gap(3).Children(func() {
-		ui.Text(c, "已启用的服务会同时翻译，序号即结果顺序。").FontSize(13).TextColor(p.fg)
-		ui.Text(c, "拖动序号调整顺序，凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
-	})
+	description := "已启用的服务同时翻译，拖动序号调整结果顺序，"
+	if cfg.SimpleTranslation {
+		description = "简约翻译使用首个已启用服务，拖动序号调整顺序，"
+	}
+	ui.Text(c, description+"凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
 
 	v.renderServiceGroupHeader(c, p, "已启用", len(displayEnabled))
 	if len(displayEnabled) > 0 {

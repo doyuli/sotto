@@ -72,6 +72,9 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	if err := tt.Click("切换开机自启"); err != nil {
 		t.Fatalf("Click 切换开机自启: %v", err)
 	}
+	if err := tt.Click("切换简约翻译模式"); err != nil {
+		t.Fatal(err)
+	}
 	if err := tt.Click("切换失焦自动隐藏"); err != nil {
 		t.Fatalf("Click 切换失焦自动隐藏: %v", err)
 	}
@@ -82,14 +85,15 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	waitForCondition(t, time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(saved) == 3
-	}, "expected 3 saved snapshots for general switches")
+		return len(saved) == 4
+	}, "expected 4 saved snapshots for general switches")
 
 	mu.Lock()
 	last := saved[len(saved)-1]
 	mu.Unlock()
-	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate {
-		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v", last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate)
+	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate || !last.SimpleTranslation {
+		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v SimpleTranslation=%v",
+			last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate, last.SimpleTranslation)
 	}
 }
 

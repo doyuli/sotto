@@ -24,6 +24,7 @@ import (
 	"sotto/internal/speech"
 	"sotto/internal/translate"
 	"sotto/internal/ui/bubble"
+	"sotto/internal/ui/overlay"
 	"sotto/internal/ui/settings"
 	"sotto/internal/ui/snip"
 )
@@ -46,10 +47,12 @@ type application struct {
 	settingsView    *settings.View
 	quitting        bool
 
-	bubbles *bubble.Manager
-	snip    *snip.Manager
-	tray    *mygo.Tray // main thread only
-	keys    credentialStore
+	bubbles    *bubble.Manager
+	overlays   overlay.Manager
+	simpleJobs map[int64]*simpleJob // main thread only
+	snip       *snip.Manager
+	tray       *mygo.Tray // main thread only
+	keys       credentialStore
 }
 
 func newApplication(iconPNG []byte) *application {
@@ -97,6 +100,7 @@ func (a *application) ready() {
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
+		a.stopSimpleJobs()
 		a.snip.HideStale()
 		a.mu.Lock()
 		sv := a.settingsView
@@ -115,9 +119,11 @@ func (a *application) ready() {
 		OpenSettings: func() { a.showSettings(true) },
 	})
 	mygo.Screen.OnDisplaysChanged(a.bubbles.RefreshDisplays)
+	mygo.Screen.OnDisplaysChanged(a.overlays.RefreshDisplays)
 	a.snip.IsQuitting = a.isQuitting
 	a.snip.Done = a.snipDone
 	a.snip.Failed = a.snipFailed
+	a.snip.SuspendResults = a.overlays.Suspend
 	a.shortcutBackend = hotkey.NewBackend()
 	a.snip.RegisterEscape = a.shortcutBackend.RegisterEscape
 	mygo.Screen.OnDisplaysChanged(a.snip.RefreshDisplays)
@@ -174,6 +180,13 @@ func (a *application) applySettings(s config.Settings) {
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
+	if old.SimpleTranslation && !s.SimpleTranslation {
+		mygo.RunOnMain(func() {
+			a.entry.cancelSimple()
+			a.stopSimpleJobs()
+			a.snip.HideStale()
+		})
+	}
 	// Publish only after registration and persistence have succeeded.
 	a.broadcastSettings(a.settings())
 }
@@ -199,6 +212,10 @@ func (a *application) startEntry(action string) {
 		return
 	}
 	task := a.entry.begin()
+	if action != "panel" && a.settings().SimpleTranslation {
+		task.simple = true
+		task.cursor = mygo.Screen.CursorScreenPoint()
+	}
 	log.Printf("entry: start id=%d action=%s", task.ID(), action)
 	switch action {
 	case "panel":
@@ -261,6 +278,22 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	var anchor *bubble.Anchor
 	if sel.HasRect {
 		anchor = &bubble.Anchor{X: sel.Rect.X + sel.Rect.W, Y: sel.Rect.Y + sel.Rect.H}
+	}
+	if task.simple && (message == "" || selection.PendingClipboardRecovery() == "") {
+		source := task.source()
+		if sel.HasRect {
+			source = mygo.Rectangle{X: sel.Rect.X, Y: sel.Rect.Y, Width: sel.Rect.W, Height: sel.Rect.H}
+		}
+		if message != "" {
+			a.showSimpleEntryError(task, source, message)
+		} else {
+			mygo.RunOnMain(func() {
+				a.startSimpleJob(task, source, func(ctx context.Context, progress func(string)) translate.Result {
+					return a.simpleTranslation(ctx, sel.Text, progress)
+				})
+			})
+		}
+		return
 	}
 	phase := ""
 	if message != "" {
@@ -428,16 +461,7 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 	}
 	cfg := a.settings()
 
-	text := req.Text
-	if translate.ValidateInput(text) == nil {
-		text = translate.PrepareSource(text, cfg.Identifier)
-	}
-	// Identifiers translate better as words: getUserInfo goes to the
-	// services as "get user info".
-	if translate.ValidateInput(text) == nil && cfg.Identifier.AutoSplit && naming.DetectStyle(text) != naming.None &&
-		langdetect.Detect(text) == "latin" {
-		text = strings.Join(naming.SplitWords(text), " ")
-	}
+	text := prepareTranslationSource(req.Text, cfg.Identifier)
 
 	// A lone English word also gets a dictionary card: the phonetics
 	// and the main senses, beside the translations.
@@ -497,6 +521,19 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 		}
 		translate.Run(ctx, cfg, credentials, translate.Request{Text: text, SourceLang: source, TargetLang: target, SingleWord: singleWord}, emit)
 	}()
+}
+
+func prepareTranslationSource(text string, options config.IdentifierSettings) string {
+	if translate.ValidateInput(text) == nil {
+		text = translate.PrepareSource(text, options)
+	}
+	// Identifiers translate better as words: getUserInfo goes to the
+	// services as "get user info".
+	if translate.ValidateInput(text) == nil && options.AutoSplit && naming.DetectStyle(text) != naming.None &&
+		langdetect.Detect(text) == "latin" {
+		text = strings.Join(naming.SplitWords(text), " ")
+	}
+	return text
 }
 
 // isSingleWord reports whether text is one bare English word — letters

@@ -84,14 +84,15 @@ type BubbleSettings struct {
 
 // Settings contains the app's persisted preferences.
 type Settings struct {
-	Services       ServiceSettings    `json:"services"`
-	TargetLanguage string             `json:"targetLanguage"`
-	Identifier     IdentifierSettings `json:"identifier"`
-	CopyFormats    []string           `json:"copyFormats"`
-	Hotkeys        HotkeySettings     `json:"hotkeys"`
-	Bubble         BubbleSettings     `json:"bubble"`
-	OpenAtLogin    bool               `json:"openAtLogin"`
-	AutoUpdate     bool               `json:"autoUpdate"`
+	Services          ServiceSettings    `json:"services"`
+	TargetLanguage    string             `json:"targetLanguage"`
+	Identifier        IdentifierSettings `json:"identifier"`
+	CopyFormats       []string           `json:"copyFormats"`
+	Hotkeys           HotkeySettings     `json:"hotkeys"`
+	Bubble            BubbleSettings     `json:"bubble"`
+	SimpleTranslation bool               `json:"simpleTranslation"`
+	OpenAtLogin       bool               `json:"openAtLogin"`
+	AutoUpdate        bool               `json:"autoUpdate"`
 }
 
 // Default returns the settings a fresh install starts with.

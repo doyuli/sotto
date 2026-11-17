@@ -252,8 +252,26 @@ func TestNormalizePartialFile(t *testing.T) {
 	if got.AutoUpdate {
 		t.Error("legacy settings should keep automatic updates off")
 	}
+	if got.SimpleTranslation {
+		t.Error("legacy settings should use the full translation bubble")
+	}
 	if got.Services.SiliconFlow.Model != DefaultSiliconFlowModel || got.Services.Zhipu.Model != DefaultZhipuModel {
 		t.Errorf("legacy settings lost model defaults: %+v", got.Services)
+	}
+}
+
+func TestSimpleTranslationRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg := Default()
+	for _, on := range []bool{true, false} {
+		cfg.SimpleTranslation = on
+		if err := Save(path, cfg); err != nil {
+			t.Fatal(err)
+		}
+		reloaded, err := Load(path)
+		if err != nil || reloaded.SimpleTranslation != on {
+			t.Fatalf("reloaded mode = %v, want %v, err=%v", reloaded.SimpleTranslation, on, err)
+		}
 	}
 }
 

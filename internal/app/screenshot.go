@@ -14,13 +14,23 @@ import (
 
 func (a *application) snipFailed(task snip.Task, err error) {
 	log.Printf("capture: %v", err)
+	if entry, ok := task.(*entryTask); ok && entry.simple {
+		a.showSimpleEntryError(entry, entry.source(), capture.SnapshotUserMessage(err))
+		return
+	}
 	go a.bubbles.ShowTask(a.settings(), "ocr", "", nil, "error", capture.SnapshotUserMessage(err), task.Valid, task.Cancel)
 }
 
 // snipDone crops the snapshot and starts recognition after the overlays close.
 func (a *application) snipDone(shot *snip.Capture) {
 	task := shot.Task
-	anchor := &bubble.Anchor{X: shot.Anchor.X, Y: shot.Anchor.Y}
+	if entry, ok := task.(*entryTask); ok && entry.simple {
+		a.startSimpleJob(entry, shot.Region, func(ctx context.Context, progress func(string)) translate.Result {
+			return a.simpleScreenshot(ctx, shot, progress)
+		})
+		return
+	}
+	anchor := &bubble.Anchor{X: shot.Region.X, Y: shot.Region.Y + shot.Region.Height}
 	go func() {
 		img, err := shot.Grab()
 		if !task.Valid() {

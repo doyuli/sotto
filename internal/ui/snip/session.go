@@ -34,6 +34,8 @@ type Manager struct {
 	Done           func(*Capture)
 	Failed         func(Task, error)
 	RegisterEscape func(func()) (func(), error)
+	SuspendResults func() func()
+	resumeResults  func()
 }
 
 // Keep each batch's admission until the UI has taken or dropped its pixels.
@@ -47,6 +49,9 @@ func (s *Manager) Show(task Task) {
 		return
 	}
 	s.beginSnapshot(task)
+	if s.SuspendResults != nil {
+		s.resumeResults = s.SuspendResults()
+	}
 	source := platform.ScreenshotSource()
 	cursorDisplay := mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint())
 	ids := make([]int64, 0, len(displays))
@@ -262,6 +267,10 @@ func (s *Manager) Hide() {
 		// Update queues destruction beyond the native input callback. Closed
 		// windows have no content to redraw after Destroy returns.
 		w.Update(w.Destroy)
+	}
+	if resume := s.resumeResults; resume != nil {
+		s.resumeResults = nil
+		resume()
 	}
 }
 

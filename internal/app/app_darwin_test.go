@@ -2,7 +2,11 @@
 
 package app
 
-import "testing"
+import (
+	"testing"
+
+	"sotto/internal/config"
+)
 
 func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 	var gate entryGate
@@ -21,4 +25,25 @@ func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 		t.Fatal("delayed notification canceled a new workspace entry")
 	}
 	fresh.cancel()
+}
+
+func TestWorkspaceCancellationPreservesNewSimpleJob(t *testing.T) {
+	// The watcher can run after a request has started in the new Space.
+	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+	stale := a.entry.begin()
+	staleCtx, ok := a.beginSimpleJob(stale)
+	if !ok {
+		t.Fatal("first job rejected")
+	}
+	a.simpleJobs[stale.id].workspace++
+	fresh := a.entry.begin()
+	freshCtx, ok := a.beginSimpleJob(fresh)
+	if !ok {
+		t.Fatal("new workspace job rejected")
+	}
+	a.cancelStaleSimpleJobs()
+	if staleCtx.Err() == nil || a.finishSimpleJob(stale.id) || freshCtx.Err() != nil {
+		t.Fatal("workspace change did not cancel only the stale job")
+	}
+	a.stopSimpleJobs()
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,13 @@ func Configured(cfg config.Settings, k KeyStore) []string {
 		}
 	}
 	return out
+}
+
+// EnabledProviders follows the configured card order, excluding the dictionary.
+func EnabledProviders(settings config.ServiceSettings) []Translator {
+	return slices.DeleteFunc(orderTranslators(DefaultTranslators(), settings.Order), func(service Translator) bool {
+		return service.Name() == "dictionary" || !contains(settings.Enabled, service.Name())
+	})
 }
 
 // Test checks a fixed, non-streaming translation, including disabled services.

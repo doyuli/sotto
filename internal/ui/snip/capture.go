@@ -42,7 +42,7 @@ func (f *snapshotFrame) pixels(content mygo.Rectangle, selection Rect) image.Rec
 // Capture retains only the selected display's pixels until OCR receives its crop.
 type Capture struct {
 	Task   Task
-	Anchor mygo.Point
+	Region mygo.Rectangle // global logical bounds for placing the translation
 	image  image.Image
 	pixels image.Rectangle
 }
@@ -53,23 +53,35 @@ func (s *Manager) finish(win *mygo.Window, sessionID int64, rect *Rect) {
 		return
 	}
 	round := screen.round
-	anchor := snipCaptureAnchor(round.content, rect)
-	if anchor == nil || s.Done == nil {
+	region, valid := snipCaptureRegion(round.content, rect)
+	if !valid || s.Done == nil {
 		s.Hide()
 		task.Cancel()
 		return
 	}
-	shot := &Capture{Task: task, Anchor: *anchor, image: round.frame.image, pixels: round.frame.pixels(round.content, *rect)}
+	shot := &Capture{
+		Task: task, Region: region,
+		image: round.frame.image, pixels: round.frame.pixels(round.content, *rect),
+	}
 	s.Hide()
 	s.Done(shot)
 }
 
 // Grab is called once by the OCR worker. Only the crop remains live afterwards.
 func (c *Capture) Grab() (image.Image, error) {
+	if !c.Task.Valid() {
+		c.image = nil
+		return nil, context.Canceled
+	}
+	return c.Crop(c.Task.Context())
+}
+
+// Crop also accepts a job that has taken ownership of a submitted snapshot.
+func (c *Capture) Crop(ctx context.Context) (image.Image, error) {
 	source := c.image
 	c.image = nil
-	if !c.Task.Valid() {
-		return nil, context.Canceled
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	width, height := c.pixels.Dx(), c.pixels.Dy()
 	if err := capture.ValidateSelection(width, height); err != nil {

@@ -72,6 +72,18 @@ func TestCanceledCaptureRejectsSnapshot(t *testing.T) {
 	}
 }
 
+func TestSubmittedCropOutlivesAcquisition(t *testing.T) {
+	// A subsequent screenshot must not discard pixels already handed to OCR.
+	var gate testGate
+	task := gate.Begin()
+	shot := &Capture{Task: task, image: image.NewRGBA(image.Rect(0, 0, 32, 32)), pixels: image.Rect(4, 4, 24, 24)}
+	gate.Begin()
+	img, err := shot.Crop(t.Context())
+	if err != nil || img.Bounds() != image.Rect(0, 0, 20, 20) {
+		t.Fatalf("detached crop: image=%v err=%v", img, err)
+	}
+}
+
 func TestSnipDisplayChangeRevokesPendingSnapshot(t *testing.T) {
 	var gate testGate
 	pending := gate.Begin()
@@ -94,12 +106,17 @@ func TestSnipForegroundChangeDiscardsPendingSnapshot(t *testing.T) {
 	// A slow screenshot used to interrupt the app the user switched to.
 	var gate testGate
 	pending := gate.Begin()
-	manager := Manager{task: pending}
+	resumes := 0
+	manager := Manager{task: pending, resumeResults: func() { resumes++ }}
 	if !manager.acceptSnapshot(pending, 10, 10) {
 		t.Fatal("unchanged foreground rejected the pending snapshot")
 	}
-	if manager.acceptSnapshot(pending, 10, 20) || pending.Valid() || manager.task != nil {
+	if manager.acceptSnapshot(pending, 10, 20) || pending.Valid() || manager.task != nil || resumes != 1 {
 		t.Fatal("switching foreground while grabbing left the screenshot active")
+	}
+	manager.Hide()
+	if resumes != 1 {
+		t.Fatal("an old screenshot resumed the result windows twice")
 	}
 }
 

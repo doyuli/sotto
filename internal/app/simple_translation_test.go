@@ -1,0 +1,269 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"sotto/internal/config"
+	"sotto/internal/keys"
+	"sotto/internal/translate"
+)
+
+func TestSimpleJobLoadingOnlyWhileWaiting(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// A quick translation must not leave a delayed placeholder behind.
+		updates, complete := make(chan string, 2), make(chan translate.Result, 1)
+		show := func(text string) { updates <- text }
+		done := func(result translate.Result) { complete <- result }
+		runSimpleJob(t.Context(), func(context.Context, func(string)) translate.Result {
+			return translate.Result{Text: "快速译文"}
+		}, show, done)
+		time.Sleep(simpleLoadingDelay)
+		synctest.Wait()
+		if len(updates) != 0 || (<-complete).Text != "快速译文" {
+			t.Fatal("fast result displayed a loading state")
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go runSimpleJob(ctx, func(ctx context.Context, _ func(string)) translate.Result {
+			<-ctx.Done()
+			return translate.Result{}
+		}, show, done)
+		synctest.Wait()
+		time.Sleep(simpleLoadingDelay - time.Millisecond)
+		if len(updates) != 0 {
+			t.Fatal("loading appeared before the delay")
+		}
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		if len(updates) != 1 || <-updates != "" || len(complete) != 0 {
+			t.Fatal("pending job did not display loading")
+		}
+		cancel()
+		if (<-complete).Text != "" {
+			t.Fatal("canceled job returned a translation")
+		}
+	})
+}
+
+func TestSimpleJobFirstChunkSkipsTheLoadingState(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		updates := make(chan string, 2)
+		done := make(chan translate.Result, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go runSimpleJob(ctx, func(ctx context.Context, progress func(string)) translate.Result {
+			progress("第一段")
+			<-ctx.Done()
+			progress("已经取消")
+			return translate.Result{}
+		}, func(text string) { updates <- text }, func(result translate.Result) { done <- result })
+		if got := <-updates; got != "第一段" {
+			t.Fatalf("first update = %q", got)
+		}
+		time.Sleep(2 * simpleLoadingDelay)
+		synctest.Wait()
+		cancel()
+		<-done
+		if len(updates) != 0 {
+			t.Fatal("loading or stale text arrived after the first chunk")
+		}
+	})
+}
+
+func TestSimpleJobsOutliveTheirEntries(t *testing.T) {
+	// Reusing the acquisition context would discard the first translation.
+	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+	first := a.entry.begin()
+	firstCtx, ok := a.beginSimpleJob(first)
+	if !ok {
+		t.Fatal("first job rejected")
+	}
+	second := a.entry.begin()
+	secondCtx, ok := a.beginSimpleJob(second)
+	if !ok || first.Valid() || firstCtx.Err() != nil {
+		t.Fatal("second acquisition canceled the accepted first job")
+	}
+	if !a.finishSimpleJob(second.ID()) || secondCtx.Err() == nil || firstCtx.Err() != nil {
+		t.Fatal("finishing the second job affected the first")
+	}
+	if !a.finishSimpleJob(first.ID()) || a.finishSimpleJob(first.ID()) {
+		t.Fatal("first job must finish successfully exactly once")
+	}
+}
+
+func TestSimpleJobsStopBeforeLateResults(t *testing.T) {
+	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+	first := a.entry.begin()
+	ctx, ok := a.beginSimpleJob(first)
+	if !ok {
+		t.Fatal("job rejected")
+	}
+	a.cfg.SimpleTranslation = false
+	a.stopSimpleJobs()
+	a.cfg.SimpleTranslation = true
+	if ctx.Err() == nil || a.finishSimpleJob(first.ID()) {
+		t.Fatal("disabled job could still present after re-enabling the mode")
+	}
+}
+
+func TestSimpleServiceOnlyReadsFirstEnabledProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"azure", "openai", "dictionary"}
+	cfg.Services.Order = []string{"dictionary", "google", "openai", "azure"}
+	keyring := &simpleTestKeyring{serviceTestKeyring: serviceTestKeyring{
+		values: map[string]string{keys.OpenAIKey: "openai", keys.AzureKey: "azure", keys.AzureRegion: "region"},
+	}}
+	a := &application{cfg: cfg, keys: keyring}
+	got, _, err := a.simpleService(t.Context())
+	if err != nil || !slices.Equal(got.Services.Enabled, []string{"openai"}) || !slices.Equal(keyring.read, []string{keys.OpenAIKey}) {
+		t.Fatalf("enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+	}
+	a.cfg.Services.Order = []string{"azure", "openai"}
+	keyring.read = nil
+	got, _, err = a.simpleService(t.Context())
+	if err != nil || !slices.Equal(got.Services.Enabled, []string{"azure"}) || !slices.Equal(keyring.read, []string{keys.AzureKey, keys.AzureRegion}) {
+		t.Fatalf("after reorder: enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	keyring.read = nil
+	_, _, err = a.simpleService(ctx)
+	if len(keyring.read) != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled job: credentials=%v err=%v", keyring.read, err)
+	}
+}
+
+func TestSimpleServiceSkipsMissingCredentialsButReportsReadFailures(t *testing.T) {
+	// A key removed outside Settings used to block its visible first service.
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"openai", "baidu", "google", "deepl"}
+	cfg.Services.Order = slices.Clone(cfg.Services.Enabled)
+	keyring := &simpleTestKeyring{serviceTestKeyring: serviceTestKeyring{
+		values: map[string]string{keys.BaiduAppID: "baidu"},
+	}}
+	a := &application{cfg: cfg, keys: keyring}
+	got, _, err := a.simpleService(t.Context())
+	if err != nil || !slices.Equal(got.Services.Enabled, []string{"google"}) ||
+		!slices.Equal(keyring.read, []string{keys.OpenAIKey, keys.BaiduAppID, keys.BaiduKey}) {
+		t.Fatalf("enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+	}
+	keyring.failRead = keys.OpenAIKey
+	keyring.read = nil
+	_, _, err = a.simpleService(t.Context())
+	if !errors.Is(err, keys.ErrUnavailable) || !slices.Equal(keyring.read, []string{keys.OpenAIKey}) {
+		t.Fatalf("unavailable keyring: credentials=%v err=%v", keyring.read, err)
+	}
+}
+
+type simpleTestKeyring struct {
+	serviceTestKeyring
+	read []string
+}
+
+func (k *simpleTestKeyring) Snapshot(names []string) keys.Snapshot {
+	k.read = append(k.read, names...)
+	return k.serviceTestKeyring.Snapshot(names)
+}
+
+func TestSimpleLanguages(t *testing.T) {
+	for _, tc := range []struct{ text, configured, source, target string }{
+		{"请审查这个 PR。", "auto", "zh-HANS", "en"},
+		{"Review the change.", "auto", "en", "zh-HANS"},
+		{"请审查这个 PR。", "en", "zh-HANS", "en"},
+		{"Review the change.", "zh-HANS", "en", "zh-HANS"},
+		{"请审查这个 PR。", "zh-HANS", "zh-HANS", "zh-HANS"},
+		{"Review the change.", "en", "en", "en"},
+		{"请审查这个 PR。", "ja", "zh-HANS", "en"},
+		{"Review the change.", "ko", "en", "zh-HANS"},
+		{"今日は晴れです。", "en", "", ""},
+		{"안녕하세요", "zh-HANS", "", ""},
+	} {
+		if source, target := simpleLanguages(tc.text, tc.configured); source != tc.source || target != tc.target {
+			t.Errorf("%q with %s: got %s to %s, want %s to %s", tc.text, tc.configured, source, target, tc.source, tc.target)
+		}
+	}
+}
+
+func TestSimpleTranslationSkipsProviderForTextAlreadyInConfiguredLanguage(t *testing.T) {
+	cfg := config.Default()
+	cfg.TargetLanguage = "en"
+	cfg.Services.Enabled = []string{"openai"}
+	a := &application{cfg: cfg, keys: &unusedKeyring{t: t}}
+	if got := a.simpleTranslation(t.Context(), "getUserInfo", func(string) { t.Fatal("unexpected stream") }); got.Text != "getUserInfo" || got.Err != "" {
+		t.Fatalf("result=%+v, want the original text", got)
+	}
+}
+
+func TestSimpleTranslationPublishesTextBeforeFirstProviderFinishes(t *testing.T) {
+	// The first chunk must reach the overlay while the provider is still waiting.
+	var calls atomic.Int32
+	release := make(chan struct{})
+	finishResponse := sync.OnceFunc(func() { close(release) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var request struct {
+			Stream   bool
+			Messages []struct{ Role, Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Stream {
+			t.Errorf("expected a supported streaming request: %+v, %v", request, err)
+		}
+		if !slices.ContainsFunc(request.Messages, func(message struct{ Role, Content string }) bool {
+			return message.Role == "user" && strings.Contains(message.Content, "review")
+		}) {
+			t.Error("request missing the selected word")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"审\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"查\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	defer finishResponse()
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"deepl", "openai", "dictionary"}
+	cfg.Services.Order = []string{"openai", "deepl"}
+	cfg.Services.OpenAI.BaseURL = server.URL
+	a := &application{cfg: cfg, keys: &serviceTestKeyring{values: map[string]string{keys.OpenAIKey: "test"}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	updates, done := make(chan string, 2), make(chan translate.Result, 1)
+	go func() {
+		done <- a.simpleTranslation(ctx, "review", func(text string) { updates <- text })
+	}()
+	select {
+	case first := <-updates:
+		if first != "审" {
+			t.Fatalf("first chunk = %q", first)
+		}
+	case <-ctx.Done():
+		t.Fatal("no streamed text before the service finished")
+	}
+	finishResponse()
+	select {
+	case got := <-done:
+		if got.Text != "审查" || got.Err != "" || calls.Load() != 1 {
+			t.Fatalf("result=%+v, calls=%d", got, calls.Load())
+		}
+	case <-ctx.Done():
+		t.Fatal("no final translation")
+	}
+}

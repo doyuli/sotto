@@ -41,10 +41,10 @@ func TestSnipCaptureUsesClientBounds(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		rect *Rect
-		want *mygo.Point
+		want *mygo.Rectangle
 	}{
-		{"client origin", &Rect{0, 0, 8, 8}, &mygo.Point{X: -1912, Y: -84}},
-		{"bottom right", &Rect{1896, 1056, 8, 8}, &mygo.Point{X: -16, Y: 972}},
+		{"client origin", &Rect{0, 0, 8, 8}, &mygo.Rectangle{X: -1912, Y: -92, Width: 8, Height: 8}},
+		{"bottom right", &Rect{1896, 1056, 8, 8}, &mygo.Rectangle{X: -16, Y: 964, Width: 8, Height: 8}},
 		{"beyond client width", &Rect{1900, 0, 8, 8}, nil},
 		{"beyond client height", &Rect{0, 1060, 8, 8}, nil},
 		{"outside origin", &Rect{-1, 0, 8, 8}, nil},
@@ -52,9 +52,9 @@ func TestSnipCaptureUsesClientBounds(t *testing.T) {
 		{"cancel", nil, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := snipCaptureAnchor(content, tt.rect)
-			if (got == nil) != (tt.want == nil) || got != nil && *got != *tt.want {
-				t.Fatalf("capture anchor = %v; want %v", got, tt.want)
+			got, valid := snipCaptureRegion(content, tt.rect)
+			if valid != (tt.want != nil) || valid && got != *tt.want {
+				t.Fatalf("capture region = %+v, valid=%t; want %v", got, valid, tt.want)
 			}
 		})
 	}

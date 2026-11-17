@@ -32,6 +32,7 @@ func (a *application) platformMenuItems() []*mygo.MenuItem {
 func (a *application) readyPlatform() {
 	stop, err := macnative.WatchWorkspace(func() {
 		a.entry.cancelStaleWorkspace()
+		a.cancelStaleSimpleJobs()
 		a.snip.HideStale()
 		a.bubbles.HideStale()
 		a.refreshTrayMenu()
@@ -58,6 +59,10 @@ func (a *application) readyPlatform() {
 func (a *application) startScreenshot(task *entryTask) {
 	go func() {
 		if err := macnative.RequireScreenRecording(true); err != nil {
+			if task.simple {
+				a.showSimpleEntryError(task, task.source(), err.Error())
+				return
+			}
 			a.bubbles.ShowTask(a.settings(), "ocr", "", nil, "error", err.Error(), task.Valid, nil)
 			return
 		}
