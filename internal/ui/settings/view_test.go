@@ -91,9 +91,9 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	mu.Lock()
 	last := saved[len(saved)-1]
 	mu.Unlock()
-	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate || !last.SimpleTranslation {
-		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v SimpleTranslation=%v",
-			last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate, last.SimpleTranslation)
+	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate || !last.MinimalTranslation {
+		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v MinimalTranslation=%v",
+			last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate, last.MinimalTranslation)
 	}
 }
 

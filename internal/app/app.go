@@ -47,12 +47,12 @@ type application struct {
 	settingsView    *settings.View
 	quitting        bool
 
-	bubbles    *bubble.Manager
-	overlays   overlay.Manager
-	simpleJobs map[int64]*simpleJob // main thread only
-	snip       *snip.Manager
-	tray       *mygo.Tray // main thread only
-	keys       credentialStore
+	bubbles     *bubble.Manager
+	overlays    overlay.Manager
+	minimalJobs map[int64]*minimalJob // main thread only
+	snip        *snip.Manager
+	tray        *mygo.Tray // main thread only
+	keys        credentialStore
 }
 
 func newApplication(iconPNG []byte) *application {
@@ -100,7 +100,7 @@ func (a *application) ready() {
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
-		a.stopSimpleJobs()
+		a.stopMinimalJobs()
 		a.snip.HideStale()
 		a.mu.Lock()
 		sv := a.settingsView
@@ -180,10 +180,10 @@ func (a *application) applySettings(s config.Settings) {
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
-	if old.SimpleTranslation && !s.SimpleTranslation {
+	if old.MinimalTranslation && !s.MinimalTranslation {
 		mygo.RunOnMain(func() {
-			a.entry.cancelSimple()
-			a.stopSimpleJobs()
+			a.entry.cancelMinimal()
+			a.stopMinimalJobs()
 			a.snip.HideStale()
 		})
 	}
@@ -212,8 +212,8 @@ func (a *application) startEntry(action string) {
 		return
 	}
 	task := a.entry.begin()
-	if action != "panel" && a.settings().SimpleTranslation {
-		task.simple = true
+	if action != "panel" && a.settings().MinimalTranslation {
+		task.minimal = true
 		task.cursor = mygo.Screen.CursorScreenPoint()
 	}
 	log.Printf("entry: start id=%d action=%s", task.ID(), action)
@@ -279,17 +279,17 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	if sel.HasRect {
 		anchor = &bubble.Anchor{X: sel.Rect.X + sel.Rect.W, Y: sel.Rect.Y + sel.Rect.H}
 	}
-	if task.simple && (message == "" || selection.PendingClipboardRecovery() == "") {
+	if task.minimal && (message == "" || selection.PendingClipboardRecovery() == "") {
 		source := task.source()
 		if sel.HasRect {
 			source = mygo.Rectangle{X: sel.Rect.X, Y: sel.Rect.Y, Width: sel.Rect.W, Height: sel.Rect.H}
 		}
 		if message != "" {
-			a.showSimpleEntryError(task, source, message)
+			a.showMinimalEntryError(task, source, message)
 		} else {
 			mygo.RunOnMain(func() {
-				a.startSimpleJob(task, source, func(ctx context.Context, progress func(string)) translate.Result {
-					return a.simpleTranslation(ctx, sel.Text, progress)
+				a.startMinimalJob(task, source, func(ctx context.Context, progress func(string)) translate.Result {
+					return a.minimalTranslation(ctx, sel.Text, progress)
 				})
 			})
 		}

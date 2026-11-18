@@ -17,28 +17,28 @@ import (
 	"sotto/internal/ui/snip"
 )
 
-const simpleLoadingDelay = 300 * time.Millisecond
+const minimalLoadingDelay = 300 * time.Millisecond
 
-type simpleJob struct {
+type minimalJob struct {
 	cancel    context.CancelFunc
 	workspace uint64
 	result    *overlay.Result
 }
 
-func (a *application) startSimpleJob(task *entryTask, source mygo.Rectangle, run func(context.Context, func(string)) translate.Result) {
-	ctx, ok := a.beginSimpleJob(task)
+func (a *application) startMinimalJob(task *entryTask, source mygo.Rectangle, run func(context.Context, func(string)) translate.Result) {
+	ctx, ok := a.beginMinimalJob(task)
 	if !ok {
 		return
 	}
 	id := task.id
-	job := a.simpleJobs[id]
-	go runSimpleJob(ctx, run, func(text string) {
+	job := a.minimalJobs[id]
+	go runMinimalJob(ctx, run, func(text string) {
 		mygo.RunOnMain(func() {
-			if a.simpleJobs[id] != job || !a.canPresentSimpleJob(job) {
+			if a.minimalJobs[id] != job || !a.canPresentMinimalJob(job) {
 				return
 			}
 			if job.result == nil {
-				job.result = a.overlays.ShowPending(text, source, job.workspace, func() { a.finishSimpleJob(id) })
+				job.result = a.overlays.ShowPending(text, source, job.workspace, func() { a.finishMinimalJob(id) })
 			} else if text != "" {
 				job.result.Progress(text)
 			}
@@ -46,7 +46,7 @@ func (a *application) startSimpleJob(task *entryTask, source mygo.Rectangle, run
 	}, func(result translate.Result) {
 		mygo.RunOnMain(func() {
 			switch {
-			case !a.finishSimpleJob(id) || result.Text == "" && result.Err == "":
+			case !a.finishMinimalJob(id) || result.Text == "" && result.Err == "":
 				if job.result != nil {
 					job.result.Close()
 				}
@@ -59,8 +59,8 @@ func (a *application) startSimpleJob(task *entryTask, source mygo.Rectangle, run
 	})
 }
 
-func runSimpleJob(ctx context.Context, run func(context.Context, func(string)) translate.Result, progress func(string), complete func(translate.Result)) {
-	timer := time.AfterFunc(simpleLoadingDelay, func() {
+func runMinimalJob(ctx context.Context, run func(context.Context, func(string)) translate.Result, progress func(string), complete func(translate.Result)) {
+	timer := time.AfterFunc(minimalLoadingDelay, func() {
 		if ctx.Err() == nil {
 			progress("")
 		}
@@ -77,63 +77,63 @@ func runSimpleJob(ctx context.Context, run func(context.Context, func(string)) t
 
 // Acquisition is exclusive. Once it hands off its input on the main thread,
 // OCR and translation can outlive that entry without canceling other results.
-func (a *application) beginSimpleJob(task *entryTask) (context.Context, bool) {
-	if !task.Valid() || !a.settings().SimpleTranslation || a.isQuitting() {
+func (a *application) beginMinimalJob(task *entryTask) (context.Context, bool) {
+	if !task.Valid() || !a.settings().MinimalTranslation || a.isQuitting() {
 		return nil, false
 	}
-	if _, exists := a.simpleJobs[task.id]; exists {
+	if _, exists := a.minimalJobs[task.id]; exists {
 		return nil, false
 	}
-	if a.simpleJobs == nil {
-		a.simpleJobs = make(map[int64]*simpleJob)
+	if a.minimalJobs == nil {
+		a.minimalJobs = make(map[int64]*minimalJob)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a.simpleJobs[task.id] = &simpleJob{cancel: cancel, workspace: task.workspace}
+	a.minimalJobs[task.id] = &minimalJob{cancel: cancel, workspace: task.workspace}
 	return ctx, true
 }
 
-func (a *application) finishSimpleJob(id int64) bool {
-	job, pending := a.simpleJobs[id]
+func (a *application) finishMinimalJob(id int64) bool {
+	job, pending := a.minimalJobs[id]
 	if !pending {
 		return false
 	}
-	delete(a.simpleJobs, id)
+	delete(a.minimalJobs, id)
 	job.cancel()
-	return a.canPresentSimpleJob(job)
+	return a.canPresentMinimalJob(job)
 }
 
-func (a *application) canPresentSimpleJob(job *simpleJob) bool {
-	return job.workspace == platform.WorkspaceGeneration() && a.settings().SimpleTranslation && !a.isQuitting()
+func (a *application) canPresentMinimalJob(job *minimalJob) bool {
+	return job.workspace == platform.WorkspaceGeneration() && a.settings().MinimalTranslation && !a.isQuitting()
 }
 
-func (a *application) stopSimpleJobs() {
-	for _, job := range a.simpleJobs {
+func (a *application) stopMinimalJobs() {
+	for _, job := range a.minimalJobs {
 		job.cancel()
 	}
-	clear(a.simpleJobs)
+	clear(a.minimalJobs)
 	a.overlays.Close()
 }
 
-func (a *application) cancelStaleSimpleJobs() {
+func (a *application) cancelStaleMinimalJobs() {
 	workspace := platform.WorkspaceGeneration()
-	for id, job := range a.simpleJobs {
+	for id, job := range a.minimalJobs {
 		if job.workspace != workspace {
 			job.cancel()
-			delete(a.simpleJobs, id)
+			delete(a.minimalJobs, id)
 		}
 	}
 	a.overlays.CloseStale(workspace)
 }
 
-func (a *application) showSimpleEntryError(task *entryTask, source mygo.Rectangle, message string) {
+func (a *application) showMinimalEntryError(task *entryTask, source mygo.Rectangle, message string) {
 	mygo.RunOnMain(func() {
-		if task.Valid() && a.settings().SimpleTranslation && !a.isQuitting() {
+		if task.Valid() && a.settings().MinimalTranslation && !a.isQuitting() {
 			a.overlays.Show("", message, source, task.workspace)
 		}
 	})
 }
 
-func (a *application) simpleScreenshot(ctx context.Context, shot *snip.Capture, progress func(string)) translate.Result {
+func (a *application) minimalScreenshot(ctx context.Context, shot *snip.Capture, progress func(string)) translate.Result {
 	img, err := shot.Crop(ctx)
 	if err != nil {
 		log.Printf("capture: %v", err)
@@ -143,11 +143,11 @@ func (a *application) simpleScreenshot(ctx context.Context, shot *snip.Capture, 
 	if message != "" {
 		return translate.Result{Err: message}
 	}
-	return a.simpleTranslation(ctx, text, progress)
+	return a.minimalTranslation(ctx, text, progress)
 }
 
-func (a *application) simpleTranslation(ctx context.Context, text string, progress func(string)) translate.Result {
-	prepared, err := a.prepareSimpleRequest(ctx, text)
+func (a *application) minimalTranslation(ctx context.Context, text string, progress func(string)) translate.Result {
+	prepared, err := a.prepareMinimalRequest(ctx, text)
 	if ctx.Err() != nil {
 		return translate.Result{}
 	}
@@ -182,13 +182,13 @@ func (a *application) simpleTranslation(ctx context.Context, text string, progre
 	return final
 }
 
-type simpleRequest struct {
+type minimalRequest struct {
 	request     translate.Request
 	settings    config.Settings
 	credentials keys.Snapshot
 }
 
-func (a *application) prepareSimpleRequest(ctx context.Context, text string) (simpleRequest, error) {
+func (a *application) prepareMinimalRequest(ctx context.Context, text string) (minimalRequest, error) {
 	cfg := a.settings()
 	services := translate.EnabledProviders(cfg.Services)
 	if len(services) > 0 {
@@ -202,29 +202,29 @@ func (a *application) prepareSimpleRequest(ctx context.Context, text string) (si
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return simpleRequest{}, err
+		return minimalRequest{}, err
 	}
 	request, err := prepareTranslationRequest(text, "", "", cfg)
 	if err != nil {
-		return simpleRequest{}, err
+		return minimalRequest{}, err
 	}
 	for _, service := range services {
 		if err := ctx.Err(); err != nil {
-			return simpleRequest{}, err
+			return minimalRequest{}, err
 		}
 		var credentials keys.Snapshot
 		if names := keys.ForServices(service.Name()); len(names) != 0 {
 			credentials = a.keys.Snapshot(names)
 			if err := credentials.Err(names...); err != nil {
-				return simpleRequest{}, err
+				return minimalRequest{}, err
 			}
 		}
 		// A provider with missing credentials is not enabled in Settings.
 		if service.Available(credentials, cfg) {
 			cfg.Services.Enabled = []string{service.Name()}
-			return simpleRequest{request: request, settings: cfg, credentials: credentials}, nil
+			return minimalRequest{request: request, settings: cfg, credentials: credentials}, nil
 		}
 	}
 	cfg.Services.Enabled = nil
-	return simpleRequest{request: request, settings: cfg}, nil
+	return minimalRequest{request: request, settings: cfg}, nil
 }

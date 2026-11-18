@@ -22,7 +22,7 @@ type entryTask struct {
 	cancel    context.CancelFunc
 	gate      *entryGate
 	workspace uint64
-	simple    bool
+	minimal   bool
 	cursor    mygo.Point
 }
 
@@ -52,10 +52,10 @@ func (g *entryGate) cancel() {
 	}
 }
 
-func (g *entryGate) cancelSimple() {
+func (g *entryGate) cancelMinimal() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.current != nil && g.current.simple {
+	if g.current != nil && g.current.minimal {
 		g.current.cancel()
 	}
 }

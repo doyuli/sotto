@@ -27,23 +27,23 @@ func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 	fresh.cancel()
 }
 
-func TestWorkspaceCancellationPreservesNewSimpleJob(t *testing.T) {
+func TestWorkspaceCancellationPreservesNewMinimalJob(t *testing.T) {
 	// The watcher can run after a request has started in the new Space.
-	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+	a := &application{cfg: config.Settings{MinimalTranslation: true}}
 	stale := a.entry.begin()
-	staleCtx, ok := a.beginSimpleJob(stale)
+	staleCtx, ok := a.beginMinimalJob(stale)
 	if !ok {
 		t.Fatal("first job rejected")
 	}
-	a.simpleJobs[stale.id].workspace++
+	a.minimalJobs[stale.id].workspace++
 	fresh := a.entry.begin()
-	freshCtx, ok := a.beginSimpleJob(fresh)
+	freshCtx, ok := a.beginMinimalJob(fresh)
 	if !ok {
 		t.Fatal("new workspace job rejected")
 	}
-	a.cancelStaleSimpleJobs()
-	if staleCtx.Err() == nil || a.finishSimpleJob(stale.id) || freshCtx.Err() != nil {
+	a.cancelStaleMinimalJobs()
+	if staleCtx.Err() == nil || a.finishMinimalJob(stale.id) || freshCtx.Err() != nil {
 		t.Fatal("workspace change did not cancel only the stale job")
 	}
-	a.stopSimpleJobs()
+	a.stopMinimalJobs()
 }

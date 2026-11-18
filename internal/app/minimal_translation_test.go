@@ -20,16 +20,16 @@ import (
 	"sotto/internal/translate"
 )
 
-func TestSimpleJobLoadingOnlyWhileWaiting(t *testing.T) {
+func TestMinimalJobLoadingOnlyWhileWaiting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// A quick translation must not leave a delayed placeholder behind.
 		updates, complete := make(chan string, 2), make(chan translate.Result, 1)
 		show := func(text string) { updates <- text }
 		done := func(result translate.Result) { complete <- result }
-		runSimpleJob(t.Context(), func(context.Context, func(string)) translate.Result {
+		runMinimalJob(t.Context(), func(context.Context, func(string)) translate.Result {
 			return translate.Result{Text: "快速译文"}
 		}, show, done)
-		time.Sleep(simpleLoadingDelay)
+		time.Sleep(minimalLoadingDelay)
 		synctest.Wait()
 		if len(updates) != 0 || (<-complete).Text != "快速译文" {
 			t.Fatal("fast result displayed a loading state")
@@ -37,12 +37,12 @@ func TestSimpleJobLoadingOnlyWhileWaiting(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		go runSimpleJob(ctx, func(ctx context.Context, _ func(string)) translate.Result {
+		go runMinimalJob(ctx, func(ctx context.Context, _ func(string)) translate.Result {
 			<-ctx.Done()
 			return translate.Result{}
 		}, show, done)
 		synctest.Wait()
-		time.Sleep(simpleLoadingDelay - time.Millisecond)
+		time.Sleep(minimalLoadingDelay - time.Millisecond)
 		if len(updates) != 0 {
 			t.Fatal("loading appeared before the delay")
 		}
@@ -58,13 +58,13 @@ func TestSimpleJobLoadingOnlyWhileWaiting(t *testing.T) {
 	})
 }
 
-func TestSimpleJobFirstChunkSkipsTheLoadingState(t *testing.T) {
+func TestMinimalJobFirstChunkSkipsTheLoadingState(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		updates := make(chan string, 2)
 		done := make(chan translate.Result, 1)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		go runSimpleJob(ctx, func(ctx context.Context, progress func(string)) translate.Result {
+		go runMinimalJob(ctx, func(ctx context.Context, progress func(string)) translate.Result {
 			progress("第一段")
 			<-ctx.Done()
 			progress("已经取消")
@@ -73,7 +73,7 @@ func TestSimpleJobFirstChunkSkipsTheLoadingState(t *testing.T) {
 		if got := <-updates; got != "第一段" {
 			t.Fatalf("first update = %q", got)
 		}
-		time.Sleep(2 * simpleLoadingDelay)
+		time.Sleep(2 * minimalLoadingDelay)
 		synctest.Wait()
 		cancel()
 		<-done
@@ -83,51 +83,51 @@ func TestSimpleJobFirstChunkSkipsTheLoadingState(t *testing.T) {
 	})
 }
 
-func TestSimpleJobsOutliveTheirEntries(t *testing.T) {
+func TestMinimalJobsOutliveTheirEntries(t *testing.T) {
 	// Reusing the acquisition context would discard the first translation.
-	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+	a := &application{cfg: config.Settings{MinimalTranslation: true}}
 	first := a.entry.begin()
-	firstCtx, ok := a.beginSimpleJob(first)
+	firstCtx, ok := a.beginMinimalJob(first)
 	if !ok {
 		t.Fatal("first job rejected")
 	}
 	second := a.entry.begin()
-	secondCtx, ok := a.beginSimpleJob(second)
+	secondCtx, ok := a.beginMinimalJob(second)
 	if !ok || first.Valid() || firstCtx.Err() != nil {
 		t.Fatal("second acquisition canceled the accepted first job")
 	}
-	if !a.finishSimpleJob(second.ID()) || secondCtx.Err() == nil || firstCtx.Err() != nil {
+	if !a.finishMinimalJob(second.ID()) || secondCtx.Err() == nil || firstCtx.Err() != nil {
 		t.Fatal("finishing the second job affected the first")
 	}
-	if !a.finishSimpleJob(first.ID()) || a.finishSimpleJob(first.ID()) {
+	if !a.finishMinimalJob(first.ID()) || a.finishMinimalJob(first.ID()) {
 		t.Fatal("first job must finish successfully exactly once")
 	}
 }
 
-func TestSimpleJobsStopBeforeLateResults(t *testing.T) {
-	a := &application{cfg: config.Settings{SimpleTranslation: true}}
+func TestMinimalJobsStopBeforeLateResults(t *testing.T) {
+	a := &application{cfg: config.Settings{MinimalTranslation: true}}
 	first := a.entry.begin()
-	ctx, ok := a.beginSimpleJob(first)
+	ctx, ok := a.beginMinimalJob(first)
 	if !ok {
 		t.Fatal("job rejected")
 	}
-	a.cfg.SimpleTranslation = false
-	a.stopSimpleJobs()
-	a.cfg.SimpleTranslation = true
-	if ctx.Err() == nil || a.finishSimpleJob(first.ID()) {
+	a.cfg.MinimalTranslation = false
+	a.stopMinimalJobs()
+	a.cfg.MinimalTranslation = true
+	if ctx.Err() == nil || a.finishMinimalJob(first.ID()) {
 		t.Fatal("disabled job could still present after re-enabling the mode")
 	}
 }
 
-func TestSimpleServiceOnlyReadsFirstEnabledProvider(t *testing.T) {
+func TestMinimalTranslationOnlyReadsFirstEnabledProvider(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"azure", "openai", "dictionary"}
 	cfg.Services.Order = []string{"dictionary", "google", "openai", "azure"}
-	keyring := &simpleTestKeyring{serviceTestKeyring: serviceTestKeyring{
+	keyring := &minimalTestKeyring{serviceTestKeyring: serviceTestKeyring{
 		values: map[string]string{keys.OpenAIKey: "openai", keys.AzureKey: "azure", keys.AzureRegion: "region"},
 	}}
 	a := &application{cfg: cfg, keys: keyring}
-	got, err := a.prepareSimpleRequest(t.Context(), "测试文本")
+	got, err := a.prepareMinimalRequest(t.Context(), "测试文本")
 	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"openai"}) ||
 		!slices.Equal(keyring.read, []string{keys.OpenAIKey}) || got.request.TargetLang != "en" {
 		t.Fatalf("enabled=%v target=%s credentials=%v err=%v", got.settings.Services.Enabled, got.request.TargetLang, keyring.read, err)
@@ -135,7 +135,7 @@ func TestSimpleServiceOnlyReadsFirstEnabledProvider(t *testing.T) {
 	a.cfg.Services.Order = []string{"azure", "openai"}
 	a.cfg.TargetLanguage = "ja"
 	keyring.read = nil
-	got, err = a.prepareSimpleRequest(t.Context(), "测试文本")
+	got, err = a.prepareMinimalRequest(t.Context(), "测试文本")
 	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"azure"}) ||
 		!slices.Equal(keyring.read, []string{keys.AzureKey, keys.AzureRegion}) || got.request.TargetLang != "ja" {
 		t.Fatalf("after settings change: enabled=%v target=%s credentials=%v err=%v", got.settings.Services.Enabled, got.request.TargetLang, keyring.read, err)
@@ -143,57 +143,57 @@ func TestSimpleServiceOnlyReadsFirstEnabledProvider(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	keyring.read = nil
-	_, err = a.prepareSimpleRequest(ctx, "测试文本")
+	_, err = a.prepareMinimalRequest(ctx, "测试文本")
 	if len(keyring.read) != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled job: credentials=%v err=%v", keyring.read, err)
 	}
 }
 
-func TestSimpleServiceSkipsMissingCredentialsButReportsReadFailures(t *testing.T) {
+func TestMinimalTranslationSkipsMissingCredentialsButReportsReadFailures(t *testing.T) {
 	// A key removed outside Settings used to block its visible first service.
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"openai", "baidu", "google", "deepl"}
 	cfg.Services.Order = slices.Clone(cfg.Services.Enabled)
-	keyring := &simpleTestKeyring{serviceTestKeyring: serviceTestKeyring{
+	keyring := &minimalTestKeyring{serviceTestKeyring: serviceTestKeyring{
 		values: map[string]string{keys.BaiduAppID: "baidu"},
 	}}
 	a := &application{cfg: cfg, keys: keyring}
-	got, err := a.prepareSimpleRequest(t.Context(), "Test input")
+	got, err := a.prepareMinimalRequest(t.Context(), "Test input")
 	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"google"}) ||
 		!slices.Equal(keyring.read, []string{keys.OpenAIKey, keys.BaiduAppID, keys.BaiduKey}) {
 		t.Fatalf("enabled=%v credentials=%v err=%v", got.settings.Services.Enabled, keyring.read, err)
 	}
 	keyring.failRead = keys.OpenAIKey
 	keyring.read = nil
-	_, err = a.prepareSimpleRequest(t.Context(), "Test input")
+	_, err = a.prepareMinimalRequest(t.Context(), "Test input")
 	if !errors.Is(err, keys.ErrUnavailable) || !slices.Equal(keyring.read, []string{keys.OpenAIKey}) {
 		t.Fatalf("unavailable keyring: credentials=%v err=%v", keyring.read, err)
 	}
 }
 
-func TestSimpleTranslationRejectsEmptyPreparedSourceBeforeReadingCredentials(t *testing.T) {
+func TestMinimalTranslationRejectsEmptyPreparedSourceBeforeReadingCredentials(t *testing.T) {
 	// Cleaning the source can reject a request before the keyring prompts the user.
 	cfg := config.Default()
 	cfg.Identifier.StripMarkdown = true
 	cfg.Services.Enabled = []string{"openai"}
 	a := &application{cfg: cfg, keys: &unusedKeyring{t: t}}
-	got := a.simpleTranslation(t.Context(), "---", nil)
+	got := a.minimalTranslation(t.Context(), "---", nil)
 	if got.Err != translate.UserMessage(translate.ErrEmptySource) {
 		t.Fatalf("empty source result: %+v", got)
 	}
 }
 
-type simpleTestKeyring struct {
+type minimalTestKeyring struct {
 	serviceTestKeyring
 	read []string
 }
 
-func (k *simpleTestKeyring) Snapshot(names []string) keys.Snapshot {
+func (k *minimalTestKeyring) Snapshot(names []string) keys.Snapshot {
 	k.read = append(k.read, names...)
 	return k.serviceTestKeyring.Snapshot(names)
 }
 
-func TestSimpleTranslationUsesBubbleLanguageRules(t *testing.T) {
+func TestMinimalTranslationUsesBubbleLanguageRules(t *testing.T) {
 	// The overlay used to infer the source language and override the saved target.
 	for _, tc := range []struct{ name, text, configured, target string }{
 		{"Chinese with default target", "请审查这次改动。", "zh-HANS", "English"},
@@ -230,14 +230,14 @@ func TestSimpleTranslationUsesBubbleLanguageRules(t *testing.T) {
 			cfg.Services.Enabled = []string{"openai"}
 			cfg.Services.OpenAI.BaseURL = server.URL
 			a := &application{cfg: cfg, keys: &serviceTestKeyring{values: map[string]string{keys.OpenAIKey: "test"}}}
-			if got := a.simpleTranslation(t.Context(), tc.text, func(string) {}); got.Text != "translated" || got.Err != "" {
+			if got := a.minimalTranslation(t.Context(), tc.text, func(string) {}); got.Text != "translated" || got.Err != "" {
 				t.Fatalf("expected provider result, got %+v", got)
 			}
 		})
 	}
 }
 
-func TestSimpleTranslationPublishesTextBeforeFirstProviderFinishes(t *testing.T) {
+func TestMinimalTranslationPublishesTextBeforeFirstProviderFinishes(t *testing.T) {
 	// The first chunk must reach the overlay while the provider is still waiting.
 	var calls atomic.Int32
 	release := make(chan struct{})
@@ -277,7 +277,7 @@ func TestSimpleTranslationPublishesTextBeforeFirstProviderFinishes(t *testing.T)
 	defer cancel()
 	updates, done := make(chan string, 2), make(chan translate.Result, 1)
 	go func() {
-		done <- a.simpleTranslation(ctx, "review", func(text string) { updates <- text })
+		done <- a.minimalTranslation(ctx, "review", func(text string) { updates <- text })
 	}()
 	select {
 	case first := <-updates:

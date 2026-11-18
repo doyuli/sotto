@@ -351,13 +351,13 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
-		simple := cfg.SimpleTranslation
+		minimalTranslation := cfg.MinimalTranslation
 		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文，使用排在首位的已启用服务。", true, func() {
-			ui.Switch(c, &simple).Label("切换简约翻译模式").OnClick(func() {
+			ui.Switch(c, &minimalTranslation).Label("切换简约翻译模式").OnClick(func() {
 				v.mu.Lock()
 				defer v.mu.Unlock()
 				next := cloneSettings(v.settings)
-				next.SimpleTranslation = simple
+				next.MinimalTranslation = minimalTranslation
 				v.enqueueSaveLocked(next)
 			})
 		})
@@ -463,7 +463,7 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 	}
 
 	description := "已启用的服务同时翻译，拖动序号调整结果顺序，"
-	if cfg.SimpleTranslation {
+	if cfg.MinimalTranslation {
 		description = "简约翻译使用首个已启用服务，拖动序号调整顺序，"
 	}
 	ui.Text(c, description+"凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
