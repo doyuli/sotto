@@ -32,18 +32,6 @@ When reading documentation, researching foreign language resources, or coding, c
 
 ## Features
 
-### Dual Presentation: Bubble vs Minimal
-
-Sotto offers two complementary ways to view translations, balancing multi-engine comparison with distraction-free reading:
-
-<p align="center">
-  <img src="docs/bubble-mode.png" width="48.5%" alt="Bubble Mode (Default)">
-  &nbsp;
-  <img src="docs/simple-mode.png" width="48.5%" alt="Minimal Translation Mode">
-  <br>
-  <sub><b>Left · Bubble Mode (Default)</b>: Multi-engine streaming, dictionary, TTS, and naming styles &nbsp;|&nbsp; <b>Right · Minimal Translation Mode</b>: Translucent text-only overlay beside your selection or snip, streaming from your first enabled service</sub>
-</p>
-
 - **Flexible Modes**: Enable **Minimal Translation Mode** in Settings to keep selection and snip results text-only, while the panel shortcut remains ready to summon the full Bubble view.
 - **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold, copy, or retry cards independently.
 - **Non-Intrusive Selection & Clipboard Protection**: Windows reads text via UIA and macOS via Accessibility without stealing focus; simulated copy automatically and fully restores the clipboard with history exclusion markers attached.
@@ -51,6 +39,14 @@ Sotto offers two complementary ways to view translations, balancing multi-engine
 - **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
 - **Credential Protection & Zero Telemetry**: Zero tracking, with API keys protected by the system credential manager or keychain.
 - **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects system themes, hides on blur, or pins in place.
+
+### Dual Presentation: Bubble vs Minimal
+
+Sotto offers two complementary ways to view translations, balancing multi-engine comparison with distraction-free reading:
+
+<p align="center">
+  <img src="docs/modes-preview.png" width="100%" alt="Sotto Bubble Mode and Minimal Translation Mode preview">
+</p>
 
 ---
 
