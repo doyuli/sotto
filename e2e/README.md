@@ -10,7 +10,7 @@ For subsystem architectures and platform integration details, see [Windows Archi
 
 Tester does not create native windows; symbol loading does not prove actual selection capture or screen capture. Cross-compilation is not platform test execution. Default tests do not synthesize input, modify the general pasteboard, or capture the actual screen.
 
-## Simple translation mode
+## Minimal Translation Mode
 
 On each desktop platform, enable **简约翻译模式** in General settings and verify the following.
 
