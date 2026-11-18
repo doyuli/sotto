@@ -127,20 +127,23 @@ func TestSimpleServiceOnlyReadsFirstEnabledProvider(t *testing.T) {
 		values: map[string]string{keys.OpenAIKey: "openai", keys.AzureKey: "azure", keys.AzureRegion: "region"},
 	}}
 	a := &application{cfg: cfg, keys: keyring}
-	got, _, err := a.simpleService(t.Context())
-	if err != nil || !slices.Equal(got.Services.Enabled, []string{"openai"}) || !slices.Equal(keyring.read, []string{keys.OpenAIKey}) {
-		t.Fatalf("enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+	got, err := a.prepareSimpleRequest(t.Context(), "测试文本")
+	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"openai"}) ||
+		!slices.Equal(keyring.read, []string{keys.OpenAIKey}) || got.request.TargetLang != "en" {
+		t.Fatalf("enabled=%v target=%s credentials=%v err=%v", got.settings.Services.Enabled, got.request.TargetLang, keyring.read, err)
 	}
 	a.cfg.Services.Order = []string{"azure", "openai"}
+	a.cfg.TargetLanguage = "ja"
 	keyring.read = nil
-	got, _, err = a.simpleService(t.Context())
-	if err != nil || !slices.Equal(got.Services.Enabled, []string{"azure"}) || !slices.Equal(keyring.read, []string{keys.AzureKey, keys.AzureRegion}) {
-		t.Fatalf("after reorder: enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+	got, err = a.prepareSimpleRequest(t.Context(), "测试文本")
+	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"azure"}) ||
+		!slices.Equal(keyring.read, []string{keys.AzureKey, keys.AzureRegion}) || got.request.TargetLang != "ja" {
+		t.Fatalf("after settings change: enabled=%v target=%s credentials=%v err=%v", got.settings.Services.Enabled, got.request.TargetLang, keyring.read, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	keyring.read = nil
-	_, _, err = a.simpleService(ctx)
+	_, err = a.prepareSimpleRequest(ctx, "测试文本")
 	if len(keyring.read) != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled job: credentials=%v err=%v", keyring.read, err)
 	}
@@ -155,16 +158,28 @@ func TestSimpleServiceSkipsMissingCredentialsButReportsReadFailures(t *testing.T
 		values: map[string]string{keys.BaiduAppID: "baidu"},
 	}}
 	a := &application{cfg: cfg, keys: keyring}
-	got, _, err := a.simpleService(t.Context())
-	if err != nil || !slices.Equal(got.Services.Enabled, []string{"google"}) ||
+	got, err := a.prepareSimpleRequest(t.Context(), "Test input")
+	if err != nil || !slices.Equal(got.settings.Services.Enabled, []string{"google"}) ||
 		!slices.Equal(keyring.read, []string{keys.OpenAIKey, keys.BaiduAppID, keys.BaiduKey}) {
-		t.Fatalf("enabled=%v credentials=%v err=%v", got.Services.Enabled, keyring.read, err)
+		t.Fatalf("enabled=%v credentials=%v err=%v", got.settings.Services.Enabled, keyring.read, err)
 	}
 	keyring.failRead = keys.OpenAIKey
 	keyring.read = nil
-	_, _, err = a.simpleService(t.Context())
+	_, err = a.prepareSimpleRequest(t.Context(), "Test input")
 	if !errors.Is(err, keys.ErrUnavailable) || !slices.Equal(keyring.read, []string{keys.OpenAIKey}) {
 		t.Fatalf("unavailable keyring: credentials=%v err=%v", keyring.read, err)
+	}
+}
+
+func TestSimpleTranslationRejectsEmptyPreparedSourceBeforeReadingCredentials(t *testing.T) {
+	// Cleaning the source can reject a request before the keyring prompts the user.
+	cfg := config.Default()
+	cfg.Identifier.StripMarkdown = true
+	cfg.Services.Enabled = []string{"openai"}
+	a := &application{cfg: cfg, keys: &unusedKeyring{t: t}}
+	got := a.simpleTranslation(t.Context(), "---", nil)
+	if got.Err != translate.UserMessage(translate.ErrEmptySource) {
+		t.Fatalf("empty source result: %+v", got)
 	}
 }
 

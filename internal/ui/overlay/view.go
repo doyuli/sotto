@@ -20,12 +20,14 @@ type resultView struct {
 	text          string
 	pending       bool
 	animate       bool
+	measuring     bool
 	limit         size
 	measured      size
 	bounds        mygo.Rectangle
 	inset         mygo.Point
 	alignRight    bool
 	alignBottom   bool
+	card          ui.Handle
 	scroll        ui.ScrollState
 	scrolledBack  bool
 	measure       func()
@@ -48,6 +50,9 @@ func (v *resultView) render(c *ui.Context) {
 	}
 	if !c.Preferences().ReduceTransparency {
 		background = background.Alpha(0.87)
+	}
+	if v.measuring {
+		background, ink = ui.Transparent, ui.Transparent
 	}
 	cursor := ui.CursorGrab
 	if v.dragging {
@@ -92,7 +97,7 @@ func (v *resultView) render(c *ui.Context) {
 	}
 	ui.Column(c).Absolute().Left(float32(bounds.X)).Top(float32(bounds.Y)).
 		Size(float32(bounds.Width), float32(bounds.Height)).Radius(6).Clip().Background(background).Padding(paddingY, paddingX).
-		Cursor(cursor).Focusable().HandleInput(v.input).Children(func() {
+		Cursor(cursor).Focusable().Bind(&v.card).HandleInput(func(ev ui.InputEvent) bool { return v.input(c, ev) }).Children(func() {
 		if loading {
 			v.renderLoading(c, ink)
 			return
@@ -149,12 +154,15 @@ func (v *resultView) reportSize(width, height int) {
 	}
 }
 
-func (v *resultView) input(ev ui.InputEvent) bool {
+func (v *resultView) input(c *ui.Context, ev ui.InputEvent) bool {
 	switch ev.Kind {
 	case ui.InputScroll:
-		if v.pending && ev.DY != 0 && ev.Mods&ui.Shift == 0 && v.scroll.MaxY > 0 {
-			// A mouse notch schedules motion before it updates the scroll offset.
-			v.scrolledBack = ev.DY < 0
+		if v.pending && ev.DY != 0 && (ev.Mods&ui.Shift == 0 || ev.DX != 0) && v.scroll.MaxY > 0 {
+			card := v.card.Bounds(c)
+			if v.scroll.Bounds(c).Contains(card.X+ev.X, card.Y+ev.Y) {
+				// A mouse notch schedules motion before it updates the scroll offset.
+				v.scrolledBack = ev.DY < 0
+			}
 		}
 	case ui.InputPointerDown:
 		switch ev.Button {

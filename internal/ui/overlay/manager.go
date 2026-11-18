@@ -26,7 +26,6 @@ type Result struct {
 	view      resultView
 	input     mygo.Rectangle
 	ready     bool
-	placed    bool
 	onCancel  func()
 }
 
@@ -46,7 +45,7 @@ func (m *Manager) show(text string, source mygo.Rectangle, workspace uint64, onC
 	r := place(work, source, limit, nil)
 	p := &Result{source: source, work: work, workspace: workspace, onCancel: onCancel}
 	p.view = resultView{
-		text: text, pending: onCancel != nil, limit: limit,
+		text: text, pending: onCancel != nil, measuring: true, limit: limit,
 		cursor: mygo.Screen.CursorScreenPoint,
 		position: func() mygo.Point {
 			r := p.visibleBounds(p.window.Bounds())
@@ -90,6 +89,7 @@ func (m *Manager) show(text string, source mygo.Rectangle, workspace uint64, onC
 		p.window.SetBounds(r)
 	}
 	p.window.SetVisibleOnAllWorkspaces(false)
+	p.window.SetInputRegion([]mygo.Rectangle{})
 	m.windows = append(m.windows, p)
 	p.window.OnReadyToShow(func() {
 		p.ready = true
@@ -159,17 +159,20 @@ func (p *Result) visibleBounds(native mygo.Rectangle) mygo.Rectangle {
 }
 
 func (m *Manager) update(p *Result) {
-	if !p.ready || p.window.IsDestroyed() || m.suspended || p.view.bounds.Width <= 0 || p.view.bounds.Height <= 0 {
+	if !p.ready || p.window.IsDestroyed() || m.suspended {
 		return
 	}
 	if p.workspace != platform.WorkspaceGeneration() {
 		p.window.Close()
 		return
 	}
-	if !p.placed {
+	if p.view.measuring {
+		if p.view.bounds.Width <= 0 || p.view.bounds.Height <= 0 {
+			return
+		}
 		var occupied []mygo.Rectangle
 		for _, other := range m.windows {
-			if other != p && other.placed {
+			if other != p && !other.view.measuring {
 				bounds := other.window.Bounds()
 				if !other.view.pending && other.view.bounds.Width > 0 {
 					bounds = other.visibleBounds(bounds)
@@ -185,10 +188,11 @@ func (m *Manager) update(p *Result) {
 		}
 		panel := initialPanel(p.work, p.source, panelSize, p.view.limit, occupied)
 		p.placePanel(panel, panel.X+panel.Width <= p.source.X, panel.Y+panel.Height <= p.source.Y)
-		p.placed = true
-	}
-	if p.view.bounds.Width <= 0 || p.view.bounds.Height <= 0 {
-		return
+		// The first frame only measures the card. Show now so Windows can
+		// draw the placed card, then use that frame's bounds for its input.
+		p.view.measuring = false
+		p.view.bounds = mygo.Rectangle{}
+		p.window.Invalidate()
 	}
 	if bounds := p.view.bounds; bounds != p.input {
 		// The transparent space around the animated panel lets clicks and wheel events through.
@@ -234,6 +238,10 @@ func (m *Manager) CloseStale(workspace uint64) {
 
 func (m *Manager) RefreshDisplays() {
 	for _, p := range m.windows {
+		if p.view.measuring {
+			p.setWorkArea(workArea(p.source))
+			continue
+		}
 		r := p.window.Bounds()
 		visible := p.visibleBounds(r)
 		p.setWorkArea(workArea(visible))
@@ -245,10 +253,6 @@ func (p *Result) placePanel(visible mygo.Rectangle, right, bottom bool) {
 	frame, inset, right, bottom := reservePanel(p.work, visible, p.view.limit, right, bottom)
 	changed := p.view.inset != inset || p.view.alignRight != right || p.view.alignBottom != bottom
 	p.view.inset, p.view.alignRight, p.view.alignBottom = inset, right, bottom
-	if changed && !p.placed {
-		// The first show must use the bounds drawn with the new anchor.
-		p.view.bounds = mygo.Rectangle{}
-	}
 	if frame != p.window.Bounds() {
 		p.window.SetBounds(frame)
 	}

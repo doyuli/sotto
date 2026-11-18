@@ -147,23 +147,19 @@ func (a *application) simpleScreenshot(ctx context.Context, shot *snip.Capture, 
 }
 
 func (a *application) simpleTranslation(ctx context.Context, text string, progress func(string)) translate.Result {
-	request, err := prepareTranslationRequest(text, "", "", a.settings())
-	if err != nil {
-		return translate.Result{Err: translate.UserMessage(err)}
-	}
-	cfg, credentials, err := a.simpleService(ctx)
+	prepared, err := a.prepareSimpleRequest(ctx, text)
 	if ctx.Err() != nil {
 		return translate.Result{}
 	}
 	if err != nil {
 		return translate.Result{Err: translate.UserMessage(err)}
 	}
-	if len(cfg.Services.Enabled) == 0 {
+	if len(prepared.settings.Services.Enabled) == 0 {
 		return translate.Result{Err: "请在设置中启用一个翻译服务。"}
 	}
 	var final translate.Result
 	var partial string
-	translate.Run(ctx, cfg, credentials, request, func(result translate.Result) {
+	translate.Run(ctx, prepared.settings, prepared.credentials, prepared.request, func(result translate.Result) {
 		if result.Streaming {
 			if result.Text != partial && strings.TrimSpace(result.Text) != "" {
 				partial = result.Text
@@ -186,38 +182,49 @@ func (a *application) simpleTranslation(ctx context.Context, text string, progre
 	return final
 }
 
-func (a *application) simpleService(ctx context.Context) (config.Settings, keys.Snapshot, error) {
+type simpleRequest struct {
+	request     translate.Request
+	settings    config.Settings
+	credentials keys.Snapshot
+}
+
+func (a *application) prepareSimpleRequest(ctx context.Context, text string) (simpleRequest, error) {
 	cfg := a.settings()
 	services := translate.EnabledProviders(cfg.Services)
-	if len(services) == 0 {
-		cfg.Services.Enabled = nil
-		return cfg, nil, nil
+	if len(services) > 0 {
+		first := services[0]
+		if len(keys.ForServices(first.Name())) != 0 || !first.Available(nil, cfg) {
+			// Read provider options and credentials in the same settings transaction.
+			a.configWriteMu.Lock()
+			defer a.configWriteMu.Unlock()
+			cfg = a.settings()
+			services = translate.EnabledProviders(cfg.Services)
+		}
 	}
-	if first := services[0]; len(keys.ForServices(first.Name())) == 0 && first.Available(nil, cfg) {
-		cfg.Services.Enabled = []string{first.Name()}
-		return cfg, nil, nil
+	if err := ctx.Err(); err != nil {
+		return simpleRequest{}, err
 	}
-	// Read provider options and credentials in the same settings transaction.
-	a.configWriteMu.Lock()
-	defer a.configWriteMu.Unlock()
-	cfg = a.settings()
-	for _, service := range translate.EnabledProviders(cfg.Services) {
+	request, err := prepareTranslationRequest(text, "", "", cfg)
+	if err != nil {
+		return simpleRequest{}, err
+	}
+	for _, service := range services {
 		if err := ctx.Err(); err != nil {
-			return cfg, nil, err
+			return simpleRequest{}, err
 		}
 		var credentials keys.Snapshot
 		if names := keys.ForServices(service.Name()); len(names) != 0 {
 			credentials = a.keys.Snapshot(names)
 			if err := credentials.Err(names...); err != nil {
-				return cfg, nil, err
+				return simpleRequest{}, err
 			}
 		}
 		// A provider with missing credentials is not enabled in Settings.
 		if service.Available(credentials, cfg) {
 			cfg.Services.Enabled = []string{service.Name()}
-			return cfg, credentials, nil
+			return simpleRequest{request: request, settings: cfg, credentials: credentials}, nil
 		}
 	}
 	cfg.Services.Enabled = nil
-	return cfg, nil, nil
+	return simpleRequest{request: request, settings: cfg}, nil
 }

@@ -119,6 +119,14 @@ func TestStreamingViewFollowsNewLinesUntilReaderScrollsBack(t *testing.T) {
 	if v.scroll.MaxY <= 0 || v.scroll.Y != v.scroll.MaxY {
 		t.Fatalf("stream did not follow its end: Y=%g MaxY=%g", v.scroll.Y, v.scroll.MaxY)
 	}
+	// Scrolling over the card's padding used to stop following even though
+	// the scroll container never received the event.
+	tt.Wheel(30, paddingY/2, 0, -65)
+	v.setText(v.text+"\n继续跟随。", true)
+	tt.Frame()
+	if v.scroll.Y != v.scroll.MaxY {
+		t.Fatalf("wheel on padding stopped following: Y=%g MaxY=%g", v.scroll.Y, v.scroll.MaxY)
+	}
 	// While wheel motion has only been scheduled, the reported offset is
 	// still at the end. A chunk in that frame used to swallow the notch.
 	tt.Wheel(30, 30, 0, -65)
@@ -147,6 +155,25 @@ func TestStreamingViewFollowsNewLinesUntilReaderScrollsBack(t *testing.T) {
 	tt.Frame()
 	if v.scroll.Y != offset {
 		t.Fatalf("completion moved the reader: offset=%g want=%g", v.scroll.Y, offset)
+	}
+}
+
+func TestResultMeasuresBeforePainting(t *testing.T) {
+	// The window can become visible before its second frame reaches the screen.
+	v := resultView{text: "短译文", limit: size{320, 150}, measuring: true, measure: func() {}}
+	tt := ui.NewTester(v.render, v.limit.width, v.limit.height)
+	tt.Frame()
+	if v.measured.height != lineHeight+2*paddingY {
+		t.Fatalf("transparent frame did not measure the translation: %+v", v.measured)
+	}
+	if tt.Image().RGBAAt(20, 20).A != 0 {
+		t.Fatal("measurement frame painted a card at the provisional position")
+	}
+	v.measuring = false
+	v.alignBottom = true
+	tt.Frame()
+	if tt.Image().RGBAAt(20, 20).A != 0 || tt.Image().RGBAAt(20, 130).A == 0 {
+		t.Fatal("card did not paint at its final position")
 	}
 }
 
