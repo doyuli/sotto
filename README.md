@@ -40,9 +40,7 @@ When reading documentation, researching foreign language resources, or coding, c
 - **Credential Protection & Zero Telemetry**: Zero tracking, with API keys protected by the system credential manager or keychain.
 - **Lightweight & Native**: Pure Go backend (`CGO_ENABLED=0`) with native `mygo/ui` windows; frameless design that respects system themes, hides on blur, or pins in place.
 
-### Dual Presentation: Bubble vs Minimal
-
-Sotto offers two complementary ways to view translations, balancing multi-engine comparison with distraction-free reading:
+> **Bubble vs Minimal**: Sotto offers two complementary ways to view translations, balancing multi-engine comparison with distraction-free reading.
 
 <p align="center">
   <img src="docs/modes-preview.png" width="100%" alt="Sotto Bubble Mode and Minimal Translation Mode preview">
