@@ -85,6 +85,7 @@ func (m *Manager) show(text string, source mygo.Rectangle, workspace uint64, onC
 		SkipTaskbar: true, AlwaysOnTop: true, DisableResize: true,
 		DisableMaximize: true, DisableFullScreen: true, DisableShadow: true,
 	})
+	platform.ConfigureOverlayWindow(p.window)
 	if p.window.Bounds() != r {
 		p.window.SetBounds(r)
 	}
