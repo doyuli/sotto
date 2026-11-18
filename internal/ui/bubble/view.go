@@ -175,7 +175,13 @@ type bubbleViewActions struct {
 	discardClipboard func(id string, done func())
 	copyText         func(c *ui.Context, text string) error
 	speakText        func(text, lang string, onError func()) // onError runs on the UI thread
-	onHeightMeasured func(height float64, streaming bool)
+	onHeightMeasured func(bubbleHeightMeasurement)
+}
+
+type bubbleHeightMeasurement struct {
+	height      float64
+	animate     bool
+	firstResult bool
 }
 
 type bubbleCard struct {
@@ -226,12 +232,12 @@ type bubbleView struct {
 	pendingScrollTop  bool
 	resetScrollbars   bool
 	contentVersion    uint64
+	animateHeight     bool
+	measuredResult    bool
 	paintedVersion    uint64
 	measuredVersion   uint64
 	lastMeasuredH     float64
 	lastMeasuredLimit float64
-	streamHeight      bool
-	lastStreamHeight  bool
 	reduceMotion      bool
 
 	speechAttempt    uint64
@@ -317,6 +323,8 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	v.composerScroll.X, v.composerScroll.Y = 0, 0
 	v.inputScrollbar.reset(&v.composerScroll)
 	v.lastMeasuredH = 0
+	v.animateHeight = false
+	v.measuredResult = false
 	v.bumpContent()
 }
 
@@ -326,6 +334,7 @@ func (v *bubbleView) onPresented(msg BubblePresentedMsg) {
 	}
 	if msg.ShowID != v.showID {
 		v.collapsed = make(map[string]bool)
+		v.animateHeight = false
 	}
 	// Refocusing preserves the current session's operation, including when the
 	// worker cleared global recovery before its completion reached the UI.
@@ -432,12 +441,6 @@ func (v *bubbleView) applyResult(msg TranslationUpdateMsg) {
 		}
 	}
 	v.cards[msg.Service] = card
-	for _, service := range v.showingServices() {
-		if v.cards[service].Streaming && !v.collapsed[service] {
-			v.streamHeight = true
-			break
-		}
-	}
 }
 
 func (v *bubbleView) ApplySettings(s config.Settings) {
@@ -454,7 +457,6 @@ func (v *bubbleView) setMaxHeight(limit float64) {
 
 func (v *bubbleView) bumpContent() {
 	v.contentVersion++
-	v.streamHeight = false
 }
 
 func (v *bubbleView) isRecognizing() bool {
@@ -815,6 +817,7 @@ func (v *bubbleView) render(c *ui.Context) {
 		v.closeBubble()
 	}
 
+	hasResult := false
 	c.Root().Background(p.panel).Padding(0).Children(func() {
 		ui.Column(c).FillHeight().Grow(1).Children(func() {
 			v.renderHeader(c, p)
@@ -825,7 +828,7 @@ func (v *bubbleView) render(c *ui.Context) {
 						v.renderBanners(c, p)
 						v.renderComposer(c, p)
 						v.renderLanguageBar(c, p)
-						v.renderResults(c, p)
+						hasResult = v.renderResults(c, p)
 					})
 				})
 			})
@@ -840,11 +843,19 @@ func (v *bubbleView) render(c *ui.Context) {
 		if body.H > 0 {
 			v.measuredVersion = v.paintedVersion
 			total := float64(hdr.H + body.H)
-			if total != v.lastMeasuredH || v.maxHeight != v.lastMeasuredLimit || v.streamHeight != v.lastStreamHeight {
+			measurement := bubbleHeightMeasurement{
+				height:      total,
+				animate:     v.animateHeight,
+				firstResult: hasResult && !v.measuredResult,
+			}
+			// Consume the toggle after measuring its layout, even when a
+			// stream updated another card before the measurement.
+			v.animateHeight = false
+			v.measuredResult = v.measuredResult || hasResult
+			if total != v.lastMeasuredH || v.maxHeight != v.lastMeasuredLimit || measurement.firstResult {
 				v.lastMeasuredH, v.lastMeasuredLimit = total, v.maxHeight
-				v.lastStreamHeight = v.streamHeight
 				if v.actions.onHeightMeasured != nil {
-					v.actions.onHeightMeasured(total, v.streamHeight)
+					v.actions.onHeightMeasured(measurement)
 				}
 			}
 		}
@@ -1207,7 +1218,7 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 	})
 }
 
-func (v *bubbleView) renderResults(c *ui.Context, p bubblePalette) {
+func (v *bubbleView) renderResults(c *ui.Context, p bubblePalette) bool {
 	showing := v.showingServices()
 	if len(showing) == 0 {
 		if !v.isRecognizing() && v.submittedText != "" && len(v.enabledServices()) == 0 {
@@ -1216,18 +1227,21 @@ func (v *bubbleView) renderResults(c *ui.Context, p bubblePalette) {
 				v.renderLinkButton(c, p, "配置翻译服务", v.actions.openSettings)
 			})
 		}
-		return
+		return false
 	}
 
+	hasResult := false
 	ui.Column(c).Gap(8).Children(func() {
 		for _, svc := range showing {
 			card := v.cards[svc]
 			if card == nil {
 				continue
 			}
+			hasResult = hasResult || (card.Text != "" && !v.collapsed[svc])
 			v.renderCard(c.Key("card:"+svc), p, svc, card)
 		}
 	})
+	return hasResult
 }
 
 func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card *bubbleCard) {
@@ -1245,6 +1259,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 			OnClick(func() {
 				v.collapsed[svc] = !v.collapsed[svc]
 				v.bumpContent()
+				v.animateHeight = true
 			})
 		header.Children(func() {
 			ui.Text(c, title).FontSize(13).FontWeight(500).TextColor(p.fg.Alpha(0.9)).SingleLine()

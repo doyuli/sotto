@@ -80,6 +80,7 @@ type bubble struct {
 	placement       *bubblePlacement
 	positionState   bubblePosition
 	adjustingLayout bool
+	keepTop         bool
 	heightAnimation *bubbleHeightAnimation
 	maxHeight       float64 // native logical units; guarded by the manager mutex
 }
@@ -174,6 +175,7 @@ func (m *Manager) ShowTask(cfg config.Settings, trigger, text string, anchor *An
 		// Reset geometry and native view state before presenting the reused window.
 		b.stopHeightAnimation()
 		b.win.Hide()
+		b.keepTop = false
 		initialH := 200
 		if text != "" {
 			initialH = 240
@@ -514,7 +516,7 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 				b.win.Update(onError)
 			})
 		},
-		onHeightMeasured: func(height float64, streaming bool) {
+		onHeightMeasured: func(measurement bubbleHeightMeasurement) {
 			session := b.view.sessionID
 			// AppKit can redraw during a resize. Apply the measurement after
 			// this build returns, while it still belongs to the same session.
@@ -523,7 +525,7 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 				current := m.byID[b.id] == b && !b.closeClaimed && b.sessionID == session
 				m.mu.Unlock()
 				if current {
-					m.resizeToContent(b, height, streaming)
+					m.resizeToContent(b, measurement)
 				}
 			})
 		},

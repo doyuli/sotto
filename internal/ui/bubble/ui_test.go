@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
@@ -504,20 +505,36 @@ func TestBubbleViewKeyboardEmptyCancelsAndRejectsLateResult(t *testing.T) {
 	}
 }
 
-func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
+func TestBubbleViewCollapseAnimatesWithConcurrentStream(t *testing.T) {
 	var heights []float64
+	var animate bool
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64, _ bool) { heights = append(heights, h) },
+		onHeightMeasured: func(m bubbleHeightMeasurement) {
+			heights = append(heights, m.height)
+			animate = m.animate
+		},
 	})
 	v.applyState(BubbleState{
 		ID: 1, Generation: 1, SessionID: "sess-collapse", ShowID: 1,
 		ReqID: "req-collapse", Trigger: "selection", Text: "hello", Settings: cfg,
 	}, false)
-	v.applyMeta(RunMetaMsg{ReqID: "req-collapse", Services: []string{"google"}})
+	v.applyMeta(RunMetaMsg{ReqID: "req-collapse", Services: []string{"google", "baidu"}})
 	translation := strings.Repeat("translation line\n", 20)
 	v.applyResult(TranslationUpdateMsg{ReqID: "req-collapse", Service: "google", Text: translation})
-	tt := ui.NewTester(v.render, 480, 760)
+	other := TranslationUpdateMsg{ReqID: "req-collapse", Service: "baidu", Text: "Still", Streaming: true}
+	v.applyResult(other)
+	delivered := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		// An unrelated same-line chunk used to cancel the click animation
+		// when it arrived before the collapsed layout was measured.
+		if v.collapsed["google"] && !delivered {
+			delivered = true
+			other.Text += " streaming"
+			v.applyResult(other)
+		}
+		v.render(c)
+	}, 480, 760)
 	for range 5 {
 		tt.Frame()
 	}
@@ -533,11 +550,17 @@ func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
 		tt.Frame()
 	}
 	collapsed := heights[len(heights)-1]
+	if !delivered || !tt.HasText(other.Text) {
+		t.Fatal("concurrent stream update did not render")
+	}
 	if tt.HasText(translation) {
 		t.Error("collapsed translation remained visible")
 	}
 	if len(heights) <= beforeCollapse || collapsed >= expanded {
 		t.Errorf("collapse height callbacks = %v, want final height below %v", heights, expanded)
+	}
+	if !animate {
+		t.Error("clicking to collapse did not animate the height")
 	}
 	beforeExpand := len(heights)
 	if err := tt.Click("折叠 Google"); err != nil {
@@ -552,6 +575,9 @@ func TestBubbleViewCollapseReportsSettledHeight(t *testing.T) {
 	if len(heights) <= beforeExpand || heights[len(heights)-1] != expanded {
 		t.Errorf("expand height callbacks = %v, want final height restored to %v", heights, expanded)
 	}
+	if !animate {
+		t.Error("clicking to expand did not animate the height")
+	}
 }
 
 func TestBubbleViewHeightLimitChangeReportsUnchangedContent(t *testing.T) {
@@ -560,9 +586,9 @@ func TestBubbleViewHeightLimitChangeReportsUnchangedContent(t *testing.T) {
 	applied := 240
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64, _ bool) {
-			heights = append(heights, h)
-			applied = bubbleLayoutHeight(h, limit)
+		onHeightMeasured: func(m bubbleHeightMeasurement) {
+			heights = append(heights, m.height)
+			applied = bubbleLayoutHeight(m.height, limit)
 		},
 	})
 	v.applyState(BubbleState{
@@ -603,7 +629,7 @@ func TestBubbleViewHeightMeasurementSettled(t *testing.T) {
 	var heights []float64
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(h float64, _ bool) { heights = append(heights, h) },
+		onHeightMeasured: func(m bubbleHeightMeasurement) { heights = append(heights, m.height) },
 	})
 	v.applyState(BubbleState{
 		ID:         1,
@@ -628,91 +654,99 @@ func TestBubbleViewHeightMeasurementSettled(t *testing.T) {
 	}
 }
 
-func TestBubbleViewSettlesHeightWhenStreamEnds(t *testing.T) {
-	type measurement struct {
-		height    float64
-		streaming bool
-	}
-	var heights []measurement
+func TestBubbleViewStreamKeepsReadingPosition(t *testing.T) {
+	var heights []float64
+	var firstResults int
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(height float64, streaming bool) {
-			heights = append(heights, measurement{height, streaming})
+		onHeightMeasured: func(m bubbleHeightMeasurement) {
+			heights = append(heights, m.height)
+			if m.firstResult {
+				firstResults++
+			}
+			// Every intermediate resize used to move text in upward-opening bubbles.
+			if m.animate {
+				t.Errorf("automatic update animated the resize to %v", m.height)
+			}
 		},
 	})
 	v.applyState(BubbleState{
 		ID: 1, Generation: 1, SessionID: "sess-stream-height", ShowID: 1,
 		ReqID: "req-stream-height", Trigger: "selection", Text: "hello", Settings: cfg,
 	}, false)
-	v.applyMeta(RunMetaMsg{ReqID: "req-stream-height", Services: []string{"google", "baidu"}})
-	tt := ui.NewTester(v.render, 480, 600)
+	v.applyMeta(RunMetaMsg{ReqID: "req-stream-height", TargetLang: "zh-HANS", Services: []string{"google"}})
+	tt := ui.NewTester(v.render, 480, 420)
 	result := TranslationUpdateMsg{
-		ReqID: "req-stream-height", Service: "google", Text: "Translation appears immediately.", Streaming: true,
+		ReqID: "req-stream-height", Service: "google", Text: "The translation", Streaming: true,
 	}
 	v.applyResult(result)
-	other := result
-	other.Service, other.Text = "baidu", "Another translation is still streaming."
-	v.applyResult(other)
-	for range 3 {
-		tt.Frame()
+	tt.Frame()
+	tt.Frame()
+	if len(heights) == 0 || firstResults != 1 || !tt.HasText(result.Text) {
+		t.Fatalf("first line did not render and produce a height: %v", heights)
 	}
-	if len(heights) == 0 || !heights[len(heights)-1].streaming || !tt.HasText(result.Text) {
-		t.Fatalf("stream did not publish text and a streaming height: %v", heights)
+	firstHeight := heights[len(heights)-1]
+	firstCount := len(heights)
+	work := mygo.Rectangle{X: -1200, Y: -100, Width: 1200, Height: 900}
+	p := newBubblePlacement(mygo.Display{WorkArea: work}, mygo.Point{X: -600, Y: 700}, false, 480)
+	frame := fitBubbleFrame(mygo.Rectangle{Width: 480, Height: bubbleLayoutHeight(firstHeight, bubbleMaxHeight)}, work, &p, false)
+	if frame.Y+frame.Height != p.point.Y-bubbleGap {
+		t.Fatalf("first result did not open above the anchor: %+v", frame)
 	}
+	tt.SetSize(frame.Width, frame.Height)
+
+	result.Text += " is streaming."
+	v.applyResult(result)
+	tt.Frame()
+	tt.Frame()
+	if len(heights) != firstCount || !tt.HasText(result.Text) {
+		t.Fatalf("same-line text resized the bubble or failed to render: %v", heights)
+	}
+	firstLine, ok := tt.Find(result.Text)
+	if !ok {
+		t.Fatal("could not locate the first line")
+	}
+
+	result.Text += "\nThis is the next line."
+	v.applyResult(result)
+	tt.Frame()
+	tt.Frame()
+	if len(heights) != firstCount+1 || heights[len(heights)-1] <= firstHeight || !tt.HasText(result.Text) {
+		t.Fatalf("the next line did not render and grow the bubble: %v", heights)
+	}
+	readX, readY := float32(frame.X)+firstLine.X, float32(frame.Y)+firstLine.Y
+	for _, extra := range []int{0, 12} {
+		if extra > 0 {
+			result.Text += strings.Repeat("\nAnother streamed line.", extra)
+			v.applyResult(result)
+			tt.Frame()
+			tt.Frame()
+		}
+		frame.Height = bubbleLayoutHeight(heights[len(heights)-1], bubbleMaxHeight)
+		frame = fitBubbleFrame(frame, work, &p, true)
+		tt.SetSize(frame.Width, frame.Height)
+		lines, ok := tt.Find(result.Text)
+		if !ok || float32(frame.X)+lines.X != readX || float32(frame.Y)+lines.Y != readY {
+			t.Fatalf("the first line changed screen position: before=(%v, %v), frame=%+v, text=%+v", readX, readY, frame, lines)
+		}
+	}
+	if frame.Y+frame.Height != work.Y+work.Height-bubbleMargin {
+		t.Fatalf("long result did not use the remaining work area: %+v", frame)
+	}
+	tt.Scroll(470, float32(frame.Height-10), 0, 120)
+	if v.scroll.Y <= 0 {
+		t.Fatal("translation overflow could not scroll")
+	}
+
+	// Finishing a stream used to shrink the window by its reserved space
+	// even when the final chunk had identical text.
+	beforeFinish := len(heights)
 	result.Streaming = false
 	v.applyResult(result)
-	for range 3 {
-		tt.Frame()
-	}
-	if !heights[len(heights)-1].streaming {
-		t.Fatalf("finishing one service released space reserved for another: %v", heights)
-	}
-	before := len(heights)
-	// The final chunk can have the same text and geometry. It must still
-	// release the reserved space once all visible streams are done.
-	other.Streaming = false
-	v.applyResult(other)
-	for range 3 {
-		tt.Frame()
-	}
-	if len(heights) <= before || heights[len(heights)-1] != (measurement{height: heights[before-1].height}) {
-		t.Fatalf("stream completion left the height in streaming mode: %v", heights)
-	}
-}
-
-func TestBubbleViewHiddenServiceDoesNotKeepStreamHeadroom(t *testing.T) {
-	cfg := testBubbleConfig()
-	var streaming bool
-	v := newBubbleView(1, cfg, bubbleViewActions{
-		onHeightMeasured: func(_ float64, active bool) { streaming = active },
-	})
-	v.applyState(BubbleState{
-		ID: 1, Generation: 1, SessionID: "hidden-stream", ShowID: 1,
-		ReqID: "run", Trigger: "selection", Text: "hello", Settings: cfg,
-	}, false)
-	v.applyMeta(RunMetaMsg{ReqID: "run", Services: []string{"google", "baidu"}})
-	v.applyResult(TranslationUpdateMsg{ReqID: "run", Service: "baidu", Text: "Hidden translation", Streaming: true})
-	cfg.Services.Enabled = []string{"google"}
-	v.ApplySettings(cfg)
-
-	shown := TranslationUpdateMsg{ReqID: "run", Service: "google", Text: "Visible translation", Streaming: true}
-	v.applyResult(shown)
-	tt := ui.NewTester(v.render, 480, 420)
-	for range 3 {
-		tt.Frame()
-	}
-	if !streaming || !tt.HasText(shown.Text) || tt.HasText("Hidden translation") {
-		t.Fatal("expected only the enabled service to be visible and streaming")
-	}
-	// Disabling a service hides its in-flight card. It must release the
-	// reserved space as soon as the last visible result completes.
-	shown.Streaming = false
-	v.applyResult(shown)
-	for range 3 {
-		tt.Frame()
-	}
-	if streaming {
-		t.Fatal("a hidden service kept headroom after visible translation finished")
+	tt.Frame()
+	tt.Frame()
+	if len(heights) != beforeFinish || firstResults != 1 || tt.HasText("生成中") || !tt.HasText(result.Text) {
+		t.Fatalf("finishing unchanged text changed height or lost the result: %v", heights)
 	}
 }
 

@@ -13,8 +13,8 @@ const (
 	bubbleMaxHeight = 760
 )
 
-// bubblePlacement keeps the chosen side stable while asynchronous results
-// change the height. An upward-opening bubble grows away from the selection.
+// bubblePlacement anchors the initial layout beside the selection. Its work
+// area also constrains the reading viewport after the first result arrives.
 type bubblePlacement struct {
 	displayID          int64
 	work               mygo.Rectangle
@@ -79,18 +79,6 @@ func clampBubblePosition(work mygo.Rectangle, x, y, width, height int) (int, int
 	marginY := min(bubbleMargin, max((work.Height-height)/2, 0))
 	return min(max(x, work.X+marginX), work.X+max(work.Width-width-marginX, 0)),
 		min(max(y, work.Y+marginY), work.Y+max(work.Height-height-marginY, 0))
-}
-
-// bubbleStreamRoom is the frame height that fits before moving the anchor edge.
-func bubbleStreamRoom(bounds, work mygo.Rectangle, placement *bubblePlacement) int {
-	if placement != nil && placement.above && !placement.input {
-		return placement.point.Y - bubbleGap - work.Y - bubbleMargin
-	}
-	y := bounds.Y
-	if placement != nil {
-		_, y = placement.position(bounds.Width, 0)
-	}
-	return work.Y + work.Height - bubbleMargin - max(y, work.Y+bubbleMargin)
 }
 
 func bubbleDisplay(bounds mygo.Rectangle) mygo.Display {
@@ -199,16 +187,23 @@ func (m *Manager) reflow(b *bubble, fitFrame bool, contentHeight int) {
 	if pinned {
 		placement = nil
 	}
-	next = fitBubbleFrame(next, work, placement)
+	next = fitBubbleFrame(next, work, placement, b.keepTop)
 	if next != bounds {
-		// AppKit displays each frame change. Commit the target size and
-		// origin together so an upward-growing bubble keeps its bottom edge.
+		// AppKit displays each frame change. Commit size and origin together
+		// when the initial layout or a display change needs both.
 		b.changeGeometry(func() { b.win.SetBounds(next) })
 	}
 }
 
-func fitBubbleFrame(bounds, work mygo.Rectangle, placement *bubblePlacement) mygo.Rectangle {
-	if placement != nil {
+func fitBubbleFrame(bounds, work mygo.Rectangle, placement *bubblePlacement, keepTop bool) mygo.Rectangle {
+	if keepTop {
+		// A changed work area can move the panel back onscreen. Otherwise
+		// overflow belongs in the body scroll region, below the fixed header.
+		minHeight := min(bubbleMinHeight, bubbleHeightLimit(work))
+		bounds.X, bounds.Y = clampBubblePosition(work, bounds.X, bounds.Y, bounds.Width, minHeight)
+		room := work.Y + work.Height - bubbleMargin - bounds.Y
+		bounds.Height = min(bounds.Height, max(minHeight, room))
+	} else if placement != nil {
 		bounds.X, bounds.Y = placement.position(bounds.Width, bounds.Height)
 	} else {
 		bounds.X, bounds.Y = clampBubblePosition(work, bounds.X, bounds.Y, bounds.Width, bounds.Height)

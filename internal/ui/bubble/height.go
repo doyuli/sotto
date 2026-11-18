@@ -8,31 +8,35 @@ import (
 )
 
 const (
-	bubbleResizeDuration = 150 * time.Millisecond
+	bubbleGrowDuration   = 100 * time.Millisecond
+	bubbleShrinkDuration = 150 * time.Millisecond
 	bubbleResizeFrame    = time.Second / 60
-	// Two result lines leave room for incoming text without resizing on every wrap.
-	bubbleStreamHeadroom = 48
+	bubbleGrowTail       = 24
 )
 
 type bubbleHeightAnimation struct {
 	from, target int
 	started      time.Time
+	duration     time.Duration
 	timer        *time.Timer
 }
 
-func (a *bubbleHeightAnimation) heightAt(now time.Time) int {
-	progress := min(1, max(0, float64(now.Sub(a.started))/float64(bubbleResizeDuration)))
-	remaining := 1 - progress
-	return a.target + int(math.Round(float64(a.from-a.target)*remaining*remaining*remaining))
+func (a *bubbleHeightAnimation) retarget(current, target int, now time.Time) {
+	a.from, a.target = current, target
+	a.started = now
+	a.duration = bubbleShrinkDuration
+	if target > current {
+		// Make room for a large batch immediately so the resize only
+		// trails the content by at most about one line of translation.
+		a.from = max(current, target-bubbleGrowTail)
+		a.duration = bubbleGrowDuration
+	}
 }
 
-func bubbleStreamHeight(measured, currentTarget, limit, room int) int {
-	// Only the actual content may force the frame past its preferred edge.
-	limit = min(limit, max(measured, room))
-	if measured <= currentTarget {
-		return min(currentTarget, limit)
-	}
-	return min(measured+bubbleStreamHeadroom, limit)
+func (a *bubbleHeightAnimation) heightAt(now time.Time) int {
+	progress := min(1, max(0, float64(now.Sub(a.started))/float64(a.duration)))
+	remaining := 1 - progress
+	return a.target + int(math.Round(float64(a.from-a.target)*remaining*remaining*remaining))
 }
 
 func (b *bubble) stopHeightAnimation() {
@@ -42,50 +46,47 @@ func (b *bubble) stopHeightAnimation() {
 	}
 }
 
-func (m *Manager) resizeToContent(b *bubble, measured float64, streaming bool) {
+func (m *Manager) resizeToContent(b *bubble, measurement bubbleHeightMeasurement) {
 	m.mu.Lock()
 	limit := b.maxHeight
 	m.mu.Unlock()
 	_, current := b.win.ContentSize()
-	target := bubbleLayoutHeight(measured, limit)
-	if streaming {
-		currentTarget := current
-		if animation := b.heightAnimation; animation != nil {
-			currentTarget = animation.target
-		}
-		bounds := b.win.Bounds()
-		placement := b.placement
-		var work mygo.Rectangle
-		if placement == nil {
-			work = bubbleDisplay(bounds).WorkArea
-		} else {
-			work = placement.work
-		}
-		room := bubbleStreamRoom(bounds, work, placement) - (bounds.Height - current)
-		target = bubbleStreamHeight(target, currentTarget, bubbleLayoutHeight(limit, limit), room)
-	}
-	if b.view.reduceMotion || !b.win.IsVisible() || current > max(bubbleMinHeight, int(limit)) {
+	target := bubbleLayoutHeight(measurement.height, limit)
+	if measurement.firstResult || !measurement.animate || b.view.reduceMotion || !b.win.IsVisible() || current > max(bubbleMinHeight, int(limit)) {
 		b.stopHeightAnimation()
 		m.reflow(b, true, target)
+		// Place the first result beside the anchor before fixing the top edge.
+		b.keepTop = b.keepTop || measurement.firstResult
 		return
 	}
-	if animation := b.heightAnimation; animation != nil && animation.target == target {
+	animation := b.heightAnimation
+	if animation != nil && animation.target == target {
 		return
 	}
-	b.stopHeightAnimation()
 	if target == current {
+		b.stopHeightAnimation()
 		return
 	}
-	animation := &bubbleHeightAnimation{from: current, target: target, started: time.Now()}
-	b.heightAnimation = animation
-	m.scheduleHeightFrame(b, animation)
+	start := animation == nil
+	if start {
+		animation = &bubbleHeightAnimation{}
+		b.heightAnimation = animation
+	}
+	animation.retarget(current, target, time.Now())
+	// Keep the queued tick when the user toggles another card mid-transition.
+	if start {
+		m.scheduleHeightFrame(b, animation)
+	}
+	if animation.from != current {
+		m.reflow(b, true, animation.from)
+	}
 }
 
 func (m *Manager) scheduleHeightFrame(b *bubble, animation *bubbleHeightAnimation) {
-	delay := min(bubbleResizeFrame, time.Until(animation.started.Add(bubbleResizeDuration)))
+	delay := min(bubbleResizeFrame, time.Until(animation.started.Add(animation.duration)))
 	animation.timer = time.AfterFunc(delay, func() {
 		mygo.RunOnMain(func() {
-			// A queued tick may outlive a retarget, dismissal, or reused window.
+			// A queued tick may outlive a dismissal or a reused window.
 			if b.heightAnimation != animation {
 				return
 			}

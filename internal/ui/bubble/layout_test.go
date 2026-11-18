@@ -29,13 +29,13 @@ func TestBubblePlacement(t *testing.T) {
 	}
 }
 
-func TestBubbleGrowsAwayFromBottomAnchor(t *testing.T) {
+func TestBubbleFitsFirstResultAwayFromBottomAnchor(t *testing.T) {
 	work := mygo.Rectangle{Width: 1920, Height: 1040}
 	p := newBubblePlacement(mygo.Display{ID: 1, WorkArea: work}, mygo.Point{X: 1000, Y: 980}, false, 480)
-	short := fitBubbleFrame(mygo.Rectangle{Width: 480, Height: 240}, work, &p)
+	short := fitBubbleFrame(mygo.Rectangle{Width: 480, Height: 240}, work, &p, false)
 	next := short
 	next.Height = 760
-	tall := fitBubbleFrame(next, work, &p)
+	tall := fitBubbleFrame(next, work, &p, false)
 	// Resizing at the old origin briefly moved the visible bottom edge.
 	// A new frame must already be anchored when it reaches the window.
 	if tall.Height != next.Height || tall.Y+tall.Height != short.Y+short.Height {
@@ -43,8 +43,19 @@ func TestBubbleGrowsAwayFromBottomAnchor(t *testing.T) {
 	}
 	// Shrinking returns to the original side instead of sticking to the top edge.
 	tall.Height = short.Height
-	if again := fitBubbleFrame(tall, work, &p); again != short {
+	if again := fitBubbleFrame(tall, work, &p, false); again != short {
 		t.Fatalf("shrink returned to %+v; want %+v", again, short)
+	}
+}
+
+func TestBubbleReadingFrameSurvivesWorkAreaChange(t *testing.T) {
+	// A shrinking work area must leave enough visible room to scroll.
+	work := mygo.Rectangle{X: -1280, Y: 40, Width: 1280, Height: 600}
+	frame := mygo.Rectangle{X: -600, Y: 550, Width: 480, Height: 500}
+	got := fitBubbleFrame(frame, work, nil, true)
+	if got.X != frame.X || got.Y >= frame.Y || got.Height < bubbleMinHeight ||
+		got.Y < work.Y+bubbleMargin || got.Y+got.Height != work.Y+work.Height-bubbleMargin {
+		t.Fatalf("frame %+v did not fit changed work area %+v", got, work)
 	}
 }
 
