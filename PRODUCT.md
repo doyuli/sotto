@@ -24,7 +24,7 @@ app.
 | Capture / OCR | GDI; PP-OCR with WinRT fallback | ScreenCaptureKit; Vision |
 | Speech | SAPI | AVFoundation |
 | Credentials | Credential Manager | Keychain |
-| Default shortcuts | Ctrl+Alt+A/S/D | Option+A/S/D |
+| Default shortcuts | Ctrl+Alt+A/S/D/F | Option+A/S/D/F |
 | Updates | Native update window | Menu bar discovery and explicit installation |
 | Permissions | System access policies | Accessibility and screen recording |
 
@@ -46,7 +46,7 @@ A local Windows and macOS utility that combines selection capture, OCR, and mult
 
 ## Operating Context
 
-- Global hotkeys default to `Ctrl+Alt+A` (typed input), `Ctrl+Alt+S` (OCR), and `Ctrl+Alt+D` (selection) on Windows; Mac uses `⌥A`, `⌥S`, and `⌥D` respectively.
+- The global shortcuts use `Ctrl+Alt` on Windows and `⌥` on Mac. The default keys are `A` for typed input, `S` for OCR, `D` for selection, and `F` to toggle Minimal Translation Mode.
 - The bubble opens near the selection or screen region, hides on blur, and can be pinned.
 - Settings live in a separate window; API keys live in the OS keyring, never in settings JSON.
 - `Enter` translates; `Shift+Enter` inserts a newline.

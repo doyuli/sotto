@@ -71,9 +71,10 @@ type IdentifierSettings struct {
 
 // HotkeySettings use platform modifier names in accelerator syntax.
 type HotkeySettings struct {
-	Panel     string `json:"panel"`
-	Ocr       string `json:"ocr"`
-	Selection string `json:"selection"`
+	Panel              string `json:"panel"`
+	Ocr                string `json:"ocr"`
+	Selection          string `json:"selection"`
+	MinimalTranslation string `json:"minimalTranslation"`
 }
 
 // BubbleSettings control bubble behavior.
@@ -209,14 +210,17 @@ func Normalize(s Settings) Settings {
 	if s.Hotkeys.Selection == "" {
 		s.Hotkeys.Selection = d.Hotkeys.Selection
 	}
+	if s.Hotkeys.MinimalTranslation == "" {
+		s.Hotkeys.MinimalTranslation = d.Hotkeys.MinimalTranslation
+	}
 	return s
 }
 
 func defaultHotkeys(goos string) HotkeySettings {
 	if goos == "darwin" {
-		return HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D"}
+		return HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F"}
 	}
-	return HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}
+	return HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"}
 }
 
 func validFormats(formats []string) []string {

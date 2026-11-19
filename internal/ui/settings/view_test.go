@@ -58,6 +58,13 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 			saved = append(saved, s)
 			return nil
 		},
+		SaveMinimalTranslation: func(enabled bool) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current.MinimalTranslation = enabled
+			saved = append(saved, current)
+			return nil
+		},
 		Credentials: func(string) (CredentialStatus, error) {
 			return CredentialStatus{Stored: []string{keys.OpenAIKey}, Configured: []string{"openai"}}, nil
 		},

@@ -13,7 +13,9 @@ import (
 
 type hotkeyItem struct{ id, label string }
 
-var settingsHotkeys = []hotkeyItem{{"panel", "翻译面板"}, {"ocr", "截图翻译"}, {"selection", "划词翻译"}}
+var settingsHotkeys = []hotkeyItem{
+	{"panel", "翻译面板"}, {"ocr", "截图翻译"}, {"selection", "划词翻译"}, {"minimalTranslation", "简约翻译模式"},
+}
 
 func displayHotkey(value string) string { return hotkeyDisplayForPlatform(value, runtime.GOOS) }
 func hotkeyDisplayForPlatform(value, goos string) string {
@@ -170,17 +172,15 @@ func (v *View) submitHotkeyLocked(id, value string) {
 			setHotkeyValue(&next.Hotkeys, id, value)
 			err = v.actions.SaveSettings(next)
 		}
-		var current *config.Settings
-		if v.actions.GetSettings != nil {
-			cfg := v.actions.GetSettings()
-			current = &cfg
-		}
 		v.mu.Lock()
 		v.pendingWrites--
 		v.hotkeyPending = ""
-		if current != nil {
+		// Serialize readback with external updates so a mode toggle cannot
+		// be dropped while an older settings snapshot is waiting to apply.
+		if v.actions.GetSettings != nil {
+			current := v.actions.GetSettings()
 			if v.pendingWrites == 0 {
-				v.settings = cloneSettings(*current)
+				v.settings = cloneSettings(current)
 			} else {
 				v.settings.Hotkeys = current.Hotkeys
 			}
@@ -214,6 +214,8 @@ func hotkeyValue(h config.HotkeySettings, id string) string {
 		return h.Selection
 	case "ocr":
 		return h.Ocr
+	case "minimalTranslation":
+		return h.MinimalTranslation
 	}
 	return ""
 }
@@ -225,6 +227,8 @@ func setHotkeyValue(h *config.HotkeySettings, id, value string) {
 		h.Selection = value
 	case "ocr":
 		h.Ocr = value
+	case "minimalTranslation":
+		h.MinimalTranslation = value
 	}
 }
 func formatHotkeyKey(key ui.Key) string {

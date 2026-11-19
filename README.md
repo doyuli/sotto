@@ -50,13 +50,14 @@ When reading documentation, researching foreign language resources, or coding, c
 
 ## Shortcuts & Operations
 
-Sotto provides three instant entry points with fully customizable global shortcuts:
+Sotto's global shortcuts are customizable in Settings.
 
 | Action | Windows Default | macOS Default | Description |
 | :--- | :--- | :--- | :--- |
 | **Open Translation Panel** | `Ctrl + Alt + A` | `⌥ Option + A` | Opens the typed translation panel; if already open, focuses it and preserves existing text |
 | **Screen Snip Translation (OCR)** | `Ctrl + Alt + S` | `⌥ Option + S` | Snips any screen area to extract text locally and query translation engines |
 | **Selection Translation** | `Ctrl + Alt + D` | `⌥ Option + D` | Reads highlighted text in the frontmost app and shows a popup bubble beside it |
+| **Toggle Minimal Translation Mode** | `Ctrl + Alt + F` | `⌥ Option + F` | Switches the saved mode for selection and snip translations and briefly shows the new state |
 
 ### Interactive Controls
 - **Bubble Mode**: Press `Enter` to translate, `Shift + Enter` for a newline, and `Esc` to close; click the pin icon to stay open on blur; play native TTS for source and translated text, and fold or retry individual cards.

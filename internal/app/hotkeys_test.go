@@ -4,10 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
+	"sotto/internal/ui/bubble"
+	"sotto/internal/ui/settings"
 )
 
 type failingShortcutBackend struct {
@@ -25,20 +30,81 @@ func (b failingShortcutBackend) Register(shortcut string, _ func()) error {
 
 func TestHotkeyRegistrationFailureShowsOnlyUserMessage(t *testing.T) {
 	// MyGo's error used to appear after the Chinese hint in settings and startup notifications.
-	cfg := config.Settings{Hotkeys: config.HotkeySettings{Panel: "Ctrl+K", Selection: "Ctrl+L", Ocr: "Ctrl+M"}}
-	a := &application{cfg: cfg, shortcutBackend: failingShortcutBackend{
-		shortcut: "Ctrl+K",
-		err:      fmt.Errorf("%w: %w", hotkey.ErrSystemRegistration, errors.New(`mygo: cannot register "Ctrl+K": hotkey is already registered`)),
-	}}
-	const message = "系统无法注册该组合键，可能已被占用，请更换组合键"
-	if err := a.applyHotkeys(cfg.Hotkeys); err == nil || err.Error() != "翻译面板快捷键 Ctrl+K："+message {
-		t.Fatalf("startup notification = %v", err)
+	cfg := config.Default()
+	cfg.Hotkeys.Panel = "Ctrl+K"
+	values := hotkeyValues(canonicalHotkeys(cfg.Hotkeys))
+	for _, tc := range []struct{ action, label string }{
+		{"panel", "翻译面板"},
+		{"minimalTranslation", "简约翻译模式"},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			accel := values[tc.action]
+			a := &application{cfg: cfg, shortcutBackend: failingShortcutBackend{
+				shortcut: accel,
+				err:      fmt.Errorf("%w: mygo: cannot register %q: hotkey is already registered", hotkey.ErrSystemRegistration, accel),
+			}}
+			const message = "系统无法注册该组合键，可能已被占用，请更换组合键"
+			if err := a.applyHotkeys(cfg.Hotkeys); err == nil || err.Error() != tc.label+"快捷键 "+accel+"："+message {
+				t.Fatalf("startup notification = %v", err)
+			}
+			if got := a.shortcutErrors()[tc.action]; got != message {
+				t.Fatalf("inactive shortcut message = %q", got)
+			}
+			if err := a.updateHotkey(tc.action, accel); err == nil || err.Error() != message {
+				t.Fatalf("retry message = %v", err)
+			}
+		})
 	}
-	if got := a.shortcutErrors()["panel"]; got != message {
-		t.Fatalf("inactive shortcut message = %q", got)
+}
+
+func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
+	// A general settings snapshot taken before the shortcut must not undo it.
+	cfg := config.Default()
+	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
+	stale := cfg
+	stale.TargetLanguage = "ja"
+	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
+	if err != nil || !enabled {
+		t.Fatalf("toggle enabled=%v err=%v", enabled, err)
 	}
-	if err := a.updateHotkey("panel", "Ctrl+K"); err == nil || err.Error() != message {
-		t.Fatalf("retry message = %v", err)
+	if err := a.updateSettings(stale); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := config.Load(a.cfgPath)
+	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || !a.settings().MinimalTranslation {
+		t.Fatalf("saved mode=%v language=%s err=%v", saved.MinimalTranslation, saved.TargetLanguage, err)
+	}
+}
+
+func TestSettingsViewReceivesModeToggleBeforeWindowCreation(t *testing.T) {
+	// A toggle during native window creation used to miss the new settings view.
+	a := &application{
+		cfg:     config.Default(),
+		cfgPath: filepath.Join(t.TempDir(), "settings.json"),
+		keys:    &serviceTestKeyring{},
+		bubbles: bubble.NewManager(nil, bubble.Actions{}),
+	}
+	view := a.createSettingsView(settings.TabGeneral)
+	defer view.Dispose()
+
+	if enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current }); err != nil || !enabled {
+		t.Fatalf("toggle enabled=%v err=%v", enabled, err)
+	}
+	tt := ui.NewTester(view.Render, 780, 600)
+	sw, found := tt.AccessByRole(ui.RoleSwitch, "切换简约翻译模式")
+	if !found || !sw.Checked {
+		t.Fatalf("first frame did not show the enabled mode: found=%v checked=%v", found, sw.Checked)
+	}
+}
+
+func TestMinimalTranslationToggleKeepsModeOnSaveFailure(t *testing.T) {
+	// A failed write must leave the active mode at its previous value.
+	cfg := config.Default()
+	cfg.MinimalTranslation = true
+	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "missing", "settings.json")}
+	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
+	if err == nil || !enabled || !a.settings().MinimalTranslation {
+		t.Fatalf("toggle enabled=%v err=%v, active mode=%v", enabled, err, a.settings().MinimalTranslation)
 	}
 }
 

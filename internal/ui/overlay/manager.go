@@ -12,8 +12,10 @@ import (
 
 // Manager and its windows belong to the main thread.
 type Manager struct {
-	windows   []*Result
-	suspended bool
+	windows       []*Result
+	suspended     bool
+	status        *mygo.Window
+	pendingStatus string
 }
 
 // Result is a floating translation that can be completed in place.
@@ -208,6 +210,9 @@ func (m *Manager) update(p *Result) {
 // Suspend keeps results out of both the desktop snapshot and the selection UI.
 func (m *Manager) Suspend() func() {
 	m.suspended = true
+	if m.status != nil {
+		m.status.Close()
+	}
 	for _, p := range m.windows {
 		p.animateLoading(false)
 		p.window.Hide()
@@ -217,10 +222,18 @@ func (m *Manager) Suspend() func() {
 		for _, p := range slices.Clone(m.windows) {
 			m.update(p)
 		}
+		if message := m.pendingStatus; message != "" {
+			m.pendingStatus = ""
+			m.ShowStatus(message)
+		}
 	}
 }
 
 func (m *Manager) Close() {
+	m.pendingStatus = ""
+	if m.status != nil {
+		m.status.Close()
+	}
 	for _, p := range slices.Clone(m.windows) {
 		p.window.Close()
 	}

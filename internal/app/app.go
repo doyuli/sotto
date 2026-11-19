@@ -145,13 +145,35 @@ func (a *application) settings() config.Settings {
 	return a.cfg
 }
 
-// updateSettings normalizes, saves and applies s.
+// updateSettings saves the general settings form. Mode changes use a separate
+// transaction so a queued form snapshot cannot overwrite a shortcut toggle.
 func (a *application) updateSettings(s config.Settings) error {
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
 
-	s = config.Normalize(s)
-	return a.saveSettings(s)
+	s.MinimalTranslation = a.settings().MinimalTranslation
+	return a.saveSettings(config.Normalize(s))
+}
+
+func (a *application) setMinimalTranslation(enabled bool) error {
+	_, err := a.updateMinimalTranslation(func(bool) bool { return enabled })
+	return err
+}
+
+func (a *application) updateMinimalTranslation(update func(bool) bool) (bool, error) {
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+
+	cfg := a.settings()
+	previous := cfg.MinimalTranslation
+	cfg.MinimalTranslation = update(previous)
+	if cfg.MinimalTranslation == previous {
+		return previous, nil
+	}
+	if err := a.saveSettings(cfg); err != nil {
+		return previous, err
+	}
+	return cfg.MinimalTranslation, nil
 }
 
 // saveSettings commits settings while the caller holds configWriteMu.
@@ -402,27 +424,8 @@ func (a *application) showSettings(services bool) {
 	if services {
 		tab = settings.TabServices
 	}
-	svc := ConfigSvc{a}
 	if sv == nil {
-		sv = settings.NewView(tab, a.settings(), settings.Actions{
-			GetSettings:  svc.Get,
-			SaveSettings: svc.Set,
-			Credentials:  svc.Credentials,
-			SaveService:  svc.SaveService,
-			TestService:  svc.TestService,
-			OpenKeyPage:  svc.OpenKeyPage,
-			DeeplUsage:   svc.DeeplUsage,
-			SaveHotkey:   a.updateHotkey,
-			HotkeyErrors: a.shortcutErrors,
-			Invalidate: func() {
-				a.mu.Lock()
-				w := a.settingsWin
-				a.mu.Unlock()
-				if w != nil {
-					w.Invalidate()
-				}
-			},
-		})
+		sv = a.createSettingsView(tab)
 	} else {
 		sv.SetActiveTab(tab)
 		sv.RefreshCredentialsAsync()
@@ -439,7 +442,6 @@ func (a *application) showSettings(services bool) {
 	}))
 	a.mu.Lock()
 	a.settingsWin = w
-	a.settingsView = sv
 	a.mu.Unlock()
 	w.OnBlur(sv.CancelHotkeyRecording)
 	w.OnClosed(func() {
@@ -451,6 +453,37 @@ func (a *application) showSettings(services bool) {
 		a.mu.Unlock()
 	})
 	w.Show()
+}
+
+func (a *application) createSettingsView(tab settings.Tab) *settings.View {
+	svc := ConfigSvc{a}
+	actions := settings.Actions{
+		GetSettings:            svc.Get,
+		SaveSettings:           svc.Set,
+		SaveMinimalTranslation: a.setMinimalTranslation,
+		Credentials:            svc.Credentials,
+		SaveService:            svc.SaveService,
+		TestService:            svc.TestService,
+		OpenKeyPage:            svc.OpenKeyPage,
+		DeeplUsage:             svc.DeeplUsage,
+		SaveHotkey:             a.updateHotkey,
+		HotkeyErrors:           a.shortcutErrors,
+		Invalidate: func() {
+			a.mu.Lock()
+			w := a.settingsWin
+			a.mu.Unlock()
+			if w != nil {
+				w.Invalidate()
+			}
+		},
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// Seed and register the view together so a toggle during native window
+	// creation can publish to it.
+	view := settings.NewView(tab, a.cfg, actions)
+	a.settingsView = view
+	return view
 }
 
 // runTranslation resolves the languages, fans the request out to the

@@ -30,16 +30,17 @@ type DeeplUsage struct {
 	Limit int `json:"limit"`
 }
 type Actions struct {
-	GetSettings  func() config.Settings
-	SaveSettings func(config.Settings) error
-	Credentials  func(service string) (CredentialStatus, error)
-	SaveService  func(name string, changes ServiceChanges) (ServiceSaveResult, error)
-	TestService  func(ctx context.Context, name string) string
-	OpenKeyPage  func(service string) error
-	DeeplUsage   func(context.Context) (DeeplUsage, error)
-	SaveHotkey   func(action, accel string) error
-	HotkeyErrors func() map[string]string
-	Invalidate   func()
+	GetSettings            func() config.Settings
+	SaveSettings           func(config.Settings) error
+	SaveMinimalTranslation func(bool) error
+	Credentials            func(service string) (CredentialStatus, error)
+	SaveService            func(name string, changes ServiceChanges) (ServiceSaveResult, error)
+	TestService            func(ctx context.Context, name string) string
+	OpenKeyPage            func(service string) error
+	DeeplUsage             func(context.Context) (DeeplUsage, error)
+	SaveHotkey             func(action, accel string) error
+	HotkeyErrors           func() map[string]string
+	Invalidate             func()
 }
 
 // ServiceChanges contains only edited fields. Nil options are unchanged,
@@ -135,7 +136,10 @@ func NewView(initialTab Tab, cfg config.Settings, actions Actions) *View {
 		testStatuses:     make(map[string]serviceTestStatus),
 		deeplUsageText:   "额度查询中…",
 		hotkeyConflicts:  make(map[string]string),
-		hotkeyRecorders:  map[string]*ui.Handle{"panel": {}, "selection": {}, "ocr": {}},
+		hotkeyRecorders:  make(map[string]*ui.Handle, len(settingsHotkeys)),
+	}
+	for _, item := range settingsHotkeys {
+		v.hotkeyRecorders[item.id] = &ui.Handle{}
 	}
 	go v.runTaskLoop()
 	v.RefreshCredentialsAsync()
@@ -223,36 +227,52 @@ func (v *View) enqueueTask(task func()) {
 }
 
 func (v *View) enqueueSaveLocked(next config.Settings) {
+	previousEnabled := v.settings.Services.Enabled
+	snap := cloneSettings(next)
+	v.enqueueSettingsWriteLocked(next, func() error {
+		if v.actions.SaveSettings == nil {
+			return nil
+		}
+		// Ordinary settings edits must not restore an older shortcut snapshot.
+		if v.actions.GetSettings != nil {
+			current := v.actions.GetSettings()
+			snap.Hotkeys = current.Hotkeys
+			// Apply only this action's enablement change. A queued service
+			// save may have removed credentials and disabled another service.
+			desired := snap.Services
+			snap.Services = current.Services
+			snap.Services.Order = desired.Order
+			snap.Services.Enabled = slices.DeleteFunc(slices.Clone(current.Services.Enabled), func(name string) bool {
+				return slices.Contains(previousEnabled, name) && !slices.Contains(desired.Enabled, name)
+			})
+			for _, name := range desired.Enabled {
+				if !slices.Contains(previousEnabled, name) && !slices.Contains(snap.Services.Enabled, name) {
+					snap.Services.Enabled = append(snap.Services.Enabled, name)
+				}
+			}
+		}
+		return v.actions.SaveSettings(snap)
+	})
+}
+
+func (v *View) enqueueMinimalTranslationLocked(enabled bool) {
+	next := v.settings
+	next.MinimalTranslation = enabled
+	if v.actions.SaveMinimalTranslation == nil {
+		v.enqueueSaveLocked(next)
+		return
+	}
+	v.enqueueSettingsWriteLocked(next, func() error { return v.actions.SaveMinimalTranslation(enabled) })
+}
+
+func (v *View) enqueueSettingsWriteLocked(next config.Settings, save func() error) {
 	if v.disposed {
 		return
 	}
-	previousEnabled := v.settings.Services.Enabled
 	v.settings = cloneSettings(next)
 	v.pendingWrites++
-	snap := cloneSettings(next)
 	v.enqueueTaskLocked(func() {
-		var err error
-		if v.actions.SaveSettings != nil {
-			// Ordinary settings edits must not restore an older shortcut snapshot.
-			if v.actions.GetSettings != nil {
-				current := v.actions.GetSettings()
-				snap.Hotkeys = current.Hotkeys
-				// Apply only this action's enablement change. A queued service
-				// save may have removed credentials and disabled another service.
-				desired := snap.Services
-				snap.Services = current.Services
-				snap.Services.Order = desired.Order
-				snap.Services.Enabled = slices.DeleteFunc(slices.Clone(current.Services.Enabled), func(name string) bool {
-					return slices.Contains(previousEnabled, name) && !slices.Contains(desired.Enabled, name)
-				})
-				for _, name := range desired.Enabled {
-					if !slices.Contains(previousEnabled, name) && !slices.Contains(snap.Services.Enabled, name) {
-						snap.Services.Enabled = append(snap.Services.Enabled, name)
-					}
-				}
-			}
-			err = v.actions.SaveSettings(snap)
-		}
+		err := save()
 		v.mu.Lock()
 		v.pendingWrites--
 		if err != nil {

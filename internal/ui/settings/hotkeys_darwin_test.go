@@ -100,7 +100,7 @@ func TestSettingsControlOptionSetSurvivesSaveAndReload(t *testing.T) {
 		}, "shortcut save did not finish")
 		tt.Frame()
 	}
-	want := config.HotkeySettings{Panel: "Ctrl+Option+A", Ocr: "Ctrl+Option+S", Selection: "Ctrl+Option+D"}
+	want := config.HotkeySettings{Panel: "Ctrl+Option+A", Ocr: "Ctrl+Option+S", Selection: "Ctrl+Option+D", MinimalTranslation: "Option+F"}
 	mu.Lock()
 	got := current.Hotkeys
 	mu.Unlock()

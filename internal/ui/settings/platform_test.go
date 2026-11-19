@@ -25,7 +25,8 @@ func TestSettingsPlatformShortcutPresentation(t *testing.T) {
 				tt := ui.NewTester(v.Render, width, 600)
 				tt.SetDark(dark)
 				tt.Frame()
-				for _, key := range []string{config.Default().Hotkeys.Panel, config.Default().Hotkeys.Ocr, config.Default().Hotkeys.Selection} {
+				defaults := config.Default().Hotkeys
+				for _, key := range []string{defaults.Panel, defaults.Ocr, defaults.Selection, defaults.MinimalTranslation} {
 					if !tt.HasText(displayHotkey(key)) {
 						t.Fatalf("missing native shortcut %s", displayHotkey(key))
 					}

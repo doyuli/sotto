@@ -356,9 +356,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			ui.Switch(c, &minimalTranslation).Label("切换简约翻译模式").OnClick(func() {
 				v.mu.Lock()
 				defer v.mu.Unlock()
-				next := cloneSettings(v.settings)
-				next.MinimalTranslation = minimalTranslation
-				v.enqueueSaveLocked(next)
+				v.enqueueMinimalTranslationLocked(minimalTranslation)
 			})
 		})
 

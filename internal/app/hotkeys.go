@@ -7,19 +7,30 @@ import (
 	"maps"
 	"runtime"
 
+	"github.com/egoist/mygo"
+
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
 	"sotto/internal/usermessage"
 )
 
-var hotkeyActions = []string{"panel", "selection", "ocr"}
-var hotkeyLabels = map[string]string{"panel": "翻译面板", "selection": "划词翻译", "ocr": "截图翻译"}
+var hotkeyActions = []string{"panel", "selection", "ocr", "minimalTranslation"}
+var hotkeyLabels = map[string]string{
+	"panel": "翻译面板", "selection": "划词翻译", "ocr": "截图翻译", "minimalTranslation": "简约翻译模式",
+}
 
 func hotkeyValues(h config.HotkeySettings) map[string]string {
-	return map[string]string{"panel": h.Panel, "selection": h.Selection, "ocr": h.Ocr}
+	return map[string]string{
+		"panel": h.Panel, "selection": h.Selection, "ocr": h.Ocr, "minimalTranslation": h.MinimalTranslation,
+	}
 }
 func canonicalHotkeys(h config.HotkeySettings) config.HotkeySettings {
-	return config.HotkeySettings{Panel: hotkey.Canonical(h.Panel, runtime.GOOS), Selection: hotkey.Canonical(h.Selection, runtime.GOOS), Ocr: hotkey.Canonical(h.Ocr, runtime.GOOS)}
+	return config.HotkeySettings{
+		Panel:              hotkey.Canonical(h.Panel, runtime.GOOS),
+		Selection:          hotkey.Canonical(h.Selection, runtime.GOOS),
+		Ocr:                hotkey.Canonical(h.Ocr, runtime.GOOS),
+		MinimalTranslation: hotkey.Canonical(h.MinimalTranslation, runtime.GOOS),
+	}
 }
 
 // Dispatch by committed accelerator, not by the callback's original action.
@@ -39,10 +50,31 @@ func (a *application) onShortcut(accel string) func() {
 		if view != nil && view.CaptureGlobalHotkey(accel) {
 			return
 		}
-		if action != "" {
+		switch action {
+		case "minimalTranslation":
+			if !a.isQuitting() {
+				go a.toggleMinimalTranslation()
+			}
+		case "panel", "selection", "ocr":
 			a.startEntry(action)
 		}
 	}
+}
+
+func (a *application) toggleMinimalTranslation() {
+	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
+	message := "简约翻译已关闭"
+	switch {
+	case err != nil:
+		message = usermessage.Format("切换简约翻译失败", err)
+	case enabled:
+		message = "简约翻译已开启"
+	}
+	mygo.RunOnMain(func() {
+		if !a.isQuitting() && a.settings().MinimalTranslation == enabled {
+			a.overlays.ShowStatus(message)
+		}
+	})
 }
 
 // Startup failures remain visible in settings; never replace the user's choice
@@ -94,6 +126,8 @@ func (a *application) updateHotkey(action, value string) error {
 		s.Hotkeys.Selection = value
 	case "ocr":
 		s.Hotkeys.Ocr = value
+	case "minimalTranslation":
+		s.Hotkeys.MinimalTranslation = value
 	default:
 		return fmt.Errorf("未知快捷键操作")
 	}

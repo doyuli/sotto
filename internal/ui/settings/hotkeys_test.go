@@ -52,6 +52,37 @@ func TestRecorderCommitsKeyDownWithoutNextFrame(t *testing.T) {
 	}()
 }
 
+func TestMinimalTranslationShortcutRecordsAndRejectsDuplicates(t *testing.T) {
+	// The mode shortcut must use the same recorder and ownership checks as translation entry shortcuts.
+	cfg := testSettingsConfig()
+	var savedAction, savedKey string
+	v := NewView(TabHotkeys, cfg, Actions{SaveHotkey: func(action, key string) error {
+		savedAction, savedKey = action, key
+		return nil
+	}})
+	defer v.Dispose()
+	tt := ui.NewTester(v.Render, 780, 600)
+	if err := tt.Click("简约翻译模式快捷键"); err != nil {
+		t.Fatal(err)
+	}
+	if !v.CaptureGlobalHotkey(cfg.Hotkeys.Selection) {
+		t.Fatal("recording did not consume the registered selection shortcut")
+	}
+	tt.Frame()
+	if !tt.HasText("该组合键已用于划词翻译，请换一个组合键") {
+		t.Fatalf("missing conflict: %v", tt.Texts())
+	}
+	tt.Key(ui.Ctrl|ui.Shift, ui.KeyF)
+	drainSettingsTasks(v)
+	if savedAction != "minimalTranslation" || savedKey != "Ctrl+Shift+F" {
+		t.Fatalf("saved %s=%s", savedAction, savedKey)
+	}
+	tt.Frame()
+	if !tt.HasText(displayHotkey(savedKey)) {
+		t.Fatal("the new binding did not appear after saving")
+	}
+}
+
 func TestRecorderSupportsNavigationPunctuationAndSpace(t *testing.T) {
 	for _, tc := range []struct {
 		key  ui.Key
@@ -247,6 +278,49 @@ func TestHotkeySaveAndFollowingSettingsEditPreserveBothChanges(t *testing.T) {
 	defer mu.Unlock()
 	if current.Hotkeys.Panel != "Ctrl+Shift+K" || current.TargetLanguage != "en" {
 		t.Fatalf("lost queued changes: %+v", current)
+	}
+}
+
+func TestHotkeySavePreservesConcurrentMinimalTranslationUpdate(t *testing.T) {
+	// A mode change during shortcut readback used to be dropped by the settings view.
+	cfg := testSettingsConfig()
+	beforeToggle := cfg
+	beforeToggle.Hotkeys.Panel = "Ctrl+Shift+K"
+	readStarted, releaseRead := make(chan struct{}), make(chan struct{})
+	v := NewView(TabHotkeys, cfg, Actions{
+		SaveHotkey: func(string, string) error { return nil },
+		GetSettings: func() config.Settings {
+			close(readStarted)
+			<-releaseRead
+			return beforeToggle
+		},
+	})
+	defer v.Dispose()
+
+	tt := ui.NewTester(v.Render, 780, 600)
+	if err := tt.Click("翻译面板快捷键"); err != nil {
+		t.Fatal(err)
+	}
+	if !v.CaptureGlobalHotkey(beforeToggle.Hotkeys.Panel) {
+		t.Fatal("shortcut was not recorded")
+	}
+	<-readStarted
+
+	afterToggle := beforeToggle
+	afterToggle.MinimalTranslation = true
+	// Publish during readback if possible. If readback already holds the lock,
+	// let it complete so the external update can acquire the lock.
+	if v.mu.TryLock() {
+		v.mu.Unlock()
+		v.ApplyExternalSettings(afterToggle)
+		close(releaseRead)
+	} else {
+		close(releaseRead)
+		v.ApplyExternalSettings(afterToggle)
+	}
+	drainSettingsTasks(v)
+	if !v.settings.MinimalTranslation || v.settings.Hotkeys.Panel != beforeToggle.Hotkeys.Panel {
+		t.Fatalf("view lost a saved change: mode=%v panel=%s", v.settings.MinimalTranslation, v.settings.Hotkeys.Panel)
 	}
 }
 

@@ -36,8 +36,8 @@ func TestDefault(t *testing.T) {
 }
 
 func TestPlatformHotkeyDefaults(t *testing.T) {
-	mac := HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D"}
-	windows := HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}
+	mac := HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F"}
+	windows := HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"}
 	for _, tc := range []struct {
 		platform string
 		want     HotkeySettings
@@ -53,9 +53,9 @@ func TestLoadPreservesHotkeysWithoutRewritingFile(t *testing.T) {
 		name, hotkeys string
 		want          HotkeySettings
 	}{
-		{"control alt", `{"panel":"Ctrl+Alt+A","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D"}`, HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}},
-		{"alt", `{"panel":"Alt+A","ocr":"Alt+S","selection":"Alt+D"}`, HotkeySettings{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"}},
-		{"custom", `{"panel":"Cmd+Shift+K","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D"}`, HotkeySettings{Panel: "Cmd+Shift+K", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"}},
+		{"control alt", `{"panel":"Ctrl+Alt+A","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D","minimalTranslation":"Ctrl+Alt+F"}`, HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"}},
+		{"alt", `{"panel":"Alt+A","ocr":"Alt+S","selection":"Alt+D","minimalTranslation":"Alt+F"}`, HotkeySettings{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F"}},
+		{"custom", `{"panel":"Cmd+Shift+K","ocr":"Ctrl+Alt+S","selection":"Ctrl+Alt+D","minimalTranslation":"Ctrl+Shift+F"}`, HotkeySettings{Panel: "Cmd+Shift+K", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Shift+F"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "settings.json")
@@ -194,9 +194,9 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 
 func TestNormalizePreservesExplicitHotkeys(t *testing.T) {
 	for _, h := range []HotkeySettings{
-		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"},
-		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"},
-		{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D"},
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"},
+		{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D", MinimalTranslation: "Ctrl+Shift+F"},
 	} {
 		s := Default()
 		s.Hotkeys = h
@@ -211,8 +211,8 @@ func TestNormalizePreservesExplicitHotkeys(t *testing.T) {
 
 func TestSavePreservesExplicitHotkeysAcrossReloads(t *testing.T) {
 	for _, h := range []HotkeySettings{
-		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D"},
-		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D"},
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"},
 	} {
 		path := filepath.Join(t.TempDir(), "settings.json")
 		cfg := Default()

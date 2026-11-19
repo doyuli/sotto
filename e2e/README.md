@@ -12,8 +12,9 @@ Tester does not create native windows; symbol loading does not prove actual sele
 
 ## Minimal Translation Mode
 
-On each desktop platform, enable **简约翻译模式** in General settings and verify the following.
+On each desktop platform, verify the following for **简约翻译模式**.
 
+- With the mode off and another app focused, enable it using `⌥F` on macOS or `Ctrl+Alt+F` on Windows. Verify the brief status appears, focus stays in the source app, and the General settings switch shows the mode is on. Restart Sotto while the mode is on and verify it is still enabled. Use the shortcut to turn it off, then record a custom binding in Shortcuts and verify it takes effect.
 - Keep two translations open from different selections, including a request that completes after the next selection. Drag and scroll each independently. The first presentation leaves focus in the source app, a right-click closes its own result, and Escape closes the focused result.
 - With a slow service, verify the loading dots appear after a short delay and the same window shows the result. Close a loading window and verify no result appears for that request. With Reduce Motion enabled, the loading dots stay still.
 - With a streaming service, verify the first translated text replaces the waiting state and more text arrives in the same window. Scroll back while it is generating and verify the reading position is preserved. Close another streaming result and verify its late updates do not reopen it.
