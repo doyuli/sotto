@@ -83,12 +83,12 @@ func (b Baidu) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		return Result{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Result{}, responseStatusError("百度", resp.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return Result{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("百度: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var out struct {
 		From        string `json:"from"`
@@ -98,13 +98,12 @@ func (b Baidu) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 			Dst string `json:"dst"`
 		} `json:"trans_result"`
 		ErrorCode string `json:"error_code"`
-		ErrorMsg  string `json:"error_msg"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return Result{}, fmt.Errorf("百度: %w", err)
 	}
 	if out.ErrorCode != "" {
-		return Result{}, baiduError(out.ErrorCode, out.ErrorMsg)
+		return Result{}, baiduError(out.ErrorCode)
 	}
 	var lines []string
 	for _, tr := range out.TransResult {
@@ -128,7 +127,7 @@ func baiduSign(appid, query, salt, secret string) string {
 
 // baiduError maps the API's error codes; only the ones users can act on
 // get their own error.
-func baiduError(code, msg string) error {
+func baiduError(code string) error {
 	switch code {
 	case "52001":
 		return context.DeadlineExceeded
@@ -147,7 +146,7 @@ func baiduError(code, msg string) error {
 	case "58003":
 		return fmt.Errorf("当前 IP 无法调用百度翻译，请检查控制台")
 	default:
-		return fmt.Errorf("百度: %s %s", code, msg)
+		return responseCodeError("百度", code)
 	}
 }
 

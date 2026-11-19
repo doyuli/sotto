@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
+	"sotto/internal/usermessage"
 )
 
 type hotkeyItem struct{ id, label string }
@@ -140,7 +141,7 @@ func (v *View) submitHotkeyLocked(id, value string) {
 	}
 	parsed, err := hotkey.Parse(value, runtime.GOOS)
 	if err != nil {
-		v.hotkeyConflicts[id] = err.Error()
+		v.hotkeyConflicts[id] = usermessage.Text(err)
 		return
 	}
 	value = parsed.String()
@@ -188,7 +189,10 @@ func (v *View) submitHotkeyLocked(id, value string) {
 		}
 		if !v.disposed && generation == v.windowGeneration {
 			if err != nil {
-				v.hotkeyConflicts[id] = err.Error()
+				v.hotkeyConflicts[id] = usermessage.Text(err)
+				if v.hotkeyConflicts[id] == "" {
+					v.hotkeyConflicts[id] = "保存快捷键失败，请重试"
+				}
 			} else {
 				v.hotkeyConflicts[id] = ""
 				v.hotkeyEditor = ""

@@ -76,7 +76,7 @@ func (d DeepL) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		case status == 401 || status == 403:
 			return Result{}, ErrAuth
 		default:
-			return Result{}, fmt.Errorf("DeepL: HTTP %d: %s", status, strings.TrimSpace(string(body)))
+			return Result{}, responseStatusError("DeepL", status)
 		}
 	}
 }
@@ -105,7 +105,7 @@ func (d DeepL) Usage(ctx context.Context, key string) (used, limit int, err erro
 		return 0, 0, err
 	}
 	if status != http.StatusOK {
-		return 0, 0, fmt.Errorf("DeepL: HTTP %d: %s", status, strings.TrimSpace(string(body)))
+		return 0, 0, responseStatusError("DeepL", status)
 	}
 	var out struct {
 		CharacterCount int `json:"character_count"`
@@ -172,6 +172,9 @@ func (d DeepL) do(ctx context.Context, method, url, key string, payload any) (in
 		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, resp.Header, nil, nil
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	return resp.StatusCode, resp.Header, body, err
 }

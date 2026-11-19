@@ -115,11 +115,37 @@ func TestDeepLErrors(t *testing.T) {
 	}
 }
 
+func TestDeepLFailureKeepsProviderBodyOutOfResult(t *testing.T) {
+	// A proxy error page used to flow from the HTTP body into the translation card.
+	for _, tc := range []struct {
+		status int
+		want   string
+	}{
+		{502, "DeepL：服务暂时不可用，请稍后重试"},
+		{418, "DeepL：请求失败（HTTP 418）"},
+	} {
+		_, deepl := deeplServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+			fmt.Fprint(w, "<html>upstream request details</html>")
+		})
+		cfg := config.Default()
+		cfg.Services.Enabled = []string{"deepl"}
+		var result Result
+		RunWith(context.Background(), []Translator{deepl}, cfg, fakeKeys{keys.DeeplKey: "k"},
+			Request{Text: "hello", TargetLang: "zh-HANS"}, func(r Result) { result = r })
+		if result.Err != tc.want {
+			t.Errorf("status %d: message = %q, want %q", tc.status, result.Err, tc.want)
+		}
+	}
+}
+
 func TestDeepLRateLimitRetries(t *testing.T) {
 	calls := 0
 	_, deepl := deeplServer(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls == 1 {
+			// A truncated rate-limit body must still allow a retry using the headers.
+			w.Header().Set("Content-Length", "1")
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(429)
 			return

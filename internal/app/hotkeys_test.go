@@ -2,9 +2,45 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"testing"
+
+	"sotto/internal/config"
+	"sotto/internal/hotkey"
 )
+
+type failingShortcutBackend struct {
+	hotkey.Backend
+	shortcut string
+	err      error
+}
+
+func (b failingShortcutBackend) Register(shortcut string, _ func()) error {
+	if shortcut == b.shortcut {
+		return b.err
+	}
+	return nil
+}
+
+func TestHotkeyRegistrationFailureShowsOnlyUserMessage(t *testing.T) {
+	// MyGo's error used to appear after the Chinese hint in settings and startup notifications.
+	cfg := config.Settings{Hotkeys: config.HotkeySettings{Panel: "Ctrl+K", Selection: "Ctrl+L", Ocr: "Ctrl+M"}}
+	a := &application{cfg: cfg, shortcutBackend: failingShortcutBackend{
+		shortcut: "Ctrl+K",
+		err:      fmt.Errorf("%w: %w", hotkey.ErrSystemRegistration, errors.New(`mygo: cannot register "Ctrl+K": hotkey is already registered`)),
+	}}
+	const message = "系统无法注册该组合键，可能已被占用，请更换组合键"
+	if err := a.applyHotkeys(cfg.Hotkeys); err == nil || err.Error() != "翻译面板快捷键 Ctrl+K："+message {
+		t.Fatalf("startup notification = %v", err)
+	}
+	if got := a.shortcutErrors()["panel"]; got != message {
+		t.Fatalf("inactive shortcut message = %q", got)
+	}
+	if err := a.updateHotkey("panel", "Ctrl+K"); err == nil || err.Error() != message {
+		t.Fatalf("retry message = %v", err)
+	}
+}
 
 func TestHotkeyCommitKeepsOldBindingOnFailure(t *testing.T) {
 	for _, diskFailure := range []bool{false, true} {

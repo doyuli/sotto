@@ -79,12 +79,12 @@ func (y Youdao) Translate(ctx context.Context, req Request, k KeyStore, _ config
 		return Result{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Result{}, responseStatusError("有道", resp.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return Result{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("有道: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var out struct {
 		ErrorCode   string   `json:"errorCode"`
@@ -134,7 +134,7 @@ func youdaoError(code string) error {
 	case "411", "412":
 		return fmt.Errorf("有道: 请求过于频繁")
 	default:
-		return fmt.Errorf("有道: 错误码 %s", code)
+		return responseCodeError("有道", code)
 	}
 }
 

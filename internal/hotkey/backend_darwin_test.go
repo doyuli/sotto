@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+
+	"sotto/internal/usermessage"
 )
 
 const nativeTestShortcut = "Ctrl+Option+Shift+Cmd+F19"
@@ -56,6 +58,21 @@ func TestMacShortcutSymbolsAndKeyCoverage(t *testing.T) {
 		if _, ok := macKeyCodes[key]; !ok {
 			t.Errorf("no native key for %s", key)
 		}
+	}
+}
+
+func TestMacShortcutRegistrationFailureDistinguishesConflicts(t *testing.T) {
+	// An unexpected Carbon error used to be presented as a possible conflict.
+	conflict := usermessage.Text(UserError(macRegistrationError(-9878)))
+	if conflict != "该组合键已被其他应用占用，请更换组合键" {
+		t.Fatalf("conflict message = %q", conflict)
+	}
+	err := macRegistrationError(-50)
+	if got := usermessage.Text(UserError(err)); got != "系统无法注册该组合键，请更换组合键" {
+		t.Fatalf("registration failure message = %q", got)
+	}
+	if !strings.Contains(err.Error(), "OSStatus -50") {
+		t.Fatalf("registration diagnostic lost the status: %v", err)
 	}
 }
 

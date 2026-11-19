@@ -61,12 +61,12 @@ func (g Google) Translate(ctx context.Context, req Request, _ KeyStore, _ config
 		return Result{}, fmt.Errorf("Google: 网络不可达（可能需要代理）")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Result{}, responseStatusError("Google", resp.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return Result{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("Google: HTTP %d", resp.StatusCode)
 	}
 	// The reply is an untyped nested array: [[["你好","Hello",...]],...,"en",...]
 	var data []any

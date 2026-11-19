@@ -10,6 +10,7 @@ import (
 
 	"sotto/internal/config"
 	"sotto/internal/translate"
+	"sotto/internal/usermessage"
 )
 
 func testBubbleConfig() config.Settings {
@@ -72,6 +73,28 @@ func TestBubbleViewComposerSubmitAndClear(t *testing.T) {
 	tt.Key(0, ui.KeyEscape)
 	if !closed {
 		t.Fatal("Escape did not invoke close")
+	}
+}
+
+func TestBubbleCopyFailureShowsUserMessage(t *testing.T) {
+	// The copy toast used to expose MyGo's clipboard error verbatim.
+	const raw = "mygo: cannot write pasteboard items"
+	cfg := testBubbleConfig()
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		copyText: func(*ui.Context, string) error {
+			return usermessage.Explain(errors.New(raw), "请稍后重试")
+		},
+	})
+	v.applyState(BubbleState{
+		ID: 1, Generation: 1, SessionID: "copy-failure", ShowID: 1,
+		Trigger: "selection", Text: "hello", Settings: cfg,
+	}, true)
+	tt := ui.NewTester(v.render, 480, 420)
+	if err := tt.Click("复制原文"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("复制失败：请稍后重试") || tt.HasText(raw) || tt.HasText("已复制原文") {
+		t.Fatalf("copy failure toast = %v", tt.Texts())
 	}
 }
 

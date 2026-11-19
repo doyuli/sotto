@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"runtime"
 	"slices"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -1085,7 +1087,8 @@ func TestSettingsViewFailedSaveDoesNotDropNextSnapshot(t *testing.T) {
 			SaveSettings: func(s config.Settings) error {
 				attempts = append(attempts, s.TargetLanguage)
 				if len(attempts) == 1 {
-					return errors.New("disk full")
+					// A failed save used to include the underlying file path in the toast.
+					return &fs.PathError{Op: "write", Path: "/Users/private/settings.json", Err: syscall.ENOSPC}
 				}
 				current = s
 				return nil
@@ -1106,7 +1109,7 @@ func TestSettingsViewFailedSaveDoesNotDropNextSnapshot(t *testing.T) {
 		}
 		v.mu.Lock()
 		defer v.mu.Unlock()
-		if v.pendingWrites != 0 || v.settings.TargetLanguage != "fr" || v.pendingToast != "保存失败：disk full" {
+		if v.pendingWrites != 0 || v.settings.TargetLanguage != "fr" || v.pendingToast != "保存失败：磁盘空间不足，请清理空间后重试" {
 			t.Fatal("save failure did not reconcile the final state and report the error")
 		}
 	})

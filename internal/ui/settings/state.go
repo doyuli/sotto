@@ -15,6 +15,7 @@ import (
 	"sotto/internal/hotkey"
 	"sotto/internal/keys"
 	"sotto/internal/ui/shared"
+	"sotto/internal/usermessage"
 )
 
 // CredentialStatus contains presence information without exposing stored values.
@@ -255,7 +256,7 @@ func (v *View) enqueueSaveLocked(next config.Settings) {
 		v.mu.Lock()
 		v.pendingWrites--
 		if err != nil {
-			v.pendingToast = "保存失败：" + err.Error()
+			v.pendingToast = usermessage.Format("保存失败", err)
 		}
 		if v.pendingWrites == 0 && !v.disposed && v.actions.GetSettings != nil {
 			v.settings = cloneSettings(v.actions.GetSettings())
@@ -346,7 +347,7 @@ func (v *View) refreshCredentialsAsync(name string) {
 
 func (v *View) applyCredentialStatusLocked(name string, status CredentialStatus, err error) {
 	if err != nil {
-		v.credentialErrors[name] = "读取服务状态失败：" + err.Error()
+		v.credentialErrors[name] = usermessage.Format("读取服务状态失败", err)
 		return
 	}
 	if name == "" {
@@ -390,7 +391,7 @@ func (v *View) openKeyPageAsync(service string) {
 			v.mu.Lock()
 			stale := v.disposed || generation != v.windowGeneration
 			if !stale {
-				v.pendingToast = err.Error()
+				v.pendingToast = usermessage.Format("打开控制台失败", err)
 			}
 			v.mu.Unlock()
 			if !stale {
@@ -595,7 +596,7 @@ func (v *View) saveService(name string) {
 		if !disposed {
 			v.serviceSaving[name] = false
 			if writeErr != nil {
-				v.testStatuses[name] = serviceTestStatus{result: "保存失败：" + writeErr.Error(), isError: true}
+				v.testStatuses[name] = serviceTestStatus{result: usermessage.Format("保存失败", writeErr), isError: true}
 			} else {
 				delete(v.serviceDrafts, name)
 				v.testStatuses[name] = serviceTestStatus{result: "配置已保存"}

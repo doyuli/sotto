@@ -17,6 +17,7 @@ import (
 	"sotto/internal/config"
 	"sotto/internal/platform"
 	"sotto/internal/selection"
+	"sotto/internal/usermessage"
 )
 
 type Actions struct {
@@ -502,7 +503,8 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 		},
 		copyText: func(_ *ui.Context, text string) error {
 			if err := mygo.Clipboard.Write(transfer.TextData(text)); err != nil {
-				return fmt.Errorf("复制失败: %w", err)
+				log.Printf("write clipboard: %v", err)
+				return usermessage.Explain(err, "请稍后重试")
 			}
 			return nil
 		},

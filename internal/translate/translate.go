@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
+	"sotto/internal/usermessage"
 )
 
 // Request is one translation to fan out to every enabled service.
@@ -361,7 +361,6 @@ func orderTranslators(all []Translator, order []string) []Translator {
 
 // UserMessage turns a service error into the message the bubble shows.
 func UserMessage(err error) string {
-	var networkErr *url.Error
 	switch {
 	case errors.Is(err, ErrEmptySource):
 		return "清理后的原文为空，请修改原文或调整命名转换设置。"
@@ -381,14 +380,13 @@ func UserMessage(err error) string {
 		return "未配置"
 	case errors.Is(err, ErrGenerationTimeout):
 		return "生成超时，译文未完成，请重试"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "连接超时，请稍后重试"
-	case errors.As(err, &networkErr):
-		return "网络连接失败，请检查网络后重试"
 	case err == nil:
 		return ""
 	default:
-		return err.Error()
+		if message := usermessage.Text(err); message != "" {
+			return message
+		}
+		return "翻译失败，请稍后重试"
 	}
 }
 

@@ -3,10 +3,25 @@
 package app
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"sotto/internal/config"
+	"sotto/internal/macnative"
 )
+
+func TestScreenRecordingFailureMessage(t *testing.T) {
+	// A component load error used to be displayed verbatim in both screenshot modes.
+	denied := fmt.Errorf("check permission: %w", macnative.ErrScreenRecording)
+	if got := screenRecordingFailureMessage(denied); got != macnative.ErrScreenRecording.Error() {
+		t.Fatalf("permission message = %q", got)
+	}
+	loadErr := errors.New("resolve CGPreflightScreenCaptureAccess: symbol not found")
+	if got := screenRecordingFailureMessage(loadErr); got != "无法初始化截图功能，请重启 Sotto 后重试" {
+		t.Fatalf("component load message = %q", got)
+	}
+}
 
 func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 	var gate entryGate

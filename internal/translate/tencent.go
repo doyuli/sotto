@@ -91,25 +91,27 @@ func (t Tencent) Translate(ctx context.Context, req Request, k KeyStore, _ confi
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return Result{}, err
-	}
 	var out struct {
 		Response struct {
 			Translation string `json:"Translation"`
 			Source      string `json:"Source"`
 			Target      string `json:"Target"`
 			Error       *struct {
-				Code    string `json:"Code"`
-				Message string `json:"Message"`
+				Code string `json:"Code"`
 			} `json:"Error"`
 		} `json:"Response"`
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return Result{}, fmt.Errorf("腾讯云: %w", err)
+	if err == nil {
+		err = json.Unmarshal(body, &out)
 	}
-	if e := out.Response.Error; e != nil {
-		return Result{}, tencentError(e.Code, e.Message)
+	if e := out.Response.Error; err == nil && e != nil {
+		return Result{}, tencentError(e.Code, resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Result{}, responseStatusError("腾讯云", resp.StatusCode)
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("腾讯云: %w", err)
 	}
 	if out.Response.Translation == "" {
 		return Result{}, fmt.Errorf("腾讯云: 空响应")
@@ -123,16 +125,16 @@ func (t Tencent) Translate(ctx context.Context, req Request, k KeyStore, _ confi
 
 // tencentError maps the API's error codes; the family prefixes carry the
 // part users can act on.
-func tencentError(code, msg string) error {
+func tencentError(code string, status int) error {
 	switch {
 	case strings.HasPrefix(code, "AuthFailure"), strings.HasPrefix(code, "UnauthorizedOperation"):
 		return ErrAuth
 	case strings.HasPrefix(code, "LimitExceeded"), strings.HasPrefix(code, "RequestLimitExceeded"):
 		return fmt.Errorf("腾讯云: 请求过于频繁")
-	case strings.HasPrefix(code, "FailedOperation"):
-		return fmt.Errorf("腾讯云: %s %s", code, msg)
+	case status != http.StatusOK:
+		return responseStatusError("腾讯云", status)
 	default:
-		return fmt.Errorf("腾讯云: %s %s", code, msg)
+		return responseCodeError("腾讯云", code)
 	}
 }
 

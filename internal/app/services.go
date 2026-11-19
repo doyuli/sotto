@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"sotto/internal/platform"
 	"sotto/internal/translate"
 	"sotto/internal/ui/settings"
+	"sotto/internal/usermessage"
 )
 
 type credentialStore interface {
@@ -71,14 +73,14 @@ func (s ConfigSvc) SaveService(name string, changes settings.ServiceChanges) (se
 	if len(names) != 0 {
 		original = a.keys.Snapshot(names)
 		if err := original.Err(names...); err != nil {
-			return settings.ServiceSaveResult{}, fmt.Errorf("读取原有凭证：%w", err)
+			return settings.ServiceSaveResult{}, usermessage.Explain(err, "无法读取系统凭证，请检查系统凭证存储后重试")
 		}
 	}
 	var written []string
 	rollback := func(err error) error {
 		for _, key := range slices.Backward(written) {
 			if restoreErr := a.keys.Set(key, original.Get(key)); restoreErr != nil {
-				err = errors.Join(err, fmt.Errorf("恢复原有凭证失败：%w", restoreErr))
+				err = usermessage.Explain(errors.Join(err, fmt.Errorf("restore previous credential: %w", restoreErr)), "部分凭证未能恢复，请检查服务配置后重试")
 			}
 		}
 		return err
@@ -95,7 +97,7 @@ func (s ConfigSvc) SaveService(name string, changes settings.ServiceChanges) (se
 			continue
 		}
 		if err := a.keys.Set(key, value); err != nil {
-			return settings.ServiceSaveResult{}, rollback(fmt.Errorf("写入凭证：%w", err))
+			return settings.ServiceSaveResult{}, rollback(usermessage.Explain(err, "无法写入系统凭证，请检查系统凭证存储后重试"))
 		}
 		written = append(written, key)
 	}
@@ -200,7 +202,11 @@ func (ConfigSvc) OpenKeyPage(service string) error {
 	if !ok {
 		return fmt.Errorf("%s 没有需要配置的密钥", service)
 	}
-	return platform.OpenInBrowser(page)
+	err := platform.OpenInBrowser(page)
+	if err != nil {
+		log.Printf("open service console %s: %v", service, err)
+	}
+	return usermessage.Explain(err, "请检查默认浏览器设置后重试")
 }
 
 // DeeplUsage reports this month's DeepL character count and limit.

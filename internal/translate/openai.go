@@ -10,11 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"sotto/internal/config"
 	"sotto/internal/keys"
+	"sotto/internal/usermessage"
 )
 
 // OpenAI translates through any OpenAI-compatible chat completions API,
@@ -47,10 +49,22 @@ func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg conf
 	if target == "" {
 		return Result{}, unsupported("OpenAI", req.TargetLang)
 	}
-	base := strings.TrimSuffix(cfg.Services.OpenAI.BaseURL, "/")
+	base := cfg.Services.OpenAI.BaseURL
 	if base == "" {
 		base = "https://api.openai.com/v1"
 	}
+	endpoint, err := url.Parse(base)
+	if err != nil {
+		return Result{}, usermessage.Explain(err, "OpenAI："+invalidChatAddress)
+	}
+	// Keep custom proxy paths verbatim, including escaped and repeated slashes.
+	const completionsPath = "/chat/completions"
+	escapedPath, trailingSlash := strings.CutSuffix(endpoint.EscapedPath(), "/")
+	if trailingSlash {
+		endpoint.Path = strings.TrimSuffix(endpoint.Path, "/")
+	}
+	endpoint.Path += completionsPath
+	endpoint.RawPath = escapedPath + completionsPath
 	model := cfg.Services.OpenAI.Model
 	if model == "" {
 		model = "gpt-4o-mini"
@@ -60,7 +74,7 @@ func (o OpenAI) translate(ctx context.Context, req Request, k KeyStore, cfg conf
 		"messages":    translationMessages(req, target),
 		"temperature": 0.1,
 	}
-	choice, err := requestChatCompletion(ctx, o.Client, base+"/chat/completions", key, payload, "OpenAI", stream, func(text string) {
+	choice, err := requestChatCompletion(ctx, o.Client, endpoint.String(), key, payload, "OpenAI", stream, func(text string) {
 		if emit != nil {
 			emit(Result{Service: o.Name(), Text: cleanOpenAIText(text), Streaming: true})
 		}
@@ -91,9 +105,10 @@ func newChatClient() *http.Client {
 }
 
 const (
-	maxChatJSONBytes  = 1 << 20
-	maxChatEventBytes = 1 << 20
-	maxChatTextBytes  = 1 << 20
+	invalidChatAddress = "服务地址格式有误，请检查服务设置"
+	maxChatJSONBytes   = 1 << 20
+	maxChatEventBytes  = 1 << 20
+	maxChatTextBytes   = 1 << 20
 )
 
 // requestChatCompletion shares the wire protocol between independent services.
@@ -126,7 +141,11 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
-		return chatChoice{}, fmt.Errorf("%s：构造请求：%w", service, err)
+		return chatChoice{}, usermessage.Explain(err, service+"："+invalidChatAddress)
+	}
+	// NewRequest accepts relative URLs, which cannot be sent by the HTTP client.
+	if httpReq.URL.Hostname() == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https") {
+		return chatChoice{}, fmt.Errorf("%s：%s", service, invalidChatAddress)
 	}
 	if key != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+key)
@@ -150,7 +169,13 @@ func requestChatCompletion(ctx context.Context, client *http.Client, endpoint, k
 		if key != "" {
 			body, err = io.ReadAll(io.LimitReader(chatActivityReader{Reader: resp.Body, activity: activity}, maxChatErrorBytes))
 			if err != nil {
-				return chatChoice{}, fmt.Errorf("%s：读取错误响应：%w", service, err)
+				var timeout net.Error
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+					(errors.As(err, &timeout) && timeout.Timeout()) {
+					return chatChoice{}, fmt.Errorf("%s：读取错误响应：%w", service, err)
+				}
+				// The status is still usable when the provider error body is incomplete.
+				body = nil
 			}
 		}
 		return chatChoice{}, chatResponseError(service, resp.StatusCode, key == "", body)

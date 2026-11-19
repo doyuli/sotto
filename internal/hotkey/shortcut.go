@@ -2,6 +2,7 @@
 package hotkey
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -144,4 +145,15 @@ type Backend interface {
 	RegisterEscape(func()) (release func(), err error)
 	Unregister(string)
 	Close()
+}
+
+// ErrSystemRegistration marks a system registration failure that may wrap diagnostic details.
+var ErrSystemRegistration = errors.New("系统无法注册该组合键，可能已被占用，请更换组合键")
+
+// UserError keeps the actionable message when a registration failure wraps a system error.
+func UserError(err error) error {
+	if errors.Is(err, ErrSystemRegistration) {
+		return ErrSystemRegistration
+	}
+	return err
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/ebitengine/purego/objc"
 	"github.com/egoist/mygo"
 	"sotto/internal/macnative"
+	"sotto/internal/usermessage"
 )
 
 // CarbonEvents.h documents that non-exclusive registrations can succeed but
@@ -83,7 +84,7 @@ func (b *systemBackend) registerShortcut(s Shortcut, fn func()) error {
 		return fmt.Errorf("macOS 暂不支持按键 %s", s.Key)
 	}
 	if err := loadCarbon(); err != nil {
-		return fmt.Errorf("加载快捷键组件：%w", err)
+		return usermessage.Explain(err, "无法加载快捷键组件，请重启 Sotto 后重试")
 	}
 	err := fmt.Errorf("应用已退出，无法注册快捷键")
 	mygo.RunOnMain(func() {
@@ -122,20 +123,24 @@ func (b *systemBackend) register(s Shortcut, code uint32, fn func()) error {
 		}
 		spec := eventSpec{Class: 0x6b657962, Kind: 5}
 		if status := carbon.install(carbon.target(), b.callback, 1, &spec, 0, &b.handler); status != 0 {
-			return fmt.Errorf("无法监听快捷键（系统错误 %d）", status)
+			return usermessage.Explain(fmt.Errorf("InstallEventHandler: OSStatus %d", status), "无法监听快捷键，请重启 Sotto 后重试")
 		}
 	}
 	b.next++
 	var ref uintptr
 	// kEventHotKeyExclusive = 1. An existing holder must cause a visible failure.
 	if status := carbon.register(code, mods, hotkeyID{hotkeySignature, b.next}, carbon.target(), 1, &ref); status != 0 {
-		if status == -9878 {
-			return fmt.Errorf("该组合键已被其他应用占用，请更换组合键")
-		}
-		return fmt.Errorf("系统无法注册该组合键（错误 %d），请更换组合键", status)
+		return macRegistrationError(status)
 	}
 	b.bindings[value] = nativeBinding{ref, b.next, fn}
 	return nil
+}
+
+func macRegistrationError(status int32) error {
+	if status == -9878 {
+		return fmt.Errorf("该组合键已被其他应用占用，请更换组合键")
+	}
+	return usermessage.Explain(fmt.Errorf("RegisterEventHotKey: OSStatus %d", status), "系统无法注册该组合键，请更换组合键")
 }
 
 func (b *systemBackend) Unregister(value string) {
@@ -185,7 +190,7 @@ func macModifiers(m Modifiers) uint32 {
 func checkSystemShortcut(code, mods uint32) error {
 	var array objc.ID
 	if status := carbon.symbolic(&array); status != 0 {
-		return fmt.Errorf("无法检查系统快捷键（错误 %d），请重试", status)
+		return usermessage.Explain(fmt.Errorf("CopySymbolicHotKeys: OSStatus %d", status), "无法检查系统快捷键，请重试")
 	}
 	if array == 0 {
 		return fmt.Errorf("无法读取系统快捷键，请重试")

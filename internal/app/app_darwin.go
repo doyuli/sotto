@@ -3,6 +3,7 @@
 package app
 
 import (
+	"errors"
 	"log"
 	"os"
 	"slices"
@@ -59,11 +60,12 @@ func (a *application) readyPlatform() {
 func (a *application) startScreenshot(task *entryTask) {
 	go func() {
 		if err := macnative.RequireScreenRecording(true); err != nil {
+			message := screenRecordingFailureMessage(err)
 			if task.minimal {
-				a.showMinimalEntryError(task, task.source(), err.Error())
+				a.showMinimalEntryError(task, task.source(), message)
 				return
 			}
-			a.bubbles.ShowTask(a.settings(), "ocr", "", nil, "error", err.Error(), task.Valid, nil)
+			a.bubbles.ShowTask(a.settings(), "ocr", "", nil, "error", message, task.Valid, nil)
 			return
 		}
 		mygo.RunOnMain(func() {
@@ -72,4 +74,12 @@ func (a *application) startScreenshot(task *entryTask) {
 			}
 		})
 	}()
+}
+
+func screenRecordingFailureMessage(err error) string {
+	if errors.Is(err, macnative.ErrScreenRecording) {
+		return macnative.ErrScreenRecording.Error()
+	}
+	log.Printf("initialize screen recording permissions: %v", err)
+	return "无法初始化截图功能，请重启 Sotto 后重试"
 }

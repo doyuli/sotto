@@ -97,7 +97,7 @@ func TestChatStreamFailuresKeepPartialText(t *testing.T) {
 	const prefix = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"已有译文\"}}]}\n\n"
 	for _, tc := range []struct{ name, tail, want string }{
 		{"disconnect", "", "连接中断"},
-		{"malformed", "data: {oops}\n\n", "解析流式响应"},
+		{"malformed", "data: {oops}\n\n", "数据格式异常"},
 		{"provider error", "event: error\ndata: {\"error\":{\"message\":\"private gateway details\"}}\n\n", "生成中断"},
 		{"length", "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n", "译文被截断"},
 		{"filter", "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\ndata: [DONE]\n\n", "译文被服务拦截"},

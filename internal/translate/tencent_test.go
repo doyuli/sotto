@@ -124,6 +124,37 @@ func TestTencentErrors(t *testing.T) {
 	}
 }
 
+func TestTencentHTTPStatusFallback(t *testing.T) {
+	// HTTP failures used to surface as parse errors or accept the body as a successful translation.
+	for _, tc := range []struct {
+		name, want string
+		status     int
+		body       io.Reader
+	}{
+		{"gateway HTML", "腾讯云：服务暂时不可用，请稍后重试", 502, strings.NewReader("<html>Bad Gateway</html>")},
+		{"truncated body", "腾讯云：服务暂时不可用，请稍后重试", 502, &unreadableResponseBody{}},
+		{"empty quota response", "腾讯云：请求过于频繁，请稍后重试", 429, strings.NewReader(`{}`)},
+		{"translation on failure", "腾讯云：服务暂时不可用，请稍后重试", 503, strings.NewReader(`{"Response":{"Translation":"你好"}}`)},
+		{"unknown business code on failure", "腾讯云：服务暂时不可用，请稍后重试", 503, strings.NewReader(`{"Response":{"Error":{"Code":"FailedOperation.Other"}}}`)},
+		{"known business code takes priority", "凭证无效，请检查设置", 403, strings.NewReader(`{"Response":{"Error":{"Code":"AuthFailure.SignatureFailure"}}}`)},
+		{"business failure on HTTP success", "腾讯云：翻译失败（错误码 FailedOperation.Other）", 200, strings.NewReader(`{"Response":{"Error":{"Code":"FailedOperation.Other"}}}`)},
+		// The fallback sanitizer used to cut an already validated code at Token.
+		{"validated code contains a credential word", "腾讯云：翻译失败（错误码 FailedOperation.Token）", 200, strings.NewReader(`{"Response":{"Error":{"Code":"FailedOperation.Token"}}}`)},
+		{"invalid code is omitted", "腾讯云：翻译失败，请稍后重试", 200, strings.NewReader(`{"Response":{"Error":{"Code":"Token=fixture secret"}}}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: chatRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(tc.body)}, nil
+			})}
+			res, err := (Tencent{Client: client}).Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"},
+				fakeKeys{keys.TencentSecretID: "fixture-id", keys.TencentSecretKey: "fixture-key"}, config.Settings{})
+			if got := UserMessage(err); got != tc.want || res.Text != "" {
+				t.Fatalf("translation = %q, message = %q, want %q", res.Text, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestTencentHostIsSigned checks the host extraction the signature
 // covers: the endpoint's authority, port included.
 func TestTencentHostIsSigned(t *testing.T) {

@@ -155,9 +155,9 @@ func volcError(status int, code string, number int) error {
 		return fmt.Errorf("火山引擎：请检查账户余额")
 	case status == http.StatusTooManyRequests || number == -429:
 		return fmt.Errorf("火山引擎：请求过于频繁，请稍后重试")
-	case code != "":
-		return fmt.Errorf("火山引擎：翻译失败（%s）", code)
+	case code != "" && status < http.StatusInternalServerError:
+		return responseCodeError("火山引擎", code)
 	default:
-		return fmt.Errorf("火山引擎：翻译失败（HTTP %d）", status)
+		return responseStatusError("火山引擎", status)
 	}
 }

@@ -70,12 +70,12 @@ func (a Azure) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 		return Result{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Result{}, azureError(resp.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return Result{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Result{}, azureError(resp.StatusCode, body)
 	}
 	var out []struct {
 		DetectedLanguage struct {
@@ -101,17 +101,7 @@ func (a Azure) Translate(ctx context.Context, req Request, k KeyStore, _ config.
 
 // azureError maps the status codes: 401 is a bad key or region, 403 the
 // free tier running out, 429 the per-second rate.
-func azureError(status int, body []byte) error {
-	var out struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	detail := strings.TrimSpace(string(body))
-	if err := json.Unmarshal(body, &out); err == nil && out.Error.Message != "" {
-		detail = out.Error.Message
-	}
+func azureError(status int) error {
 	switch status {
 	case 401:
 		return ErrAuth
@@ -120,7 +110,7 @@ func azureError(status int, body []byte) error {
 	case 429:
 		return fmt.Errorf("微软翻译: 请求过于频繁")
 	default:
-		return fmt.Errorf("微软翻译: HTTP %d: %s", status, detail)
+		return responseStatusError("微软翻译", status)
 	}
 }
 

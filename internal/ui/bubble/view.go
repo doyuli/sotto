@@ -12,6 +12,7 @@ import (
 	"sotto/internal/naming"
 	"sotto/internal/translate"
 	"sotto/internal/ui/shared"
+	"sotto/internal/usermessage"
 )
 
 var (
@@ -710,7 +711,7 @@ func (v *bubbleView) closeBubble() {
 func (v *bubbleView) copyAndToast(c *ui.Context, text string, toast string) {
 	if v.actions.copyText != nil {
 		if err := v.actions.copyText(c, text); err != nil {
-			c.Toast(err.Error())
+			c.Toast(usermessage.Format("复制失败", err))
 			return
 		}
 	} else {

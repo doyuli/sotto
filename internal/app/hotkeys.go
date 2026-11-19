@@ -9,6 +9,7 @@ import (
 
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
+	"sotto/internal/usermessage"
 )
 
 var hotkeyActions = []string{"panel", "selection", "ocr"}
@@ -55,8 +56,17 @@ func (a *application) applyHotkeys(cfg config.HotkeySettings) error {
 		accel := values[action]
 		err := a.shortcutBackend.Register(accel, a.onShortcut(accel))
 		if err != nil {
-			failures[action] = err.Error()
-			errs = append(errs, fmt.Errorf("%s快捷键 %s：%w", hotkeyLabels[action], accel, err))
+			log.Printf("register hotkey %s (%s): %v", action, accel, err)
+			message := usermessage.Text(hotkey.UserError(err))
+			if message == "" {
+				message = "无法注册该组合键，请重试"
+			}
+			failures[action] = message
+			label := hotkeyLabels[action] + "快捷键"
+			if _, parseErr := hotkey.Parse(accel, runtime.GOOS); parseErr == nil {
+				label += " " + accel
+			}
+			errs = append(errs, fmt.Errorf("%s：%s", label, message))
 		} else {
 			active[action] = accel
 		}
@@ -168,7 +178,8 @@ func (a *application) saveSettingsWithHotkeys(s config.Settings, retry string) e
 	}
 	persist := func() error {
 		if err := config.Save(a.cfgPath, s); err != nil {
-			return fmt.Errorf("保存设置：%w", err)
+			log.Printf("save settings: %v", err)
+			return fmt.Errorf("save settings: %w", err)
 		}
 		return nil
 	}
@@ -183,7 +194,7 @@ func (a *application) saveSettingsWithHotkeys(s config.Settings, retry string) e
 		})
 		if err != nil {
 			log.Printf("save hotkey: %v", err)
-			return err
+			return hotkey.UserError(err)
 		}
 	} else if err := persist(); err != nil {
 		return err

@@ -4,11 +4,88 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
+
+	"sotto/internal/config"
+	"sotto/internal/keys"
 )
+
+func TestOpenAIInvalidBaseURLDoesNotSendARequest(t *testing.T) {
+	// An invalid Base URL used to surface as a network connection failure.
+	for _, baseURL := range []string{"/", "https://[", "example.invalid/v1", "https://:443/v1", "ftp://example.invalid/v1"} {
+		t.Run(baseURL, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Services.OpenAI.BaseURL = baseURL
+			client := &http.Client{Transport: chatRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				t.Fatalf("sent a request with an invalid Base URL: %v", r.URL)
+				return nil, nil
+			})}
+			_, err := (OpenAI{Client: client}).Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"},
+				fakeKeys{keys.OpenAIKey: "fixture"}, cfg)
+			const want = "OpenAI：服务地址格式有误，请检查服务设置"
+			if got := UserMessage(err); got != want {
+				t.Fatalf("message = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestOpenAIAddsCompletionsToURLPath(t *testing.T) {
+	// Appending to the raw Base URL used to alter its query or fragment.
+	for _, tc := range []struct{ name, baseURL, host, requestURI string }{
+		{"default", "", "api.openai.com", "/v1/chat/completions"},
+		{"custom", "https://relay.example.invalid/proxy%2Ftenant/v1/?api-version=fixture#notes", "relay.example.invalid", "/proxy%2Ftenant/v1/chat/completions?api-version=fixture"},
+		{"literal path", "https://relay.example.invalid/proxy//tenant/v1/", "relay.example.invalid", "/proxy//tenant/v1/chat/completions"},
+		{"trailing encoded slash", "https://relay.example.invalid/tenant%2F", "relay.example.invalid", "/tenant%2F/chat/completions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Services.OpenAI.BaseURL = tc.baseURL
+			client := &http.Client{Transport: chatRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host != tc.host || r.URL.RequestURI() != tc.requestURI {
+					t.Errorf("destination = %s%s, want %s%s", r.URL.Host, r.URL.RequestURI(), tc.host, tc.requestURI)
+				}
+				body := strings.NewReader(`{"choices":[{"message":{"content":"你好"}}]}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body)}, nil
+			})}
+			got, err := (OpenAI{Client: client}).Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"},
+				fakeKeys{keys.OpenAIKey: "fixture"}, cfg)
+			if err != nil || got.Text != "你好" {
+				t.Fatalf("translation = %q, error = %v", got.Text, err)
+			}
+		})
+	}
+}
+
+func TestChatUnreadableErrorBodyUsesHTTPStatus(t *testing.T) {
+	// A truncated error body used to replace the HTTP failure with an EOF message.
+	for _, tc := range []struct {
+		name    string
+		readErr error
+		want    string
+	}{
+		{"truncated error body", io.ErrUnexpectedEOF, "OpenAI：服务暂时不可用，请稍后重试"},
+		{"canceled read", context.Canceled, "操作已取消"},
+		{"read deadline", context.DeadlineExceeded, "连接超时，请稍后重试"},
+		{"transport timeout", &net.DNSError{IsTimeout: true}, "连接超时，请稍后重试"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: chatRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(iotest.ErrReader(tc.readErr))}, nil
+			})}
+			_, err := requestChatCompletion(context.Background(), client, "https://example.invalid/v1/chat/completions",
+				"fixture", map[string]any{}, "OpenAI", false, nil)
+			if got := UserMessage(err); got != tc.want {
+				t.Fatalf("message = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestChatRequestErrors(t *testing.T) {
 	for _, tc := range []struct {

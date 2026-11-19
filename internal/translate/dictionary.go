@@ -48,17 +48,17 @@ func (d Dictionary) Translate(ctx context.Context, req Request, _ KeyStore, _ co
 		return Result{}, fmt.Errorf("词典: 网络不可达")
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return Result{}, err
-	}
 	if resp.StatusCode == http.StatusNotFound {
 		// The word is not in the dictionary — a miss, not a failure;
 		// quietly keep it off the bubble.
 		return Result{}, ErrSkip
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Result{}, fmt.Errorf("词典: HTTP %d", resp.StatusCode)
+		return Result{}, responseStatusError("词典", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Result{}, err
 	}
 	var entries []struct {
 		Word      string `json:"word"`
