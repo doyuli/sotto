@@ -1386,6 +1386,32 @@ func TestSettingsCredentialJobsPublishInOrder(t *testing.T) {
 	})
 }
 
+func TestSettingsDictionarySwitchSavesEnablement(t *testing.T) {
+	// The dictionary was registered with the runner but missing from settings.
+	saved := make(chan config.Settings, 2)
+	v := NewView(TabServices, config.Default(), Actions{
+		SaveSettings: func(next config.Settings) error {
+			saved <- next
+			return nil
+		},
+		Credentials: func(string) (CredentialStatus, error) { return CredentialStatus{}, nil },
+	})
+	defer v.Dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.Render, 780, 1200)
+	for _, wantEnabled := range []bool{true, false} {
+		settingsClick(t, tt, "启用词典")
+		select {
+		case cfg := <-saved:
+			if slices.Contains(cfg.Services.Enabled, "dictionary") != wantEnabled {
+				t.Fatalf("saved services = %v, want dictionary enabled = %t", cfg.Services.Enabled, wantEnabled)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("no settings saved for dictionary enabled = %t", wantEnabled)
+		}
+	}
+}
+
 func TestSettingsServiceSwitchKeepsFocusAcrossGroups(t *testing.T) {
 	v := NewView(TabServices, testSettingsConfig(), Actions{})
 	defer v.Dispose()

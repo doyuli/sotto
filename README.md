@@ -72,7 +72,7 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | Service | Type | Details & Capabilities |
 | :--- | :--- | :--- |
 | **Bilibili (Index)** | Keyless | Experimental endpoint, enabled by default |
-| **Online Dictionary** | Keyless | Phonetics, parts of speech, and English definitions for single words |
+| **Offline Dictionary** | Keyless | Phonetics and Chinese definitions for single English words |
 | **Google Translate** | Keyless | Disabled by default; toggle on in Settings |
 | **DeepL** | API Key | Industry-leading translation quality; supports both DeepL Free and DeepL Pro keys |
 | **OpenAI-Compatible** | API Key | Fully custom Base URL and model names (works seamlessly with DeepSeek, Moonshot, Qwen, etc.) |
@@ -85,7 +85,7 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
 > [!NOTE]
-> Sotto sends text for translation and dictionary lookup to the respective third-party providers. Certain keyless integrations use experimental endpoints. Service availability, free quotas, and pricing follow each provider's latest terms.
+> Sotto sends text to the selected translation providers. Dictionary lookups run locally. Certain keyless integrations use experimental endpoints. Service availability, free quotas, and pricing follow each provider's latest terms.
 
 ---
 
@@ -141,4 +141,4 @@ The Windows build scripts exclude WebView2 with `mygo_nowebview`. Use `bun run b
 
 - [Easydict](https://github.com/tisfeng/Easydict): For inspiring Sotto's multi-engine comparison design and user experience.
 - [Mygo](https://mygo.egoist.dev/): The lightweight, modern Go desktop UI framework powering Sotto.
-- Thanks to the [LINUX DO](https://linux.do/) community for supporting Sotto.
+- [LINUX DO](https://linux.do/): For the community's support of Sotto.

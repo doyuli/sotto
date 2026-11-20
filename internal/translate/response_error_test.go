@@ -36,13 +36,12 @@ func TestHTTPStatusOnlyFailuresSkipBody(t *testing.T) {
 		{"微软翻译", Azure{Client: client}},
 		{"百度", Baidu{Client: client}},
 		{"DeepL", DeepL{Client: client}},
-		{"词典", Dictionary{Client: client}},
 		{"Google", Google{Client: client}},
 		{"有道", Youdao{Client: client}},
 	} {
 		t.Run(tc.service, func(t *testing.T) {
 			body.read = false
-			_, err := tc.engine.Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS", SingleWord: true}, credentials, config.Settings{})
+			_, err := tc.engine.Translate(context.Background(), Request{Text: "hello", TargetLang: "zh-HANS"}, credentials, config.Settings{})
 			want := tc.service + "：服务暂时不可用，请稍后重试"
 			if got := UserMessage(err); body.read || got != want {
 				t.Fatalf("body read = %t, message = %q, want %q", body.read, got, want)

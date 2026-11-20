@@ -1,120 +1,92 @@
 package translate
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
-	"encoding/json"
-	"errors"
+	_ "embed"
+	"encoding/csv"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
-	"time"
+	"sync"
 
 	"sotto/internal/config"
+	"sotto/internal/usermessage"
 )
 
-// dictionaryEndpoint is the free, keyless English dictionary.
-const dictionaryEndpoint = "https://api.dictionaryapi.dev/api/v2/entries/en"
+//go:embed dictionarydata/ecdict.csv.gz
+var bundledDictionary []byte
 
-// Dictionary serves the single-word mode: an English word's phonetics
-// and meanings from dictionaryapi.dev, beside the translation cards. It
-// only answers when the request is marked as a single word — everything
-// else reports ErrSkip, which the fan-out leaves off the bubble.
-type Dictionary struct {
-	Client   *http.Client // nil: the shared client
-	Endpoint string       // overrides the endpoint (tests)
+// Load the index on the first eligible lookup, off the UI thread.
+var dictionaryEntries = sync.OnceValues(loadDictionary)
+
+type dictionaryRecord struct {
+	phonetic string
+	meanings string
 }
+
+// DictionaryEntry describes the parts of an English dictionary result.
+type DictionaryEntry struct {
+	Word     string `json:"word"`
+	Phonetic string `json:"phonetic"`
+	Meanings string `json:"meanings"`
+}
+
+// Dictionary looks up single English words in the bundled ECDICT data.
+type Dictionary struct{}
 
 func (Dictionary) Name() string { return "dictionary" }
 
-// Available is always true: no key, no configuration.
+// Available is always true because the dictionary is bundled with the app.
 func (Dictionary) Available(KeyStore, config.Settings) bool { return true }
 
 func (d Dictionary) Translate(ctx context.Context, req Request, _ KeyStore, _ config.Settings) (Result, error) {
-	if !req.SingleWord {
+	if !req.SingleWord || (req.SourceLang != "" && req.SourceLang != "auto" && req.SourceLang != "en") {
 		return Result{}, ErrSkip
 	}
-	endpoint := d.Endpoint
-	if endpoint == "" {
-		endpoint = dictionaryEndpoint
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		endpoint+"/"+req.Text, nil)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	resp, err := d.client().Do(httpReq)
+	entries, err := dictionaryEntries()
 	if err != nil {
-		return Result{}, fmt.Errorf("词典: 网络不可达")
+		return Result{}, usermessage.Explain(err, "无法读取离线词典")
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		// The word is not in the dictionary — a miss, not a failure;
-		// quietly keep it off the bubble.
-		return Result{}, ErrSkip
-	}
-	if resp.StatusCode != http.StatusOK {
-		return Result{}, responseStatusError("词典", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	var entries []struct {
-		Word      string `json:"word"`
-		Phonetic  string `json:"phonetic"`
-		Phonetics []struct {
-			Text  string `json:"text"`
-			Audio string `json:"audio"`
-		} `json:"phonetics"`
-		Meanings []struct {
-			PartOfSpeech string `json:"partOfSpeech"`
-			Definitions  []struct {
-				Definition string `json:"definition"`
-				Example    string `json:"example"`
-			} `json:"definitions"`
-		} `json:"meanings"`
-	}
-	if err := json.Unmarshal(body, &entries); err != nil {
-		return Result{}, fmt.Errorf("词典: %w", err)
-	}
-	if len(entries) == 0 {
+	word := strings.ToLower(req.Text)
+	entry, ok := entries[word]
+	if !ok {
 		return Result{}, ErrSkip
 	}
-	var b strings.Builder
-	phonetic := entries[0].Phonetic
-	for _, p := range entries[0].Phonetics {
-		if phonetic == "" && p.Text != "" {
-			phonetic = p.Text
-		}
-	}
-	if phonetic != "" {
-		b.WriteString("/" + strings.Trim(phonetic, "/") + "/\n")
-	}
-	shown := 0
-	for _, m := range entries[0].Meanings {
-		if shown >= 4 || len(m.Definitions) == 0 {
-			break
-		}
-		b.WriteString(m.PartOfSpeech + ". " + m.Definitions[0].Definition + "\n")
-		shown++
-	}
-	if b.Len() == 0 {
-		return Result{}, ErrSkip
-	}
+	// An English spelling match cannot identify the source language.
 	return Result{
-		Service:      "dictionary",
-		Text:         strings.TrimRight(b.String(), "\n"),
-		DetectedLang: "en",
+		Dictionary: &DictionaryEntry{Word: word, Phonetic: entry.phonetic, Meanings: entry.meanings},
+		Service:    d.Name(),
+		Text:       "/" + entry.phonetic + "/\n" + entry.meanings,
 	}, nil
 }
 
-func (d Dictionary) client() *http.Client {
-	if d.Client != nil {
-		return d.Client
+func loadDictionary() (map[string]dictionaryRecord, error) {
+	archive, err := gzip.NewReader(bytes.NewReader(bundledDictionary))
+	if err != nil {
+		return nil, fmt.Errorf("open ECDICT data: %w", err)
 	}
-	return &http.Client{Timeout: 5 * time.Second}
+	defer archive.Close()
+	reader := csv.NewReader(archive)
+	reader.Comment = '#'
+	reader.FieldsPerRecord = 3
+	reader.ReuseRecord = true
+	entries := make(map[string]dictionaryRecord)
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read ECDICT record: %w", err)
+		}
+		entries[record[0]] = dictionaryRecord{phonetic: record[1], meanings: record[2]}
+	}
 }
-
-// IsSkip reports whether a translator result should stay off the bubble.
-func IsSkip(err error) bool { return errors.Is(err, ErrSkip) }

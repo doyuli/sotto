@@ -184,7 +184,7 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 	if !reflect.DeepEqual(got.Services.Enabled, []string{"deepl", "potato"}) {
 		t.Errorf("enabled = %v", got.Services.Enabled)
 	}
-	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "openai", "tencent", "youdao", "azure"}) {
+	if !reflect.DeepEqual(got.Services.Order, []string{"deepl", "potato", "index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "openai", "tencent", "youdao", "azure", "dictionary"}) {
 		t.Errorf("order = %v, want enabled and built-in services appended", got.Services.Order)
 	}
 	if got.Hotkeys.Ocr != Default().Hotkeys.Ocr {

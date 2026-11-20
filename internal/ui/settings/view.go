@@ -191,6 +191,7 @@ var serviceCredentialFields = map[string][]serviceCredentialField{
 	},
 	"google":          nil,
 	"index-translate": nil,
+	"dictionary":      nil,
 }
 
 var serviceNotes = map[string]string{
@@ -462,7 +463,7 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 
 	description := "已启用的服务同时翻译，拖动序号调整结果顺序，"
 	if cfg.MinimalTranslation {
-		description = "简约翻译使用首个已启用服务，拖动序号调整顺序，"
+		description = "简约翻译使用首个可用的翻译服务，拖动序号调整顺序，"
 	}
 	ui.Text(c, description+"凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
 
@@ -544,6 +545,9 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 		}
 	} else if keyless || isConfigured {
 		stateHint = "打开开关后参与翻译"
+	}
+	if svc == "dictionary" {
+		stateHint = "在完整气泡中离线显示英文单词的音标和中文释义"
 	}
 
 	if credentialError {

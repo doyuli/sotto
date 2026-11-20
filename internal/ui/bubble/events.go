@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 
 	"sotto/internal/config"
+	"sotto/internal/translate"
 )
 
 // BubbleState initializes source content for a new session or completes OCR
@@ -30,12 +31,13 @@ type BubbleState struct {
 // TranslationUpdateMsg carries cumulative text for one service and request.
 // Streaming is true until completion; Err settles a failure without losing text.
 type TranslationUpdateMsg struct {
-	Streaming    bool   `json:"streaming"`
-	ReqID        string `json:"reqID"`
-	Service      string `json:"service"`
-	Text         string `json:"text"`
-	DetectedLang string `json:"detectedLang"`
-	Err          string `json:"err"`
+	Dictionary   *translate.DictionaryEntry `json:"dictionary,omitempty"`
+	Streaming    bool                       `json:"streaming"`
+	ReqID        string                     `json:"reqID"`
+	Service      string                     `json:"service"`
+	Text         string                     `json:"text"`
+	DetectedLang string                     `json:"detectedLang"`
+	Err          string                     `json:"err"`
 }
 
 // RunMetaMsg tells the page the languages a request resolved to, so its

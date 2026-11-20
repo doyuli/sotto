@@ -542,7 +542,10 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 			if ctx.Err() != nil {
 				return
 			}
-			msg := bubble.TranslationUpdateMsg{ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang, Err: res.Err, Streaming: res.Streaming}
+			msg := bubble.TranslationUpdateMsg{
+				ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang,
+				Err: res.Err, Streaming: res.Streaming, Dictionary: res.Dictionary,
+			}
 			a.bubbles.PushResult(win, msg)
 		}
 		translate.Run(ctx, cfg, credentials, request, emit)

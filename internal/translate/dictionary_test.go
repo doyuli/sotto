@@ -1,11 +1,7 @@
 package translate
 
 import (
-	"context"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -13,85 +9,80 @@ import (
 )
 
 func TestDictionaryWord(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v2/entries/en/hello" {
-			t.Errorf("path = %q", r.URL.Path)
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"dictionary"}
+	for _, tc := range []struct {
+		word   string
+		target string
+		want   []string
+	}{
+		// The old service gave English definitions for English selections.
+		{"CLASSICAL", "zh-HANS", []string{"/ˈklæsikl/\n", "古典的", "经典的", "\n[医]"}},
+		// Common inflections keep their own pronunciation and dictionary gloss.
+		{"went", "en", []string{"/went/\n", "go的过去式"}},
+	} {
+		t.Run(tc.word, func(t *testing.T) {
+			var results []Result
+			Run(t.Context(), cfg, nil, Request{Text: tc.word, TargetLang: tc.target, SingleWord: true}, func(r Result) {
+				results = append(results, r)
+			})
+			if len(results) != 1 || results[0].Service != "dictionary" || results[0].DetectedLang != "" || results[0].Err != "" {
+				t.Fatalf("dictionary results = %+v", results)
+			}
+			entry := results[0].Dictionary
+			if entry == nil || entry.Word != strings.ToLower(tc.word) || entry.Phonetic == "" || entry.Meanings == "" {
+				t.Fatalf("incomplete dictionary entry after translation fan-out: %+v", entry)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(results[0].Text, want) {
+					t.Errorf("dictionary text %q missing %q", results[0].Text, want)
+				}
+			}
+			if tc.word == "went" && entry.Meanings != "go的过去式" {
+				t.Errorf("went gloss = %q, want the original dictionary gloss", entry.Meanings)
+			}
+		})
+	}
+}
+
+func TestDictionarySkipsUnsupportedSelections(t *testing.T) {
+	for _, req := range []Request{
+		{Text: "hello world", SourceLang: "en"},
+		{Text: "古典", TargetLang: "en"},
+		{Text: "chat", SourceLang: "fr", SingleWord: true},
+	} {
+		res, err := (Dictionary{}).Translate(t.Context(), req, nil, config.Settings{})
+		if !errors.Is(err, ErrSkip) || res.Text != "" || res.Dictionary != nil {
+			t.Errorf("lookup %q = %+v, %v, want a skipped lookup", req.Text, res, err)
 		}
-		fmt.Fprint(w, `[{"word":"hello","phonetic":"həˈləʊ","phonetics":[{"text":"həˈləʊ"}],
-		  "meanings":[
-		    {"partOfSpeech":"exclamation","definitions":[{"definition":"used as a greeting","example":"hello there"}]},
-		    {"partOfSpeech":"noun","definitions":[{"definition":"an utterance of hello"}]}
-		  ]}]`)
-	}))
-	t.Cleanup(srv.Close)
-	d := Dictionary{Client: srv.Client(), Endpoint: srv.URL + "/api/v2/entries/en"}
-	res, err := d.Translate(context.Background(), Request{Text: "hello", SingleWord: true}, fakeKeys{}, config.Settings{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Service != "dictionary" || res.DetectedLang != "en" {
-		t.Errorf("res = %+v", res)
-	}
-	for _, want := range []string{"həˈləʊ", "used as a greeting", "exclamation"} {
-		if !strings.Contains(res.Text, want) {
-			t.Errorf("text %q missing %q", res.Text, want)
-		}
 	}
 }
 
-func TestDictionarySkipsPhrases(t *testing.T) {
-	d := Dictionary{}
-	_, err := d.Translate(context.Background(), Request{Text: "hello world", SingleWord: false}, fakeKeys{}, config.Settings{})
-	if !errors.Is(err, ErrSkip) {
-		t.Errorf("err = %v, want ErrSkip", err)
-	}
-}
-
-func TestDictionaryNotFoundSkips(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "Not Found")
-	}))
-	t.Cleanup(srv.Close)
-	d := Dictionary{Client: srv.Client(), Endpoint: srv.URL}
-	_, err := d.Translate(context.Background(), Request{Text: "xyzzy", SingleWord: true}, fakeKeys{}, config.Settings{})
-	if !errors.Is(err, ErrSkip) {
-		t.Errorf("err = %v, want ErrSkip", err)
-	}
-}
-
-func TestRunWithSkipsSilently(t *testing.T) {
+func TestRunWithOmitsDictionaryMissAlongsideTranslation(t *testing.T) {
+	// A missing dictionary word should emit no card while other providers complete.
 	all := []Translator{
 		fakeTranslator{name: "a", res: Result{Service: "a", Text: "甲"}},
-		skipTranslator{},
+		Dictionary{},
 	}
 	cfg := config.Default()
-	cfg.Services.Enabled = []string{"a"}
-	cfg.Services.Order = []string{"a"}
-	var got []Result
-	RunWith(context.Background(), all, cfg, fakeKeys{"a": "1"}, Request{TargetLang: "en", SingleWord: true}, func(r Result) {
-		got = append(got, r)
+	cfg.Services.Enabled = []string{"a", "dictionary"}
+	results := make(chan Result, len(all))
+	RunWith(t.Context(), all, cfg, fakeKeys{"a": "1"}, Request{Text: "zzznodictionaryentry", SingleWord: true}, func(r Result) {
+		results <- r
 	})
-	if len(got) != 1 || got[0].Service != "a" {
-		t.Errorf("results = %+v, want only a (skipped one stays off)", got)
+	close(results)
+	got := make(map[string]Result)
+	for res := range results {
+		got[res.Service] = res
+	}
+	if len(got) != 1 || got["a"].Text != "甲" {
+		t.Fatalf("expected only the translation, got %+v", got)
 	}
 }
 
-// skipTranslator always skips, like the dictionary outside word mode.
-type skipTranslator struct{}
-
-func (skipTranslator) Name() string { return "skipper" }
-
-func (skipTranslator) Available(KeyStore, config.Settings) bool { return true }
-
-func (skipTranslator) Translate(context.Context, Request, KeyStore, config.Settings) (Result, error) {
-	return Result{}, ErrSkip
-}
-
-func TestUserMessageNotForSkip(t *testing.T) {
-	// ErrSkip never reaches UserMessage (RunWith intercepts it), but the
-	// mapping must not panic on it either.
-	if UserMessage(ErrSkip) == "" {
-		t.Log("ErrSkip maps to an empty message — fine, RunWith filters it")
+func TestDictionaryServiceProbe(t *testing.T) {
+	// The default translation probe is a phrase, which the dictionary rejects.
+	if err := Test(t.Context(), "dictionary", config.Default(), nil); err != nil {
+		t.Fatal(err)
 	}
 }

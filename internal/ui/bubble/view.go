@@ -186,10 +186,11 @@ type bubbleHeightMeasurement struct {
 }
 
 type bubbleCard struct {
-	Loading   bool
-	Streaming bool
-	Text      string
-	Err       string
+	Dictionary *translate.DictionaryEntry
+	Loading    bool
+	Streaming  bool
+	Text       string
+	Err        string
 }
 
 // bubbleView owns the native UI state for one bubble window on the UI thread.
@@ -314,7 +315,7 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	v.serviceReqIDs = make(map[string]string)
 	if st.ReqID != "" && st.Text != "" {
 		for _, svc := range v.activeConfiguredServices() {
-			v.cards[svc] = &bubbleCard{Loading: true}
+			v.setPendingCard(svc)
 		}
 	}
 
@@ -437,11 +438,12 @@ func (v *bubbleView) applyResult(msg TranslationUpdateMsg) {
 		}
 	}
 	prev := v.cards[msg.Service]
-	card := &bubbleCard{Text: msg.Text, Streaming: msg.Streaming}
+	card := &bubbleCard{Text: msg.Text, Streaming: msg.Streaming, Dictionary: msg.Dictionary}
 	if !msg.Streaming && msg.Err != "" {
 		card.Err = msg.Err
 		if card.Text == "" && prev != nil {
 			card.Text = prev.Text
+			card.Dictionary = prev.Dictionary
 		}
 	}
 	v.cards[msg.Service] = card
@@ -530,7 +532,10 @@ func (v *bubbleView) showingServices() []string {
 	enabled := v.enabledServices()
 	out := make([]string, 0, len(enabled))
 	for _, name := range enabled {
-		if _, ok := v.cards[name]; ok {
+		if name == "dictionary" && v.sourceLang == "auto" && v.detected != "" && v.detected != "en" {
+			continue
+		}
+		if v.cards[name] != nil {
 			out = append(out, name)
 		}
 	}
@@ -539,6 +544,15 @@ func (v *bubbleView) showingServices() []string {
 
 func (v *bubbleView) canSwapLanguages() bool {
 	return !(v.sourceLang == "auto" && v.detected == "")
+}
+
+func (v *bubbleView) setPendingCard(service string) {
+	if service == "dictionary" {
+		// Skipped lookups publish no update, so a loading card would stay visible.
+		delete(v.cards, service)
+		return
+	}
+	v.cards[service] = &bubbleCard{Loading: true}
 }
 
 func (v *bubbleView) StartRun(text string, service string) {
@@ -576,12 +590,12 @@ func (v *bubbleView) StartRun(text string, service string) {
 		v.cards = make(map[string]*bubbleCard)
 		v.serviceReqIDs = make(map[string]string)
 		for _, svc := range v.activeConfiguredServices() {
-			v.cards[svc] = &bubbleCard{Loading: true}
+			v.setPendingCard(svc)
 			v.serviceReqIDs[svc] = nextReqID
 		}
 	} else {
 		v.retryService = service
-		v.cards[service] = &bubbleCard{Loading: true}
+		v.setPendingCard(service)
 		v.serviceReqIDs[service] = nextReqID
 	}
 	v.bumpContent()
@@ -755,6 +769,26 @@ func (v *bubbleView) renderSpeakButton(c *ui.Context, p bubblePalette, label, ti
 			color = p.iconStrong
 		}
 		ui.Icon(c, speakSVG).Size(size, size).TextColor(color)
+	})
+}
+
+func (v *bubbleView) renderResultCopyButton(c *ui.Context, p bubblePalette, label, tip, text string, ready bool) {
+	btn := ui.ButtonBase(c).Label(label).Tooltip(tip).Disabled(!ready).
+		Cursor(ui.CursorPointer).Size(24, 24).Radius(6).Center()
+	if ready && btn.Hovered() {
+		btn.Background(p.hover)
+	}
+	if btn.Clicked() {
+		v.copyAndToast(c, text, "已复制")
+	}
+	btn.Children(func() {
+		color := p.icon
+		if !ready {
+			color = p.icon.Alpha(0.45)
+		} else if btn.Hovered() {
+			color = p.iconStrong
+		}
+		ui.Icon(c, copySVG).Size(14, 14).TextColor(color)
 	})
 }
 
@@ -1290,6 +1324,8 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 
 		ui.Column(c).Padding(12, 14, 10, 14).Gap(6).Children(func() {
 			switch {
+			case card.Dictionary != nil:
+				renderDictionary(c, p, card.Dictionary)
 			case card.Loading && card.Text == "":
 				shimmer := p.pill
 				pulse := func(el ui.Element) float32 {
@@ -1329,6 +1365,12 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 			if card.Text != "" {
 				ready := !card.Loading && !card.Streaming && card.Err == ""
 				ui.Row(c).Padding(4, 0, 0, 0).AlignItems(ui.Center).Wrap().Gap(2).Children(func() {
+					if entry := card.Dictionary; entry != nil {
+						v.renderSpeakButton(c.Key("speak"), p, "朗读单词", "朗读单词", entry.Word, "en", ready, 14)
+						v.renderResultCopyButton(c.Key("copy"), p, "复制词条", "复制词条", entry.Word+"\n"+card.Text, ready)
+						return
+					}
+
 					if ready && v.targetLang == "en" && len(v.settings.CopyFormats) > 0 {
 						words := naming.SplitWords(card.Text)
 						if len(words) > 0 {
@@ -1379,29 +1421,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 					if ready {
 						copyTip = "复制"
 					}
-					copyBtn := ui.ButtonBase(c).
-						Label("复制 "+title).
-						Tooltip(copyTip).
-						Disabled(!ready).
-						Cursor(ui.CursorPointer).
-						Size(24, 24).
-						Radius(6).
-						Center()
-					if ready && copyBtn.Hovered() {
-						copyBtn.Background(p.hover)
-					}
-					if copyBtn.Clicked() {
-						v.copyAndToast(c, card.Text, "已复制")
-					}
-					copyBtn.Children(func() {
-						color := p.icon
-						if !ready {
-							color = p.icon.Alpha(0.45)
-						} else if copyBtn.Hovered() {
-							color = p.iconStrong
-						}
-						ui.Icon(c, copySVG).Size(14, 14).TextColor(color)
-					})
+					v.renderResultCopyButton(c.Key("copy"), p, "复制 "+title, copyTip, card.Text, ready)
 				})
 			}
 		})

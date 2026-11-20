@@ -72,7 +72,7 @@
 | 引擎 / 服务 | 类型 | 说明与特性 |
 | :--- | :--- | :--- |
 | **Bilibili (Index)** | 免密钥 | 实验性接口，默认开启 |
-| **在线词典** | 免密钥 | 查询单个英文单词的音标、词性和英文释义 |
+| **离线词典** | 免密钥 | 查询单个英文词的音标和中文释义 |
 | **Google 翻译** | 免密钥 | 默认关闭，可在设置中启用 |
 | **DeepL** | API 密钥 | 业界领先的翻译质量，支持 DeepL Free 与 Pro Key |
 | **OpenAI 兼容接口** | API 密钥 | 支持自定义 Base URL 与模型名（轻松接入 DeepSeek、Moonshot、通义千问等） |
@@ -85,7 +85,7 @@
 | **微软 Azure** | API 密钥 | Azure 认知服务文本翻译 |
 
 > [!NOTE]
-> 用于翻译和查词的文本会发送给对应的第三方服务。部分免密钥接口属于实验性网络端点。服务可用性、免费额度和计费以各服务商的最新政策为准。
+> 翻译文本会发送给选中的第三方服务，词典查询在本地完成。部分免密钥接口属于实验性网络端点。服务可用性、免费额度和计费以各服务商的最新政策为准。
 
 ---
 
@@ -141,4 +141,4 @@ Windows 打包脚本通过 `mygo_nowebview` 排除 WebView2。只构建一种架
 
 - [Easydict](https://github.com/tisfeng/Easydict)：为 Sotto 的设计交互与多服务对比体验提供了灵感与范式。
 - [Mygo](https://mygo.egoist.dev/)：提供了轻量优雅的 Go 桌面 UI 应用框架支持。
-- 感谢 [LINUX DO](https://linux.do/) 社区对 Sotto 的支持。
+- [LINUX DO](https://linux.do/)：社区为 Sotto 提供了支持。

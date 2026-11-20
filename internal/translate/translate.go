@@ -23,19 +23,19 @@ type Request struct {
 	Text       string
 	SourceLang string // app-internal code, "auto" to detect
 	TargetLang string // app-internal code
-	// SingleWord marks a lone English word, which the dictionary
-	// service also answers; everything else it skips.
+	// SingleWord marks an input eligible for an English dictionary lookup.
 	SingleWord bool
 }
 
 // Result is one service's answer. Err carries a user-facing message from
 // UserMessage when the service failed.
 type Result struct {
-	Streaming    bool   `json:"streaming"` // true until the terminal result
-	Service      string `json:"service"`
-	Text         string `json:"text"`
-	DetectedLang string `json:"detectedLang"`
-	Err          string `json:"err"`
+	Dictionary   *DictionaryEntry `json:"dictionary,omitempty"`
+	Streaming    bool             `json:"streaming"` // true until the terminal result
+	Service      string           `json:"service"`
+	Text         string           `json:"text"`
+	DetectedLang string           `json:"detectedLang"`
+	Err          string           `json:"err"`
 }
 
 // KeyStore reads service credentials, by the names in internal/keys.
@@ -50,10 +50,10 @@ var (
 	ErrAuth              = errors.New("invalid credentials")
 	ErrAccess            = errors.New("service access denied")
 	ErrGenerationTimeout = errors.New("translation generation timed out")
-	// ErrSkip: this service has nothing to add to the request — the
-	// fan-out leaves it off the bubble instead of showing an error.
-	ErrSkip = errors.New("service skipped")
 )
+
+// ErrSkip indicates that a service has no result to publish for this request.
+var ErrSkip = errors.New("service skipped")
 
 // Translator is one translation service.
 type Translator interface {
@@ -112,7 +112,7 @@ func EnabledProviders(settings config.ServiceSettings) []Translator {
 	})
 }
 
-// Test checks a fixed, non-streaming translation, including disabled services.
+// Test runs a fixed, non-streaming probe, including for disabled services.
 // A successful probe does not establish streaming support.
 func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
 	for _, t := range DefaultTranslators() {
@@ -123,7 +123,11 @@ func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) err
 			if !t.Available(k, cfg) {
 				return ErrNotConfigured
 			}
-			_, err := t.Translate(ctx, Request{Text: "Hello world", SourceLang: "en", TargetLang: "zh-HANS"}, k, cfg)
+			probe := Request{Text: "Hello world", SourceLang: "en", TargetLang: "zh-HANS"}
+			if name == "dictionary" {
+				probe.Text, probe.SingleWord = "hello", true
+			}
+			_, err := t.Translate(ctx, probe, k, cfg)
 			return err
 		}
 	}
@@ -170,10 +174,10 @@ func RunWith(ctx context.Context, all []Translator, cfg config.Settings, k KeySt
 			res, err := translateParts(ctx, t, req, k, cfg, parts, progress)
 			// Stop scheduled partials before the terminal result can enable actions.
 			stopProgress()
+			if errors.Is(err, ErrSkip) {
+				return
+			}
 			if err != nil {
-				if errors.Is(err, ErrSkip) {
-					return // nothing to add: no card, no error
-				}
 				res.Service, res.Err, res.Streaming = t.Name(), UserMessage(err), false
 			}
 			if ctx.Err() == nil {
@@ -291,6 +295,9 @@ func translateParts(ctx context.Context, t Translator, req Request, k KeyStore, 
 		}
 		if result.DetectedLang == "" {
 			result.DetectedLang = res.DetectedLang
+		}
+		if res.Dictionary != nil {
+			result.Dictionary = res.Dictionary
 		}
 		result.Text = completed.String()
 		if err != nil {
