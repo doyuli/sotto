@@ -531,13 +531,13 @@ func (v *bubbleView) enabledServices() []string {
 func (v *bubbleView) showingServices() []string {
 	enabled := v.enabledServices()
 	out := make([]string, 0, len(enabled))
+	nonEnglishSource := v.sourceLang == "auto" && v.detected != "" && v.detected != "en"
 	for _, name := range enabled {
-		if name == "dictionary" && v.sourceLang == "auto" && v.detected != "" && v.detected != "en" {
+		card := v.cards[name]
+		if card == nil || (card.Dictionary != nil && nonEnglishSource) {
 			continue
 		}
-		if v.cards[name] != nil {
-			out = append(out, name)
-		}
+		out = append(out, name)
 	}
 	return out
 }

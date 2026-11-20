@@ -82,6 +82,7 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | **Baidu Translate** | API Key | General text translation API |
 | **Tencent Cloud (TMT)** | API Key | Tencent Cloud machine translation service |
 | **Youdao** | API Key | NetEase Youdao translation API |
+| **Youdao Dictionary & Translation** | Keyless | Web translation and Chinese dictionary entries for single English words in the full bubble |
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
 > [!NOTE]

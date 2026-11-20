@@ -1386,10 +1386,21 @@ func TestSettingsCredentialJobsPublishInOrder(t *testing.T) {
 	})
 }
 
-func TestSettingsDictionarySwitchSavesEnablement(t *testing.T) {
-	// The dictionary was registered with the runner but missing from settings.
+func TestSettingsKeylessServiceSwitchSavesEnablement(t *testing.T) {
+	// Registering a provider with the runner must also make it available in settings.
+	for _, service := range []string{"dictionary", "youdaoweb"} {
+		t.Run(service, func(t *testing.T) {
+			testSettingsKeylessServiceSwitch(t, service)
+		})
+	}
+}
+
+func testSettingsKeylessServiceSwitch(t *testing.T, service string) {
+	t.Helper()
+	defaults := config.Default()
+	initiallyEnabled := slices.Contains(defaults.Services.Enabled, service)
 	saved := make(chan config.Settings, 2)
-	v := NewView(TabServices, config.Default(), Actions{
+	v := NewView(TabServices, defaults, Actions{
 		SaveSettings: func(next config.Settings) error {
 			saved <- next
 			return nil
@@ -1399,15 +1410,15 @@ func TestSettingsDictionarySwitchSavesEnablement(t *testing.T) {
 	defer v.Dispose()
 	waitSettingsIdle(t, v)
 	tt := ui.NewTester(v.Render, 780, 1200)
-	for _, wantEnabled := range []bool{true, false} {
-		settingsClick(t, tt, "启用词典")
+	for _, wantEnabled := range []bool{!initiallyEnabled, initiallyEnabled} {
+		settingsClick(t, tt, "启用"+shared.ServiceName(service))
 		select {
 		case cfg := <-saved:
-			if slices.Contains(cfg.Services.Enabled, "dictionary") != wantEnabled {
-				t.Fatalf("saved services = %v, want dictionary enabled = %t", cfg.Services.Enabled, wantEnabled)
+			if slices.Contains(cfg.Services.Enabled, service) != wantEnabled {
+				t.Fatalf("saved services = %v, want %s enabled = %t", cfg.Services.Enabled, service, wantEnabled)
 			}
 		case <-time.After(time.Second):
-			t.Fatalf("no settings saved for dictionary enabled = %t", wantEnabled)
+			t.Fatalf("no settings saved for %s enabled = %t", service, wantEnabled)
 		}
 	}
 }

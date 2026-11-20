@@ -208,6 +208,7 @@ func (a *application) prepareMinimalRequest(ctx context.Context, text string) (m
 	if err != nil {
 		return minimalRequest{}, err
 	}
+	request.TranslationOnly = true
 	for _, service := range services {
 		if err := ctx.Err(); err != nil {
 			return minimalRequest{}, err

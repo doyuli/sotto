@@ -54,7 +54,7 @@ A local Windows and macOS utility that combines selection capture, OCR, and mult
 
 ## Capabilities and Constraints
 
-- Services: Bilibili IndexTranslate, SiliconFlow, Zhipu, DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Microsoft Azure, Google (keyless gtx), plus a dictionary card for lone English words. Only IndexTranslate is enabled by default.
+- Services: Bilibili IndexTranslate, SiliconFlow, Zhipu, DeepL, any OpenAI-compatible endpoint, Baidu, Volcengine, Tencent Cloud, Youdao, Youdao Dictionary & Translation, Microsoft Azure, Google (keyless gtx), and Offline Dictionary. Youdao Dictionary & Translation and Offline Dictionary use the dictionary card for English word lookups.
 - OpenAI, SiliconFlow, and Zhipu support custom models with independent API keys. Defaults: `gpt-4o-mini`, `tencent/Hunyuan-MT-7B`, and `glm-4.7-flash`, respectively. Blank models restore defaults; pricing follows the provider. Connection tests require successfully saved settings.
 - Selection translation: Windows reads text via UIA with guarded clipboard fallback; macOS uses Accessibility with guarded pasteboard fallback. Both paths snapshot readable clipboard content before simulated copy and retain a recovery backup on restoration failure; ownership/version guards prioritize newer user copies.
 - Offline OCR: Windows uses local PP-OCR with WinRT fallback; macOS uses Apple Vision. Windows releases PP-OCR sessions and stops its system-OCR worker on their idle deadlines (see `resources/windows/ocr/README.md`); macOS creates and releases Vision request/handler objects per recognition call, with no Sotto-managed idle model session.

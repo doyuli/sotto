@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -577,22 +576,7 @@ func prepareTranslationRequest(text, source, target string, cfg config.Settings)
 	}
 	return translate.Request{
 		Text: text, SourceLang: source, TargetLang: resolveTarget(detected, target, cfg.TargetLanguage),
-		SingleWord: isSingleWord(text),
 	}, nil
-}
-
-// isSingleWord reports whether text is one bare English word — letters
-// only, no spaces, punctuation or digits — which the dictionary covers.
-func isSingleWord(text string) bool {
-	if text == "" || len(text) > 45 {
-		return false
-	}
-	for _, r := range text {
-		if !unicode.IsLetter(r) {
-			return false
-		}
-	}
-	return langdetect.Detect(text) == "latin"
 }
 
 // defaultTarget flips between Chinese and English: anything but Chinese

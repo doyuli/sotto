@@ -2,6 +2,7 @@ package translate
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	_ "embed"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"unicode"
 
 	"sotto/internal/config"
 	"sotto/internal/usermessage"
@@ -26,11 +28,38 @@ type dictionaryRecord struct {
 	meanings string
 }
 
-// DictionaryEntry describes the parts of an English dictionary result.
+// DictionaryEntry is the result shared by all dictionary providers.
 type DictionaryEntry struct {
-	Word     string `json:"word"`
-	Phonetic string `json:"phonetic"`
-	Meanings string `json:"meanings"`
+	Word       string `json:"word"`
+	Meanings   string `json:"meanings"`
+	Phonetic   string `json:"phonetic,omitempty"` // accent unspecified
+	UKPhonetic string `json:"ukPhonetic,omitempty"`
+	USPhonetic string `json:"usPhonetic,omitempty"`
+}
+
+func (e DictionaryEntry) text() string {
+	// Plain text retains a single pronunciation and prefers US when available.
+	ipa := cmp.Or(e.USPhonetic, e.UKPhonetic, e.Phonetic)
+	if ipa == "" {
+		return e.Meanings
+	}
+	return "/" + ipa + "/\n" + e.Meanings
+}
+
+func (r Request) allowsEnglishLookup() bool {
+	if r.TranslationOnly || (r.SourceLang != "" && r.SourceLang != "auto" && r.SourceLang != "en") {
+		return false
+	}
+	// The bundled and web English dictionaries share the bare-word rule.
+	if r.Text == "" || len(r.Text) > 45 {
+		return false
+	}
+	for _, ch := range r.Text {
+		if !unicode.IsLetter(ch) || !unicode.Is(unicode.Latin, ch) {
+			return false
+		}
+	}
+	return true
 }
 
 // Dictionary looks up single English words in the bundled ECDICT data.
@@ -42,7 +71,7 @@ func (Dictionary) Name() string { return "dictionary" }
 func (Dictionary) Available(KeyStore, config.Settings) bool { return true }
 
 func (d Dictionary) Translate(ctx context.Context, req Request, _ KeyStore, _ config.Settings) (Result, error) {
-	if !req.SingleWord || (req.SourceLang != "" && req.SourceLang != "auto" && req.SourceLang != "en") {
+	if !req.allowsEnglishLookup() {
 		return Result{}, ErrSkip
 	}
 	if err := ctx.Err(); err != nil {
@@ -61,11 +90,8 @@ func (d Dictionary) Translate(ctx context.Context, req Request, _ KeyStore, _ co
 		return Result{}, ErrSkip
 	}
 	// An English spelling match cannot identify the source language.
-	return Result{
-		Dictionary: &DictionaryEntry{Word: word, Phonetic: entry.phonetic, Meanings: entry.meanings},
-		Service:    d.Name(),
-		Text:       "/" + entry.phonetic + "/\n" + entry.meanings,
-	}, nil
+	result := &DictionaryEntry{Word: word, Meanings: entry.meanings, Phonetic: entry.phonetic}
+	return Result{Dictionary: result, Service: d.Name(), Text: result.text()}, nil
 }
 
 func loadDictionary() (map[string]dictionaryRecord, error) {

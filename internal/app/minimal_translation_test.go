@@ -149,6 +149,19 @@ func TestMinimalTranslationOnlyReadsFirstEnabledProvider(t *testing.T) {
 	}
 }
 
+func TestMinimalTranslationUsesYoudaoWebAsTranslator(t *testing.T) {
+	// Minimal results show translated text, while the full bubble displays dictionary entries.
+	cfg := config.Default()
+	cfg.Services.Enabled = []string{"dictionary", "youdaoweb"}
+	cfg.Services.Order = cfg.Services.Enabled
+	a := &application{cfg: cfg, keys: &unusedKeyring{t: t}}
+	minimal, err := a.prepareMinimalRequest(t.Context(), "classical")
+	if err != nil || !minimal.request.TranslationOnly || minimal.request.Text != "classical" ||
+		!slices.Equal(minimal.settings.Services.Enabled, []string{"youdaoweb"}) {
+		t.Fatalf("minimal request = %+v, services = %v, err = %v", minimal.request, minimal.settings.Services.Enabled, err)
+	}
+}
+
 func TestMinimalTranslationSkipsMissingCredentialsButReportsReadFailures(t *testing.T) {
 	// A key removed outside Settings used to block its visible first service.
 	cfg := config.Default()

@@ -20,11 +20,10 @@ import (
 
 // Request is one translation to fan out to every enabled service.
 type Request struct {
-	Text       string
-	SourceLang string // app-internal code, "auto" to detect
-	TargetLang string // app-internal code
-	// SingleWord marks an input eligible for an English dictionary lookup.
-	SingleWord bool
+	Text            string
+	SourceLang      string // app-internal code, "auto" to detect
+	TargetLang      string // app-internal code
+	TranslationOnly bool   // require translation without dictionary lookup
 }
 
 // Result is one service's answer. Err carries a user-facing message from
@@ -82,6 +81,7 @@ func DefaultTranslators() []Translator {
 		OpenAI{},
 		Tencent{},
 		Youdao{},
+		YoudaoWeb{},
 		Azure{},
 		Dictionary{},
 	}
@@ -125,7 +125,7 @@ func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) err
 			}
 			probe := Request{Text: "Hello world", SourceLang: "en", TargetLang: "zh-HANS"}
 			if name == "dictionary" {
-				probe.Text, probe.SingleWord = "hello", true
+				probe.Text = "hello"
 			}
 			_, err := t.Translate(ctx, probe, k, cfg)
 			return err
@@ -244,6 +244,13 @@ func streamProgressWithPrefix(ctx context.Context, emit func(Result)) (func(stri
 // translateParts sends the shared source chunks sequentially and joins their
 // results, preserving completed output when a later request fails.
 func translateParts(ctx context.Context, t Translator, req Request, k KeyStore, cfg config.Settings, parts []string, emit func(string, Result)) (Result, error) {
+	if len(parts) > 1 {
+		// Even a one-word chunk belongs to the full translation.
+		req.TranslationOnly = true
+		if scoped, ok := t.(interface{ forRun() Translator }); ok {
+			t = scoped.forRun()
+		}
+	}
 	var completed strings.Builder
 	result := Result{Service: t.Name()}
 	for i, part := range parts {

@@ -191,6 +191,7 @@ var serviceCredentialFields = map[string][]serviceCredentialField{
 	},
 	"google":          nil,
 	"index-translate": nil,
+	"youdaoweb":       nil,
 	"dictionary":      nil,
 }
 
@@ -548,6 +549,9 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 	}
 	if svc == "dictionary" {
 		stateHint = "在完整气泡中离线显示英文单词的音标和中文释义"
+	}
+	if svc == "youdaoweb" {
+		stateHint = "免配置，完整气泡支持查询英文单词的中文释义"
 	}
 
 	if credentialError {

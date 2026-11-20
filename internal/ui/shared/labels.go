@@ -15,6 +15,7 @@ var serviceDisplayNames = map[string]string{
 	"volcengine":      "火山引擎",
 	"tencent":         "腾讯云",
 	"youdao":          "有道",
+	"youdaoweb":       "有道查词与翻译",
 	"azure":           "微软翻译",
 	"google":          "Google",
 	"index-translate": "Bilibili",

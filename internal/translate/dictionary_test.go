@@ -23,14 +23,15 @@ func TestDictionaryWord(t *testing.T) {
 	} {
 		t.Run(tc.word, func(t *testing.T) {
 			var results []Result
-			Run(t.Context(), cfg, nil, Request{Text: tc.word, TargetLang: tc.target, SingleWord: true}, func(r Result) {
+			Run(t.Context(), cfg, nil, Request{Text: tc.word, TargetLang: tc.target}, func(r Result) {
 				results = append(results, r)
 			})
 			if len(results) != 1 || results[0].Service != "dictionary" || results[0].DetectedLang != "" || results[0].Err != "" {
 				t.Fatalf("dictionary results = %+v", results)
 			}
 			entry := results[0].Dictionary
-			if entry == nil || entry.Word != strings.ToLower(tc.word) || entry.Phonetic == "" || entry.Meanings == "" {
+			if entry == nil || entry.Word != strings.ToLower(tc.word) || entry.Meanings == "" || entry.Phonetic == "" ||
+				entry.UKPhonetic != "" || entry.USPhonetic != "" {
 				t.Fatalf("incomplete dictionary entry after translation fan-out: %+v", entry)
 			}
 			for _, want := range tc.want {
@@ -49,7 +50,8 @@ func TestDictionarySkipsUnsupportedSelections(t *testing.T) {
 	for _, req := range []Request{
 		{Text: "hello world", SourceLang: "en"},
 		{Text: "古典", TargetLang: "en"},
-		{Text: "chat", SourceLang: "fr", SingleWord: true},
+		{Text: "chat", SourceLang: "fr"},
+		{Text: "hello", SourceLang: "en", TranslationOnly: true},
 	} {
 		res, err := (Dictionary{}).Translate(t.Context(), req, nil, config.Settings{})
 		if !errors.Is(err, ErrSkip) || res.Text != "" || res.Dictionary != nil {
@@ -67,7 +69,7 @@ func TestRunWithOmitsDictionaryMissAlongsideTranslation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"a", "dictionary"}
 	results := make(chan Result, len(all))
-	RunWith(t.Context(), all, cfg, fakeKeys{"a": "1"}, Request{Text: "zzznodictionaryentry", SingleWord: true}, func(r Result) {
+	RunWith(t.Context(), all, cfg, fakeKeys{"a": "1"}, Request{Text: "zzznodictionaryentry"}, func(r Result) {
 		results <- r
 	})
 	close(results)

@@ -9,10 +9,16 @@ import (
 )
 
 func renderDictionary(c *ui.Context, p bubblePalette, entry *translate.DictionaryEntry) {
-	ui.RichText(c,
-		ui.Span{Text: entry.Word, Weight: 600},
-		ui.Span{Text: "  /" + entry.Phonetic + "/", Size: 12, Color: p.muted},
-	).MinHeight(24).FontSize(16).LineHeight(1.4).TextColor(p.fg).Selectable().SelectionColor(p.selection)
+	heading := []ui.Span{{Text: entry.Word, Weight: 600}}
+	addPhonetic := func(label, ipa string) {
+		if ipa != "" {
+			heading = append(heading, ui.Span{Text: "  " + label + "/" + ipa + "/", Size: 12, Color: p.muted})
+		}
+	}
+	addPhonetic("", entry.Phonetic)
+	addPhonetic("英 ", entry.UKPhonetic)
+	addPhonetic("美 ", entry.USPhonetic)
+	ui.RichText(c, heading...).MinHeight(24).FontSize(16).LineHeight(1.4).TextColor(p.fg).Selectable().SelectionColor(p.selection)
 	ui.RichText(c, dictionaryMeaningSpans(entry.Meanings, p.muted)...).
 		FontSize(15).LineHeight(1.65).TextColor(p.fg).Selectable().SelectionColor(p.selection)
 }
