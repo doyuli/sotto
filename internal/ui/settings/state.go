@@ -72,6 +72,10 @@ type serviceTestStatus struct {
 	isError bool
 }
 
+type serviceRowHandles struct {
+	setup, ready, toggle ui.Handle
+}
+
 type View struct {
 	mu      sync.Mutex
 	actions Actions
@@ -91,7 +95,7 @@ type View struct {
 	usageLoaded      bool
 	windowGeneration uint64
 	probeCancels     map[string]context.CancelFunc
-	switchHandles    map[string]*ui.Handle
+	serviceHandles   map[string]*serviceRowHandles
 	focusService     string
 
 	credentialsLoaded bool
@@ -124,7 +128,7 @@ func NewView(initialTab Tab, cfg config.Settings, actions Actions) *View {
 		probeCancels:     make(map[string]context.CancelFunc),
 		credentialErrors: make(map[string]string),
 		credentialReads:  make(map[string]bool),
-		switchHandles:    make(map[string]*ui.Handle),
+		serviceHandles:   make(map[string]*serviceRowHandles),
 		activeTab:        initialTab,
 		settings:         cloneSettings(cfg),
 		taskWake:         make(chan struct{}, 1),

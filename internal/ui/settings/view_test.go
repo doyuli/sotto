@@ -1423,6 +1423,127 @@ func testSettingsKeylessServiceSwitch(t *testing.T, service string) {
 	}
 }
 
+func TestSettingsConfiguredServiceMovesAheadOfKeylessAfterSave(t *testing.T) {
+	// Saved services used to be buried among unused providers in catalogue order.
+	cfg := config.Default()
+	original := cloneSettings(cfg)
+	status := CredentialStatus{
+		Stored:     []string{keys.BaiduAppID, keys.DeeplKey},
+		Configured: []string{"deepl", "google", "dictionary", "index-translate", "youdaoweb"},
+	}
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	finishSave := func() { releaseOnce.Do(func() { close(release) }) }
+	defer finishSave()
+	v := NewView(TabServices, cfg, Actions{
+		GetSettings: func() config.Settings { return cfg },
+		Credentials: func(string) (CredentialStatus, error) { return status, nil },
+		SaveService: func(name string, changes ServiceChanges) (ServiceSaveResult, error) {
+			<-release
+			if name != "baidu" || changes.Credentials[keys.BaiduKey] != "example-key" {
+				return ServiceSaveResult{}, errors.New("unexpected service edit")
+			}
+			status.Configured = append(slices.Clone(status.Configured), name)
+			status.Stored = append(slices.Clone(status.Stored), keys.BaiduKey)
+			return ServiceSaveResult{}, nil
+		},
+		SaveSettings: func(next config.Settings) error { cfg = next; return nil },
+	})
+	defer v.Dispose()
+	waitSettingsIdle(t, v)
+	tt := ui.NewTester(v.Render, 660, 500)
+	assertAbove := func(first, second string) {
+		t.Helper()
+		a, okA := tt.Find(first)
+		b, okB := tt.Find(second)
+		if !okA || !okB || a.Y >= b.Y {
+			t.Fatalf("expected %q above %q", first, second)
+		}
+	}
+	assertAbove("启用DeepL", "启用Google")
+	assertAbove("启用Google", "配置百度翻译")
+	if _, available := tt.Find("启用百度翻译"); available {
+		t.Fatal("a partial credential set offered enablement")
+	}
+	click := func(label string) { settingsScrollClick(t, tt, label, 660, 500) }
+	click("配置百度翻译")
+	click("编辑密钥")
+	tt.Type("example-key")
+	click("保存配置")
+	tt.Frame()
+	finishSave()
+	waitSettingsIdle(t, v)
+	tt.Frame()
+	assertAbove("启用百度翻译", "启用DeepL")
+	if !slices.Equal(cfg.Services.Enabled, original.Services.Enabled) || !slices.Equal(cfg.Services.Order, original.Services.Order) {
+		t.Fatal("promoting the configured service changed translation settings")
+	}
+	if !tt.Focused("启用百度翻译") {
+		t.Fatal("saving the pending service did not bring its switch into keyboard focus")
+	}
+	tt.Key(0, ui.KeySpace)
+	waitSettingsIdle(t, v)
+	if !slices.Contains(cfg.Services.Enabled, "baidu") || !slices.Equal(cfg.Services.Order, original.Services.Order) {
+		t.Fatal("enabling the promoted service did not preserve translation order")
+	}
+}
+
+func TestSettingsCredentialRemovalKeepsFocusedServiceVisible(t *testing.T) {
+	// Removing the last required key moved the open editor and its save feedback offscreen.
+	for _, moveFocus := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moveFocus=%t", moveFocus), func(t *testing.T) {
+			status := CredentialStatus{Stored: []string{keys.AzureKey, keys.DeeplKey}, Configured: []string{"azure", "deepl"}}
+			release := make(chan struct{})
+			finishSave := sync.OnceFunc(func() { close(release) })
+			defer finishSave()
+			v := NewView(TabServices, config.Default(), Actions{
+				Credentials: func(string) (CredentialStatus, error) { return status, nil },
+				SaveService: func(_ string, changes ServiceChanges) (ServiceSaveResult, error) {
+					<-release
+					if key, cleared := changes.Credentials[keys.AzureKey]; !cleared || key != "" {
+						return ServiceSaveResult{}, errors.New("expected subscription key removal")
+					}
+					status = CredentialStatus{Stored: []string{keys.DeeplKey}, Configured: []string{"deepl"}}
+					return ServiceSaveResult{}, nil
+				},
+			})
+			defer v.Dispose()
+			waitSettingsIdle(t, v)
+			tt := ui.NewTester(v.Render, 660, 500)
+			click := func(label string) { settingsScrollClick(t, tt, label, 660, 500) }
+			click("配置微软翻译")
+			click("清除订阅密钥")
+			click("保存配置")
+			if moveFocus {
+				click("配置DeepL")
+			}
+			finishSave()
+			waitSettingsIdle(t, v)
+			tt.Frame()
+			if _, ok := tt.Find("启用微软翻译"); ok {
+				t.Fatal("service still offers enablement after removing its key")
+			}
+			if moveFocus {
+				if !tt.Focused("收起DeepL") {
+					t.Fatal("save completion took focus from the other service")
+				}
+				return
+			}
+			if !tt.Focused("收起微软翻译") {
+				t.Fatal("focus did not follow the service to its setup row")
+			}
+			r, ok := tt.Find("配置已保存")
+			if !ok || r.H <= 0 || r.Y < 0 || r.Y+r.H > 500 {
+				t.Fatalf("save feedback outside the viewport: %+v", r)
+			}
+			tt.Key(0, ui.KeySpace)
+			if _, ok := tt.Find("配置微软翻译"); !ok {
+				t.Fatal("the moved drawer could not be collapsed from the keyboard")
+			}
+		})
+	}
+}
+
 func TestSettingsServiceSwitchKeepsFocusAcrossGroups(t *testing.T) {
 	v := NewView(TabServices, testSettingsConfig(), Actions{})
 	defer v.Dispose()

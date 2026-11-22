@@ -18,57 +18,55 @@ import (
 )
 
 type settingsPalette struct {
-	dark        bool
-	panel       ui.Color
-	sidebar     ui.Color
-	card        ui.Color
-	cardHead    ui.Color
-	field       ui.Color
-	control     ui.Color
-	pill        ui.Color
-	hover       ui.Color
-	border      ui.Color
-	fg          ui.Color
-	muted       ui.Color
-	badgeInk    ui.Color
-	accent      ui.Color
-	accentText  ui.Color
-	accentSoft  ui.Color
-	primaryBg   ui.Color
-	onAccent    ui.Color
-	success     ui.Color
-	warning     ui.Color
-	warningSoft ui.Color
-	error       ui.Color
-	selection   ui.Color
-	theme       *ui.Theme
+	dark       bool
+	panel      ui.Color
+	sidebar    ui.Color
+	card       ui.Color
+	cardHead   ui.Color
+	field      ui.Color
+	control    ui.Color
+	pill       ui.Color
+	hover      ui.Color
+	border     ui.Color
+	fg         ui.Color
+	muted      ui.Color
+	badgeInk   ui.Color
+	accent     ui.Color
+	accentText ui.Color
+	accentSoft ui.Color
+	primaryBg  ui.Color
+	onAccent   ui.Color
+	success    ui.Color
+	warning    ui.Color
+	error      ui.Color
+	selection  ui.Color
+	theme      *ui.Theme
 }
 
 var lightSettingsPalette = func() settingsPalette {
 	p := settingsPalette{
-		dark:        false,
-		panel:       ui.Hex("#ffffff"),
-		sidebar:     ui.Hex("#fbfcfd"),
-		card:        ui.Hex("#ffffff"),
-		cardHead:    ui.Hex("#f8f9fb"),
-		field:       ui.Hex("#f4f5f7"),
-		control:     ui.Hex("#f1f1f1"),
-		pill:        ui.Hex("#e7e7e7"),
-		hover:       ui.Hex("#e9e9e9"),
-		border:      ui.Hex("#e2e5ea"),
-		fg:          ui.Hex("#202020"),
-		muted:       ui.Hex("#6b6b6b"),
-		badgeInk:    ui.Hex("#5c5c5c"),
-		accent:      ui.Hex("#2f7fe8"),
-		accentText:  ui.Hex("#1a5fae"),
-		accentSoft:  ui.RGBA(47, 127, 232, 0.14),
-		primaryBg:   ui.Hex("#1a5fae"),
-		onAccent:    ui.Hex("#ffffff"),
-		success:     ui.Hex("#15803d"),
-		warning:     ui.Hex("#b45309"),
-		warningSoft: ui.RGBA(217, 119, 6, 0.12),
-		error:       ui.Hex("#c62828"),
-		selection:   ui.RGBA(31, 111, 208, 0.18),
+		dark:       false,
+		panel:      ui.Hex("#ffffff"),
+		sidebar:    ui.Hex("#fbfcfd"),
+		card:       ui.Hex("#ffffff"),
+		cardHead:   ui.Hex("#f8f9fb"),
+		field:      ui.Hex("#f4f5f7"),
+		control:    ui.Hex("#f1f1f1"),
+		pill:       ui.Hex("#e7e7e7"),
+		hover:      ui.Hex("#e9e9e9"),
+		border:     ui.Hex("#e2e5ea"),
+		fg:         ui.Hex("#202020"),
+		muted:      ui.Hex("#6b6b6b"),
+		badgeInk:   ui.Hex("#5c5c5c"),
+		accent:     ui.Hex("#2f7fe8"),
+		accentText: ui.Hex("#1a5fae"),
+		accentSoft: ui.RGBA(47, 127, 232, 0.14),
+		primaryBg:  ui.Hex("#1a5fae"),
+		onAccent:   ui.Hex("#ffffff"),
+		success:    ui.Hex("#15803d"),
+		warning:    ui.Hex("#b45309"),
+		error:      ui.Hex("#c62828"),
+		selection:  ui.RGBA(31, 111, 208, 0.18),
 	}
 	t := ui.LightTheme()
 	t.Background = p.panel
@@ -89,29 +87,28 @@ var lightSettingsPalette = func() settingsPalette {
 
 var darkSettingsPalette = func() settingsPalette {
 	p := settingsPalette{
-		dark:        true,
-		panel:       ui.Hex("#222325"),
-		sidebar:     ui.Hex("#1a1b1d"),
-		card:        ui.Hex("#26272a"),
-		cardHead:    ui.Hex("#2b2c30"),
-		field:       ui.Hex("#1e1f22"),
-		control:     ui.Hex("#2c2d2f"),
-		pill:        ui.Hex("#3a3b3d"),
-		hover:       ui.Hex("#3a3b3d"),
-		border:      ui.Hex("#2e3035"),
-		fg:          ui.Hex("#f3f4f5"),
-		muted:       ui.Hex("#a0a3a7"),
-		badgeInk:    ui.Hex("#b4b7bb"),
-		accent:      ui.Hex("#7db4ff"),
-		accentText:  ui.Hex("#7db4ff"),
-		accentSoft:  ui.RGBA(125, 180, 255, 0.18),
-		primaryBg:   ui.Hex("#7db4ff"),
-		onAccent:    ui.Hex("#0d1b2b"),
-		success:     ui.Hex("#4ade80"),
-		warning:     ui.Hex("#fbbf24"),
-		warningSoft: ui.RGBA(251, 191, 36, 0.14),
-		error:       ui.Hex("#ff8a8a"),
-		selection:   ui.RGBA(125, 180, 255, 0.28),
+		dark:       true,
+		panel:      ui.Hex("#222325"),
+		sidebar:    ui.Hex("#1a1b1d"),
+		card:       ui.Hex("#26272a"),
+		cardHead:   ui.Hex("#2b2c30"),
+		field:      ui.Hex("#1e1f22"),
+		control:    ui.Hex("#2c2d2f"),
+		pill:       ui.Hex("#3a3b3d"),
+		hover:      ui.Hex("#3a3b3d"),
+		border:     ui.Hex("#2e3035"),
+		fg:         ui.Hex("#f3f4f5"),
+		muted:      ui.Hex("#a0a3a7"),
+		badgeInk:   ui.Hex("#b4b7bb"),
+		accent:     ui.Hex("#7db4ff"),
+		accentText: ui.Hex("#7db4ff"),
+		accentSoft: ui.RGBA(125, 180, 255, 0.18),
+		primaryBg:  ui.Hex("#7db4ff"),
+		onAccent:   ui.Hex("#0d1b2b"),
+		success:    ui.Hex("#4ade80"),
+		warning:    ui.Hex("#fbbf24"),
+		error:      ui.Hex("#ff8a8a"),
+		selection:  ui.RGBA(125, 180, 255, 0.28),
 	}
 	t := ui.DarkTheme()
 	t.Background = p.panel
@@ -423,15 +420,20 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 	credErr := v.credentialErrors[""]
 	readingCredentials := v.credentialReads[""]
 	cfg := cloneSettings(v.settings)
-	var enabledNames, disabledNames []string
+	var enabledNames, configured, keyless, pending []string
 	for _, svc := range cfg.Services.Order {
-		if _, ok := serviceCredentialFields[svc]; !ok {
+		fields, known := serviceCredentialFields[svc]
+		switch {
+		case !known:
 			continue
-		}
-		if v.serviceOnLocked(svc) {
+		case v.serviceOnLocked(svc):
 			enabledNames = append(enabledNames, svc)
-		} else {
-			disabledNames = append(disabledNames, svc)
+		case len(fields) == 0:
+			keyless = append(keyless, svc)
+		case v.credentialErrors[svc] == "" && slices.Contains(v.credentials.Configured, svc):
+			configured = append(configured, svc)
+		default:
+			pending = append(pending, svc)
 		}
 	}
 	displayEnabled := enabledNames
@@ -462,17 +464,18 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 		}
 	}
 
-	description := "已启用的服务同时翻译，拖动序号调整结果顺序，"
+	description := "同时翻译，拖动序号调整结果顺序"
 	if cfg.MinimalTranslation {
-		description = "简约翻译使用首个可用的翻译服务，拖动序号调整顺序，"
+		description = "拖动序号排序，简约翻译使用首个可用服务"
 	}
-	ui.Text(c, description+"凭证保存在系统密钥环。").FontSize(12).TextColor(p.muted)
-
-	v.renderServiceGroupHeader(c, p, "已启用", len(displayEnabled))
-	if len(displayEnabled) > 0 {
+	renderServiceGroup(c.Key("enabled"), p, "已启用", len(displayEnabled), description, func() {
+		if len(displayEnabled) == 0 {
+			ui.Text(c, "还没有启用的服务，可在下方启用或配置。").Padding(14).FontSize(12).TextColor(p.muted)
+			return
+		}
 		anyDragging := false
 		hoveredTarget := ""
-		listCol := ui.Column(c).Gap(8)
+		listCol := ui.Column(c).FillWidth()
 		if droppedSvc, ok := ui.Drop[string](listCol); ok && droppedSvc != "" {
 			v.mu.Lock()
 			v.finishDragLocked(enabledNames)
@@ -480,6 +483,9 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 		}
 		listCol.Children(func() {
 			for i, svc := range displayEnabled {
+				if i > 0 {
+					ui.Box(c).FillWidth().Height(1).Background(p.border)
+				}
 				draggingCard, overCard := v.renderServiceCard(c.Key("svc:"+svc), p, svc, true, i+1, displayEnabled)
 				if draggingCard {
 					anyDragging = true
@@ -497,28 +503,40 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 			v.drag.clear()
 		}
 		v.mu.Unlock()
-	} else {
-		ui.Row(c).Padding(14).Radius(12).Background(p.field).Border(1, p.border).Children(func() {
-			ui.Text(c, "还没有启用的服务。打开下方开关即可加入翻译。").FontSize(12).TextColor(p.muted)
-		})
-	}
+	})
 
-	if len(disabledNames) > 0 {
-		v.renderServiceGroupHeader(c, p, "未启用", len(disabledNames))
-		ui.Column(c).Gap(8).Children(func() {
-			for _, svc := range disabledNames {
+	for _, group := range []struct {
+		title string
+		names []string
+	}{
+		{"可启用", append(configured, keyless...)},
+		{"待配置", pending},
+	} {
+		if len(group.names) == 0 {
+			continue
+		}
+		renderServiceGroup(c.Key(group.title), p, group.title, len(group.names), "", func() {
+			for i, svc := range group.names {
+				if i > 0 {
+					ui.Box(c).FillWidth().Height(1).Background(p.border)
+				}
 				v.renderServiceCard(c.Key("svc:"+svc), p, svc, false, 0, nil)
 			}
 		})
 	}
 }
 
-func (v *View) renderServiceGroupHeader(c *ui.Context, p settingsPalette, title string, count int) {
-	ui.Row(c).Padding(6, 0, 0, 0).AlignItems(ui.Center).Gap(6).Children(func() {
-		ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(p.muted)
-		ui.Row(c).Padding(1, 7).Radius(999).Background(p.pill).Children(func() {
-			ui.Text(c, fmt.Sprintf("%d", count)).FontSize(11).TextColor(p.badgeInk)
+func renderServiceGroup(c *ui.Context, p settingsPalette, title string, count int, hint string, rows func()) {
+	ui.Column(c).FillWidth().Gap(7).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(7).Children(func() {
+			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(p.fg)
+			ui.Text(c, fmt.Sprint(count)).FontSize(12).TextColor(p.muted)
+			if hint != "" && count > 0 {
+				ui.Box(c).Grow(1)
+				ui.Text(c, hint).FontSize(12).TextColor(p.muted)
+			}
 		})
+		ui.Column(c).FillWidth().Radius(12).Background(p.card).Border(1, p.border).Clip().Children(rows)
 	})
 }
 
@@ -531,43 +549,51 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 	credentialError := v.credentialErrors[svc] != ""
 	isConfigured := keyless || slices.Contains(v.credentials.Configured, svc)
 	editable := !keyless || svc == "openai" || v.settings.Services.Model(svc) != nil
+	stored := v.credentials.Stored
 	isExpanded := v.expanded[svc]
 	_, dirty := v.serviceDrafts[svc]
 	busy := v.serviceSaving[svc]
+	handles := v.serviceHandles[svc]
+	if handles == nil {
+		handles = &serviceRowHandles{}
+		v.serviceHandles[svc] = handles
+	}
 	dragAnimating := v.drag.preview != nil
 	v.mu.Unlock()
 
-	stateHint := "填写凭证后可启用"
-	if enabled {
-		if keyless {
-			stateHint = "无需凭据"
-		} else {
-			stateHint = "凭证已保存"
-		}
-	} else if keyless || isConfigured {
-		stateHint = "打开开关后参与翻译"
-	}
-	if svc == "dictionary" {
-		stateHint = "在完整气泡中离线显示英文单词的音标和中文释义"
-	}
-	if svc == "youdaoweb" {
-		stateHint = "免配置，完整气泡支持查询英文单词的中文释义"
-	}
-
-	if credentialError {
-		stateHint = "凭证状态待确认"
-	}
-	if !isExpanded && dirty {
-		stateHint = "有未保存的更改"
-	}
-	if !isExpanded && busy {
+	stateHint := ""
+	hintColor := p.muted
+	switch {
+	case busy && !isExpanded:
 		stateHint = "正在保存配置…"
+	case dirty && !isExpanded:
+		stateHint = "有未保存的更改"
+	case credentialError:
+		stateHint, hintColor = "凭证状态待确认", p.warning
+	case svc == "dictionary":
+		stateHint = "完整气泡可离线查音标和中文释义"
+	case svc == "youdaoweb":
+		stateHint = "完整气泡可查英文单词释义"
+	case keyless:
+		stateHint = "免配置"
+	case isConfigured:
+		stateHint = "已配置"
+	default:
+		for _, field := range fields {
+			if slices.Contains(stored, field.name) {
+				stateHint = "凭证待补全"
+				break
+			}
+		}
 	}
 
-	card := ui.Column(c).
-		Radius(12).
-		Background(p.card).
-		Border(1, p.border)
+	card := ui.Column(c).FillWidth()
+	showSwitch := enabled || isConfigured && !credentialError
+	if showSwitch {
+		card.Bind(&handles.ready)
+	} else {
+		card.Bind(&handles.setup)
+	}
 	if dragAnimating {
 		card.Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Ease: ui.EaseOut})
 	}
@@ -580,7 +606,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 		}
 		if card.Dragging() {
 			dragging = true
-			card.Opacity(0.4).Border(1.5, p.accent).Background(p.accentSoft)
+			card.Opacity(0.4).Background(p.accentSoft)
 		} else {
 			if droppedSvc, ok := ui.Drop[string](card); ok && droppedSvc != "" {
 				v.mu.Lock()
@@ -613,7 +639,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 	}
 
 	card.Children(func() {
-		head := ui.Row(c).FillWidth().Padding(12, 16).AlignItems(ui.Center).Gap(12)
+		head := ui.Row(c).FillWidth().MinHeight(44).Padding(9, 14).AlignItems(ui.Center).Gap(10)
 		if editable && isExpanded {
 			head.Background(p.cardHead)
 		}
@@ -621,7 +647,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 			head.Drag(svc)
 			if head.Dragging() {
 				dragging = true
-				card.Opacity(0.4).Border(1.5, p.accent).Background(p.accentSoft)
+				card.Opacity(0.4).Background(p.accentSoft)
 			}
 		}
 		head.Children(func() {
@@ -645,30 +671,11 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 				})
 			}
 
-			ui.Column(c).Grow(1).Gap(2).Children(func() {
-				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-					ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(p.fg)
-					if !enabled {
-						badgeText := "未配置"
-						badgeBg := p.warningSoft
-						badgeFg := p.warning
-						if keyless {
-							badgeText = "免配置"
-							badgeBg = p.pill
-							badgeFg = p.badgeInk
-						} else if credentialError {
-							badgeText = "读取失败"
-						} else if isConfigured {
-							badgeText = "已配置"
-							badgeBg = p.accentSoft
-							badgeFg = p.accentText
-						}
-						ui.Row(c).Padding(2, 8).Radius(999).Background(badgeBg).Children(func() {
-							ui.Text(c, badgeText).FontSize(11).FontWeight(600).TextColor(badgeFg).SingleLine()
-						})
-					}
-				})
-				ui.Text(c, stateHint).FontSize(12).TextColor(p.muted)
+			ui.Row(c).Grow(1).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(p.fg).SingleLine()
+				if stateHint != "" {
+					ui.Text(c, stateHint).FontSize(12).TextColor(hintColor)
+				}
 			})
 
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
@@ -679,7 +686,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 						cfgLabel = "收起"
 						accessLabel = "收起" + title
 					}
-					v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, func() {
+					configure := v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, func() {
 						v.mu.Lock()
 						nextExpanded := !v.expanded[svc]
 						v.expanded[svc] = nextExpanded
@@ -689,28 +696,34 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 							v.loadDeeplUsageAsync()
 						}
 					})
+					// Keep the editor and save feedback in view if its focused row
+					// moves back to setup after a required credential is removed.
+					if !showSwitch && handles.ready.FocusWithin(c) {
+						configure.Focus()
+						card.ScrollIntoView()
+					}
+				}
+
+				if !showSwitch {
+					return
 				}
 
 				v.mu.Lock()
-				handle := v.switchHandles[svc]
-				if handle == nil {
-					handle = &ui.Handle{}
-					v.switchHandles[svc] = handle
-				}
-				// A rollback can move the same switch back to its old parent.
-				focus := v.focusService == svc || handle.Focused(c)
+				// Carry focus to the switch when its group changes, including
+				// when an open setup drawer becomes ready after saving.
+				focus := v.focusService == svc || handles.toggle.Focused(c) || handles.setup.FocusWithin(c)
 				if focus {
 					v.focusService = ""
 				}
 				v.mu.Unlock()
 				if focus {
-					handle.Focus(c)
+					handles.toggle.Focus(c)
 				}
 				on := enabled
 				sw := ui.Switch(c, &on).
 					Label("启用" + title).
-					Bind(handle).
-					Disabled(busy || (!enabled && (!isConfigured || credentialError)))
+					Bind(&handles.toggle).
+					Disabled(busy)
 				if sw.Changed() {
 					v.mu.Lock()
 					if on && v.credentialErrors[svc] != "" {
@@ -762,7 +775,7 @@ func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string,
 	ui.Box(c).FillWidth().Height(1).Background(p.border)
 	ui.Column(c).FillWidth().Background(p.card).Padding(14, 16).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "保存后应用更改").FontSize(12).TextColor(p.muted).Grow(1)
+			ui.Text(c, "凭证保存在系统密钥环").FontSize(12).TextColor(p.muted).Grow(1)
 			if len(fields) != 0 {
 				link := ui.ButtonBase(c.Key("console")).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
 				link.OnClick(func() { v.openKeyPageAsync(svc) })

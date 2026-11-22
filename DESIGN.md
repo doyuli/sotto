@@ -47,24 +47,24 @@ Operate. The translation bubble is a frameless 480-DIP desktop panel with a rece
 
 ## Settings surface
 
-The settings window adds a navigation rail, service cards, and recessed fields. These semantic tokens map to the native settings palette; they are not CSS variables.
+The settings window adds a navigation rail, grouped service rows, and recessed fields. These semantic tokens map to the native settings palette; they are not CSS variables.
 
 | Token | Light | Dark | Used by |
 |---|---|---|---|
 | `--sidebar` | `#fbfcfd` | `#1a1b1d` | navigation rail |
-| `--card` | `#ffffff` | `#26272a` | cards and drawers |
+| `--card` | `#ffffff` | `#26272a` | grouped rows and drawers |
 | `--card-head` | `#f8f9fb` | `#2b2c30` | service title strip |
 | `--field` | `#f4f5f7` | `#1e1f22` | inputs, quota well |
 | `--muted` | `#6b6b6b` | `#a0a3a7` | secondary text and placeholder |
-| `--badge-ink` | `#5c5c5c` | `#b4b7bb` | quiet badge and order-number text |
+| `--badge-ink` | `#5c5c5c` | `#b4b7bb` | order-number text |
 | `--success` | `#15803d` | `#4ade80` | connection-test success text |
-| `--warning` / `--warning-soft` | `#b45309` / 12% | `#fbbf24` / 14% | unconfigured badge |
+| `--warning` | `#b45309` | `#fbbf24` | credential status and removal warnings |
 | `--primary-bg` | `#1a5fae` | accent token | primary button background |
 | `--on-accent` | `#ffffff` | `#0d1b2b` | label on an accent button |
 
-The service title strip is darker than the card in light mode and lighter in dark mode. Badges use a borderless tint.
+Service rows share a surface and use thin dividers. “已启用” follows translation order and exposes numbered drag handles. “可启用” lists configured services before keyless ones. “待配置” offers configuration and shows when saved credentials are incomplete. Expanding a row gives its header a distinct surface in both themes.
 
-Each service drawer has a draft for its configuration fields. “保存配置” applies the draft, “放弃更改” restores saved values, and “测试连接” uses the saved configuration when the draft is clean. Collapsing the drawer retains pending edits. Switching away from the translation services tab or closing Settings discards unsaved drafts. An explicit save already in progress continues. The card shows when it has an unsaved draft. Undoing a staged credential removal restores any replacement value already entered in the draft. Removing a required credential from an enabled service shows the effect before saving. Previously saved credentials are never displayed.
+Each service drawer has a draft for its configuration fields. “保存配置” applies the draft, “放弃更改” restores saved values, and “测试连接” uses the saved configuration when the draft is clean. Collapsing the drawer retains pending edits. Switching away from the translation services tab or closing Settings discards unsaved drafts. An explicit save already in progress continues. The collapsed row shows when it has an unsaved draft. Undoing a staged credential removal restores any replacement value already entered in the draft. Removing a required credential from an enabled service shows the effect before saving. Previously saved credentials are never displayed.
 
 ## Type and shape
 
