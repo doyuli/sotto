@@ -26,7 +26,7 @@ type entryTask struct {
 	cursor    mygo.Point
 }
 
-func (g *entryGate) begin() *entryTask {
+func (g *entryGate) begin(minimal bool) *entryTask {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.current != nil {
@@ -34,7 +34,7 @@ func (g *entryGate) begin() *entryTask {
 	}
 	g.next++
 	ctx, cancel := context.WithCancel(context.Background())
-	t := &entryTask{id: g.next, ctx: ctx, cancel: cancel, gate: g, workspace: platform.WorkspaceGeneration()}
+	t := &entryTask{id: g.next, ctx: ctx, cancel: cancel, gate: g, minimal: minimal, workspace: platform.WorkspaceGeneration()}
 	g.current = t
 	return t
 }
@@ -48,14 +48,6 @@ func (g *entryGate) cancel() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.current != nil {
-		g.current.cancel()
-	}
-}
-
-func (g *entryGate) cancelMinimal() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.current != nil && g.current.minimal {
 		g.current.cancel()
 	}
 }

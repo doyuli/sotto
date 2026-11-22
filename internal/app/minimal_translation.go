@@ -78,7 +78,7 @@ func runMinimalJob(ctx context.Context, run func(context.Context, func(string)) 
 // Acquisition is exclusive. Once it hands off its input on the main thread,
 // OCR and translation can outlive that entry without canceling other results.
 func (a *application) beginMinimalJob(task *entryTask) (context.Context, bool) {
-	if !task.Valid() || !a.settings().MinimalTranslation || a.isQuitting() {
+	if !task.Valid() || !task.minimal || a.isQuitting() {
 		return nil, false
 	}
 	if _, exists := a.minimalJobs[task.id]; exists {
@@ -103,7 +103,7 @@ func (a *application) finishMinimalJob(id int64) bool {
 }
 
 func (a *application) canPresentMinimalJob(job *minimalJob) bool {
-	return job.workspace == platform.WorkspaceGeneration() && a.settings().MinimalTranslation && !a.isQuitting()
+	return job.workspace == platform.WorkspaceGeneration() && !a.isQuitting()
 }
 
 func (a *application) stopMinimalJobs() {
@@ -127,7 +127,7 @@ func (a *application) cancelStaleMinimalJobs() {
 
 func (a *application) showMinimalEntryError(task *entryTask, source mygo.Rectangle, message string) {
 	mygo.RunOnMain(func() {
-		if task.Valid() && a.settings().MinimalTranslation && !a.isQuitting() {
+		if task.Valid() && !a.isQuitting() {
 			a.overlays.Show("", message, source, task.workspace)
 		}
 	})

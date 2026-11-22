@@ -201,13 +201,6 @@ func (a *application) applySettings(s config.Settings) {
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
-	if old.MinimalTranslation && !s.MinimalTranslation {
-		mygo.RunOnMain(func() {
-			a.entry.cancelMinimal()
-			a.stopMinimalJobs()
-			a.snip.HideStale()
-		})
-	}
 	// Publish only after registration and persistence have succeeded.
 	a.broadcastSettings(a.settings())
 }
@@ -232,9 +225,9 @@ func (a *application) startEntry(action string) {
 	if action == "panel" && a.bubbles.FocusVisibleInput() {
 		return
 	}
-	task := a.entry.begin()
-	if action != "panel" && a.settings().MinimalTranslation {
-		task.minimal = true
+	// A mode switch applies to the next entry, even while this one is acquiring input.
+	task := a.entry.begin(action != "panel" && a.settings().MinimalTranslation)
+	if task.minimal {
 		task.cursor = mygo.Screen.CursorScreenPoint()
 	}
 	log.Printf("entry: start id=%d action=%s", task.ID(), action)

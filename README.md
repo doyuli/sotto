@@ -57,7 +57,7 @@ Sotto's global shortcuts are customizable in Settings.
 | **Open Translation Panel** | `Ctrl + Alt + A` | `⌥ Option + A` | Opens the typed translation panel; if already open, focuses it and preserves existing text |
 | **Screen Snip Translation (OCR)** | `Ctrl + Alt + S` | `⌥ Option + S` | Snips any screen area to extract text locally and query translation engines |
 | **Selection Translation** | `Ctrl + Alt + D` | `⌥ Option + D` | Reads highlighted text in the frontmost app and shows a popup bubble beside it |
-| **Toggle Minimal Translation Mode** | `Ctrl + Alt + F` | `⌥ Option + F` | Switches the saved mode for selection and snip translations and briefly shows the new state |
+| **Toggle Minimal Translation Mode** | `Ctrl + Alt + F` | `⌥ Option + F` | Sets the mode for future selections and snips. Open results stay in place and pending translations finish in their original mode. |
 
 ### Interactive Controls
 - **Bubble Mode**: Press `Enter` to translate, `Shift + Enter` for a newline, and `Esc` to close; click the pin icon to stay open on blur; play native TTS for source and translated text, and fold or retry individual cards.

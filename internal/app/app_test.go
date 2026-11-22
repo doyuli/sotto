@@ -48,8 +48,8 @@ func TestExplicitTargetWins(t *testing.T) {
 
 func TestEntryOwnership(t *testing.T) {
 	var g entryGate
-	old := g.begin()
-	next := g.begin()
+	old := g.begin(false)
+	next := g.begin(false)
 	if old.Valid() || old.Context().Err() == nil || !next.Valid() {
 		t.Fatal("new entry must revoke old acquisition")
 	}

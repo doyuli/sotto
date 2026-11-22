@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"sotto/internal/config"
 	"sotto/internal/keys"
 	"sotto/internal/translate"
+	"sotto/internal/ui/bubble"
 )
 
 func TestMinimalJobLoadingOnlyWhileWaiting(t *testing.T) {
@@ -85,13 +87,13 @@ func TestMinimalJobFirstChunkSkipsTheLoadingState(t *testing.T) {
 
 func TestMinimalJobsOutliveTheirEntries(t *testing.T) {
 	// Reusing the acquisition context would discard the first translation.
-	a := &application{cfg: config.Settings{MinimalTranslation: true}}
-	first := a.entry.begin()
+	a := &application{}
+	first := a.entry.begin(true)
 	firstCtx, ok := a.beginMinimalJob(first)
 	if !ok {
 		t.Fatal("first job rejected")
 	}
-	second := a.entry.begin()
+	second := a.entry.begin(true)
 	secondCtx, ok := a.beginMinimalJob(second)
 	if !ok || first.Valid() || firstCtx.Err() != nil {
 		t.Fatal("second acquisition canceled the accepted first job")
@@ -104,18 +106,38 @@ func TestMinimalJobsOutliveTheirEntries(t *testing.T) {
 	}
 }
 
-func TestMinimalJobsStopBeforeLateResults(t *testing.T) {
-	a := &application{cfg: config.Settings{MinimalTranslation: true}}
-	first := a.entry.begin()
+func TestMinimalJobsSurviveModeSwitch(t *testing.T) {
+	// Switching while acquiring input or streaming used to discard both translations.
+	cfg := config.Default()
+	cfg.MinimalTranslation = true
+	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
+	streaming := a.entry.begin(true)
+	ctx, ok := a.beginMinimalJob(streaming)
+	if !ok {
+		t.Fatal("streaming job rejected")
+	}
+	acquiring := a.entry.begin(true)
+	if err := a.setMinimalTranslation(false); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() != nil || !a.finishMinimalJob(streaming.ID()) {
+		t.Fatal("switching modes discarded the streaming translation")
+	}
+	if _, ok := a.beginMinimalJob(acquiring); !ok || !a.finishMinimalJob(acquiring.ID()) {
+		t.Fatal("input acquired after switching could not complete in its original mode")
+	}
+}
+
+func TestStoppedMinimalJobsRejectLateResults(t *testing.T) {
+	a := &application{}
+	first := a.entry.begin(true)
 	ctx, ok := a.beginMinimalJob(first)
 	if !ok {
 		t.Fatal("job rejected")
 	}
-	a.cfg.MinimalTranslation = false
 	a.stopMinimalJobs()
-	a.cfg.MinimalTranslation = true
 	if ctx.Err() == nil || a.finishMinimalJob(first.ID()) {
-		t.Fatal("disabled job could still present after re-enabling the mode")
+		t.Fatal("stopped job could still present a late result")
 	}
 }
 

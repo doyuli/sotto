@@ -63,12 +63,12 @@ func (a *application) onShortcut(accel string) func() {
 
 func (a *application) toggleMinimalTranslation() {
 	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
-	message := "简约翻译已关闭"
+	message := "已切换到气泡模式"
 	switch {
 	case err != nil:
 		message = usermessage.Format("切换简约翻译失败", err)
 	case enabled:
-		message = "简约翻译已开启"
+		message = "已切换到简约模式"
 	}
 	mygo.RunOnMain(func() {
 		if !a.isQuitting() && a.settings().MinimalTranslation == enabled {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"testing"
 
-	"sotto/internal/config"
 	"sotto/internal/macnative"
 )
 
@@ -25,7 +24,7 @@ func TestScreenRecordingFailureMessage(t *testing.T) {
 
 func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 	var gate entryGate
-	old := gate.begin()
+	old := gate.begin(false)
 	old.workspace++
 	if old.Valid() {
 		t.Fatal("old workspace entry stayed valid")
@@ -34,7 +33,7 @@ func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 	if old.ctx.Err() == nil {
 		t.Fatal("old workspace work was not canceled")
 	}
-	fresh := gate.begin()
+	fresh := gate.begin(false)
 	gate.cancelStaleWorkspace()
 	if !fresh.Valid() {
 		t.Fatal("delayed notification canceled a new workspace entry")
@@ -44,14 +43,14 @@ func TestWorkspaceCancellationPreservesNewEntry(t *testing.T) {
 
 func TestWorkspaceCancellationPreservesNewMinimalJob(t *testing.T) {
 	// The watcher can run after a request has started in the new Space.
-	a := &application{cfg: config.Settings{MinimalTranslation: true}}
-	stale := a.entry.begin()
+	a := &application{}
+	stale := a.entry.begin(true)
 	staleCtx, ok := a.beginMinimalJob(stale)
 	if !ok {
 		t.Fatal("first job rejected")
 	}
 	a.minimalJobs[stale.id].workspace++
-	fresh := a.entry.begin()
+	fresh := a.entry.begin(true)
 	freshCtx, ok := a.beginMinimalJob(fresh)
 	if !ok {
 		t.Fatal("new workspace job rejected")
