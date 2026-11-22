@@ -211,9 +211,11 @@ func RecoverClipboard(id string) error {
 }
 
 func copyControlsHeld() bool {
-	// ANSI modifiers and C; also refuse to copy during any pointer gesture.
-	for _, key := range []uint16{54, 55, 56, 60, 58, 61, 59, 62, 8} {
-		if keyState(1, key) {
+	// A shortcut's main key can come up after its modifiers. Its release
+	// would otherwise be mistaken for intervening input by the copy monitor.
+	// Caps Lock reports a latched state and does not modify the copy chord.
+	for key := uint16(0); key < 128; key++ {
+		if key != 57 && keyState(1, key) {
 			return true
 		}
 	}
@@ -281,18 +283,8 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 	if PendingClipboardRecovery() != "" {
 		return Selection{}, ErrClipboardRestore
 	}
-	deadline := time.NewTimer(400 * time.Millisecond)
-	defer deadline.Stop()
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
-	for copyControlsHeld() {
-		select {
-		case <-ctx.Done():
-			return Selection{}, ctx.Err()
-		case <-deadline.C:
-			return Selection{}, ErrShortcutHeld
-		case <-tick.C:
-		}
+	if err := waitCopyRelease(ctx, copyControlsHeld); err != nil {
+		return Selection{}, err
 	}
 	saved, err := savePasteboard(ctx)
 	if err != nil {
@@ -334,6 +326,8 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 		setField(event, 42, int64(watch.marker))
 		postEvent(1, event)
 	}
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
 	wait := time.NewTimer(time.Second)
 	defer wait.Stop()
 	for {

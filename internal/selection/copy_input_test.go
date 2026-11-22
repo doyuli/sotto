@@ -1,9 +1,11 @@
 package selection
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 )
 
 func TestCopyDoesNotInvalidateItsOwnInjectedEvents(t *testing.T) {
@@ -58,4 +60,18 @@ func TestPointerMovementAllowsCopyUntilButtonOrWheelInput(t *testing.T) {
 	if !errors.Is(err, ErrSourceChanged) || !strings.Contains(err.Error(), "mouse button or wheel event") {
 		t.Fatalf("expected the original mouse input to invalidate copy, got %v", err)
 	}
+}
+
+func TestCopyReleaseStopsOnTimeoutOrCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		held := func() bool { return true }
+		if err := waitCopyRelease(t.Context(), held); !errors.Is(err, ErrShortcutHeld) {
+			t.Fatalf("held input allowed copy: %v", err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := waitCopyRelease(ctx, held); !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled wait returned %v", err)
+		}
+	})
 }

@@ -1,8 +1,10 @@
 package selection
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -53,4 +55,27 @@ func (s *copyInputState) check(stage string) error {
 		return nil
 	}
 	return fmt.Errorf("%s while %s: %w", cause, stage, ErrSourceChanged)
+}
+
+const inputReleaseWait = 1200 * time.Millisecond
+
+// waitCopyRelease waits for the entire shortcut to come up on its own. A
+// modifier can alter the copy chord, and a later release of the shortcut's
+// main key looks like new input to the clipboard transaction's watcher.
+// Also wait for mouse buttons so the copy cannot begin during a drag.
+func waitCopyRelease(ctx context.Context, held func() bool) error {
+	timer := time.NewTimer(inputReleaseWait)
+	defer timer.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for held() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return ErrShortcutHeld
+		case <-tick.C:
+		}
+	}
+	return ctx.Err()
 }

@@ -227,7 +227,7 @@ func (a *application) startEntry(action string) {
 	}
 	// A mode switch applies to the next entry, even while this one is acquiring input.
 	task := a.entry.begin(action != "panel" && a.settings().MinimalTranslation)
-	if task.minimal {
+	if action == "selection" || task.minimal {
 		task.cursor = mygo.Screen.CursorScreenPoint()
 	}
 	log.Printf("entry: start id=%d action=%s", task.ID(), action)
@@ -289,15 +289,8 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 			message = translate.UserMessage(err)
 		}
 	}
-	var anchor *bubble.Anchor
-	if sel.HasRect {
-		anchor = &bubble.Anchor{X: sel.Rect.X + sel.Rect.W, Y: sel.Rect.Y + sel.Rect.H}
-	}
+	source := task.selectionSource(sel)
 	if task.minimal && (message == "" || selection.PendingClipboardRecovery() == "") {
-		source := task.source()
-		if sel.HasRect {
-			source = mygo.Rectangle{X: sel.Rect.X, Y: sel.Rect.Y, Width: sel.Rect.W, Height: sel.Rect.H}
-		}
 		if message != "" {
 			a.showMinimalEntryError(task, source, message)
 		} else {
@@ -313,6 +306,7 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	if message != "" {
 		phase = "error"
 	}
+	anchor := &bubble.Anchor{X: source.X + source.Width, Y: source.Y + source.Height}
 	shown := a.bubbles.ShowTask(a.settings(), "selection", sel.Text, anchor, phase, message, task.Valid, nil)
 	if shown.Win != nil && message == "" && task.Valid() {
 		a.runTranslation(shown.Win, bubble.RunReq{ReqID: shown.ReqID, SessionID: shown.ReqID, Revision: 0, Source: "selection", Text: sel.Text})

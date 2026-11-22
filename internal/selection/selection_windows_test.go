@@ -4,6 +4,7 @@ package selection
 
 import (
 	"testing"
+	"testing/synctest"
 	"unsafe"
 )
 
@@ -106,4 +107,20 @@ func TestCopyWaitsForShortcutKeysAndMouseButtons(t *testing.T) {
 	if copyControlsDown(func(uint16) bool { return false }) {
 		t.Error("copy blocked after all keys and buttons were released")
 	}
+}
+
+func TestUIAKeepsTextWhenBoundsStall(t *testing.T) {
+	// A slow bounds query used to force a simulated copy after GetText succeeded.
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		defer close(release)
+		sel, err := grabUIAWith(t.Context(), func(selected func(string)) (Selection, error) {
+			selected("selected text")
+			<-release
+			return Selection{Text: "selected text", Via: "uia", HasRect: true}, nil
+		})
+		if err != nil || sel.Text != "selected text" || sel.HasRect || sel.Via != "uia" {
+			t.Fatalf("got %+v, %v while bounds were pending", sel, err)
+		}
+	})
 }

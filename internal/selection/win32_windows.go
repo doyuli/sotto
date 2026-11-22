@@ -3,7 +3,6 @@
 package selection
 
 import (
-	"context"
 	"fmt"
 	"syscall"
 	"time"
@@ -96,27 +95,6 @@ func keyEvent(vk uint16, up bool) keyboardInput {
 		flags = keyeventfKeyUp
 	}
 	return keyboardInput{Type: inputKeyboard, WVk: vk, DwFlags: flags}
-}
-
-// waitCopyRelease waits for the entire shortcut to come up on its own. A
-// modifier can alter the copy chord, and a later release of the shortcut's
-// main key looks like new input to the clipboard transaction's watcher.
-// Also wait for mouse buttons so the copy cannot begin during a drag.
-func waitCopyRelease(ctx context.Context, timeout time.Duration) error {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
-	for copyControlsDown(keyDown) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
-			return ErrShortcutHeld
-		case <-tick.C:
-		}
-	}
-	return ctx.Err()
 }
 
 // Scan the virtual-key range, including mouse buttons and custom shortcuts.

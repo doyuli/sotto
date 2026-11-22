@@ -119,7 +119,11 @@ func (b *uiaBreaker) noteAnswer() {
 
 // grabUIA asks the focused element for its selection, through the
 // single-slot, timeout-and-breaker wrapper.
-func grabUIA(ctx context.Context) (sel Selection, err error) {
+func grabUIA(ctx context.Context) (Selection, error) {
+	return grabUIAWith(ctx, uiaGrabThread)
+}
+
+func grabUIAWith(ctx context.Context, read func(func(string)) (Selection, error)) (sel Selection, err error) {
 	started, outcome := time.Now(), "canceled"
 	callID := uiaCallID.Add(1)
 	defer func() {
@@ -151,12 +155,13 @@ func grabUIA(ctx context.Context) (sel Selection, err error) {
 		err error
 	}
 	ch := make(chan answer, 1)
+	var selected atomic.Pointer[string]
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		defer func() { uiaMu <- struct{}{} }()
 		started := time.Now()
-		sel, err := uiaGrabThread()
+		sel, err := read(func(text string) { selected.Store(&text) })
 		// This also identifies calls that return long after the caller's
 		// timeout. Neither log includes the selected text.
 		log.Printf("selection: uia call=%d worker=returned elapsed=%s err=%v", callID, time.Since(started).Round(time.Millisecond), err)
@@ -179,6 +184,13 @@ func grabUIA(ctx context.Context) (sel Selection, err error) {
 		}
 		return a.sel, a.err
 	case <-timer.C:
+		// Bounds and COM cleanup can stall after GetText already succeeded.
+		// Keep the text while the worker retains its slot until it returns.
+		if text := selected.Load(); text != nil {
+			breaker.noteAnswer()
+			outcome = "selected_without_bounds"
+			return Selection{Text: *text, Via: "uia"}, nil
+		}
 		breaker.noteTimeout()
 		outcome = "timeout"
 		return Selection{}, errUIATimeout
@@ -189,7 +201,7 @@ func grabUIA(ctx context.Context) (sel Selection, err error) {
 
 // uiaGrabThread runs on its own thread: a UIA client must join the MTA,
 // and a fresh thread per grab keeps a hung call from blocking the next.
-func uiaGrabThread() (Selection, error) {
+func uiaGrabThread(selected func(string)) (Selection, error) {
 	// COINIT_MULTITHREADED = 0: the apartment UIA clients want, which
 	// needs no message pump.
 	if err := ole.CoInitializeEx(0, 0); err != nil {
@@ -239,18 +251,14 @@ func uiaGrabThread() (Selection, error) {
 			continue
 		}
 		text, ok := rangeText(r)
-		if ok {
+		if ok && strings.TrimSpace(text) != "" {
+			selected(text)
 			sel.Text = text
-			if rects, ok := rangeRects(r); ok && len(rects) >= 4 && sel.Text != "" {
-				// The first range's rectangle places the bubble.
-				if rect, ok := physRectToDIP(rects[0], rects[1], rects[2], rects[3]); ok {
-					sel.Rect, sel.HasRect = rect, true
-				}
-			}
+			sel.Rect, sel.HasRect = rangeFirstRect(r)
 		}
 		comCall(r, vtblRelease)
 	}
-	if strings.TrimSpace(sel.Text) == "" {
+	if sel.Text == "" {
 		// The pattern answered with selection ranges that hold no text.
 		// Most apps mean "nothing selected", but some Chromium ones answer
 		// this way while a selection exists, so grab decides whether the
@@ -271,33 +279,31 @@ func rangeText(r unsafe.Pointer) (string, bool) {
 	return text, text != ""
 }
 
-// rangeRects reads an ITextRange's bounding rectangles, an array of
-// x, y, width, height quadruples in physical pixels.
-func rangeRects(r unsafe.Pointer) ([]float64, bool) {
+// Only the first rectangle anchors the bubble, even for a multiline selection.
+func rangeFirstRect(r unsafe.Pointer) (Rect, bool) {
 	var sa unsafe.Pointer
 	if err := comCall(r, vtblRangeGetBoundingRectangles, uintptr(unsafe.Pointer(&sa))); err != nil || sa == nil {
-		return nil, false
+		return Rect{}, false
 	}
 	defer procSafeArrayDestroy.Call(uintptr(sa))
 	var lb, ub int32
 	if hr, _, _ := procSafeArrayGetLBound.Call(uintptr(sa), 1, uintptr(unsafe.Pointer(&lb))); hr != 0 {
-		return nil, false
+		return Rect{}, false
 	}
 	if hr, _, _ := procSafeArrayGetUBound.Call(uintptr(sa), 1, uintptr(unsafe.Pointer(&ub))); hr != 0 {
-		return nil, false
+		return Rect{}, false
 	}
-	if ub < lb {
-		return nil, false
+	if int64(ub)-int64(lb) < 3 {
+		return Rect{}, false
 	}
-	out := make([]float64, 0, ub-lb+1)
-	for i := lb; i <= ub; i++ {
-		var v float64
-		if hr, _, _ := procSafeArrayGetElement.Call(uintptr(sa), uintptr(unsafe.Pointer(&i)), uintptr(unsafe.Pointer(&v))); hr != 0 {
-			return nil, false
+	var coords [4]float64
+	for i := range coords {
+		if hr, _, _ := procSafeArrayGetElement.Call(uintptr(sa), uintptr(unsafe.Pointer(&lb)), uintptr(unsafe.Pointer(&coords[i]))); hr != 0 {
+			return Rect{}, false
 		}
-		out = append(out, v)
+		lb++
 	}
-	return out, true
+	return physRectToDIP(coords[0], coords[1], coords[2], coords[3])
 }
 
 // bstrText reads a BSTR as a Go string.

@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/egoist/mygo"
+
 	"sotto/internal/config"
+	"sotto/internal/selection"
 	"sotto/internal/translate"
 )
 
@@ -60,5 +63,17 @@ func TestEntryOwnership(t *testing.T) {
 	next.Cancel()
 	if next.Valid() {
 		t.Fatal("canceled entry still owns the UI")
+	}
+}
+
+func TestSelectionPlacementUsesCapturedSource(t *testing.T) {
+	// A slow clipboard grab used to place the full bubble at the new cursor.
+	task := entryTask{cursor: mygo.Point{X: -320, Y: 400}}
+	if got := task.selectionSource(selection.Selection{Via: "clipboard"}); got != (mygo.Rectangle{X: -320, Y: 400}) {
+		t.Fatalf("clipboard selection moved away from the shortcut: %+v", got)
+	}
+	sel := selection.Selection{HasRect: true, Rect: selection.Rect{X: 10, Y: 12, W: 40, H: 18}}
+	if got := task.selectionSource(sel); got != (mygo.Rectangle{X: 10, Y: 12, Width: 40, Height: 18}) {
+		t.Fatalf("selection bounds lost: %+v", got)
 	}
 }

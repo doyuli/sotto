@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"sotto/internal/platform"
+	"sotto/internal/selection"
 )
 
 // entryGate gives each explicit entry action ownership of the transient UI.
@@ -54,6 +55,15 @@ func (g *entryGate) cancel() {
 
 func (t *entryTask) source() mygo.Rectangle {
 	return mygo.Rectangle{X: t.cursor.X, Y: t.cursor.Y}
+}
+
+// Clipboard grabs have no bounds. Keep both presentations at the pointer
+// position captured with the shortcut, even if the mouse has since moved.
+func (t *entryTask) selectionSource(sel selection.Selection) mygo.Rectangle {
+	if sel.HasRect {
+		return mygo.Rectangle{X: sel.Rect.X, Y: sel.Rect.Y, Width: sel.Rect.W, Height: sel.Rect.H}
+	}
+	return t.source()
 }
 
 // A workspace notification can arrive after a hotkey in the new workspace.

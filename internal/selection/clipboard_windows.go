@@ -13,7 +13,6 @@ const (
 	clipboardPoll    = 10 * time.Millisecond
 	clipboardSettle  = 40 * time.Millisecond
 	clipboardTimeout = 2 * time.Second
-	inputReleaseWait = 1200 * time.Millisecond
 )
 
 func grabClipboard(ctx context.Context) (Selection, error) {
@@ -43,7 +42,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 		return Selection{}, ErrNoSelection
 	}
 	stage = "wait_input_release"
-	if err := waitCopyRelease(ctx, inputReleaseWait); err != nil {
+	if err := waitCopyRelease(ctx, func() bool { return copyControlsDown(keyDown) }); err != nil {
 		return Selection{}, err
 	}
 	if !sameForeground(hwnd, pid) {
