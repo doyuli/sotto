@@ -144,6 +144,23 @@ func TestAllServicesDisabledRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAllCopyFormatsDisabledRoundTrip(t *testing.T) {
+	// Normalization used to re-enable every format when the last one was disabled.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := Default()
+	s.CopyFormats = []string{}
+	if err := Save(path, Normalize(s)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CopyFormats == nil || len(got.CopyFormats) != 0 {
+		t.Fatalf("copy formats = %#v, want an empty list", got.CopyFormats)
+	}
+}
+
 func TestLoadDamagedKeepsBackup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
@@ -243,6 +260,9 @@ func TestNormalizePartialFile(t *testing.T) {
 	}
 	if got.TargetLanguage != "ja" {
 		t.Errorf("target = %q, want ja", got.TargetLanguage)
+	}
+	if !slices.Equal(got.CopyFormats, Default().CopyFormats) {
+		t.Errorf("legacy settings lost default copy formats: %v", got.CopyFormats)
 	}
 	if got.Hotkeys.Panel != Default().Hotkeys.Panel {
 		t.Errorf("unrelated fields lost their defaults: %+v", got)

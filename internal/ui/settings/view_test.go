@@ -489,20 +489,13 @@ func TestSettingsViewHotkeysTab(t *testing.T) {
 }
 
 func TestSettingsViewNamingTabAndThemeFollow(t *testing.T) {
-	var mu sync.Mutex
 	current := testSettingsConfig()
 	current.CopyFormats = []string{"lowerCamel", "snake"}
 
 	v := NewView(TabNaming, current, Actions{
-		GetSettings: func() config.Settings {
-			mu.Lock()
-			defer mu.Unlock()
-			return current
-		},
+		GetSettings: func() config.Settings { return current },
 		SaveSettings: func(s config.Settings) error {
-			mu.Lock()
-			defer mu.Unlock()
-			current = s
+			current = config.Normalize(s)
 			return nil
 		},
 	})
@@ -511,24 +504,20 @@ func TestSettingsViewNamingTabAndThemeFollow(t *testing.T) {
 	tt := ui.NewTester(v.Render, 780, 600)
 	tt.Frame()
 
-	// Disable snake; lowerCamel remains as last one and becomes disabled.
-	if err := tt.Click("切换下划线"); err != nil {
-		t.Fatalf("Click 切换下划线: %v", err)
-	}
-	waitForCondition(t, time.Second, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return slices.Equal(current.CopyFormats, []string{"lowerCamel"})
-	}, "expected CopyFormats to contain only lowerCamel")
-
-	// Clicking the last remaining format must not remove it.
-	_ = tt.Click("切换小驼峰")
-	tt.Frame()
-	mu.Lock()
-	formats := slices.Clone(current.CopyFormats)
-	mu.Unlock()
-	if !slices.Equal(formats, []string{"lowerCamel"}) {
-		t.Fatalf("last remaining format was modified: %v", formats)
+	// The last enabled switch used to be locked on.
+	for _, step := range []struct {
+		label string
+		want  []string
+	}{
+		{"切换下划线", []string{"lowerCamel"}},
+		{"切换小驼峰", []string{}},
+		{"切换下划线", []string{"snake"}},
+	} {
+		settingsClick(t, tt, step.label)
+		waitSettingsIdle(t, v)
+		if !slices.Equal(current.CopyFormats, step.want) {
+			t.Fatalf("after %s: copy formats = %v, want %v", step.label, current.CopyFormats, step.want)
+		}
 	}
 
 	// Verify light/dark theme switching updates root panel color dynamically.

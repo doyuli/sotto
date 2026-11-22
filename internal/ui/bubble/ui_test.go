@@ -133,6 +133,34 @@ func TestBubbleViewInputErrorKeepsSourceAndAllowsResubmit(t *testing.T) {
 	}
 }
 
+func TestBubbleCopyAfterDisablingLastNamingFormat(t *testing.T) {
+	// Removing the last format from an open bubble must leave the translation copyable.
+	const result = "User name!"
+	cfg := testBubbleConfig()
+	cfg.CopyFormats = []string{"lowerCamel"}
+	v := newBubbleView(1, cfg, bubbleViewActions{})
+	v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "plain-copy", ShowID: 1,
+		ReqID: "req", Trigger: "selection", Text: "用户名", TargetLang: "en", Settings: cfg}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "req", TargetLang: "en", Services: []string{"google"}})
+	v.applyResult(TranslationUpdateMsg{ReqID: "req", Service: "google", Text: result})
+	tt := ui.NewTester(v.render, 480, 560)
+	if !tt.HasText("aB") {
+		t.Fatal("missing enabled lowerCamel format")
+	}
+	cfg.CopyFormats = []string{}
+	v.ApplySettings(cfg)
+	tt.Frame()
+	if tt.HasText("aB") {
+		t.Fatal("disabled lowerCamel format still visible")
+	}
+	if err := tt.Click("复制 Google"); err != nil {
+		t.Fatal(err)
+	}
+	if got := tt.Clipboard(); got != result {
+		t.Fatalf("clipboard = %q, want %q", got, result)
+	}
+}
+
 func TestBubbleViewStreamingErrorRetryAndNamingChips(t *testing.T) {
 	var runs []RunReq
 	var openedSettings int

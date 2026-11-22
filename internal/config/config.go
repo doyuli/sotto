@@ -198,7 +198,7 @@ func Normalize(s Settings) Settings {
 		s.TargetLanguage = d.TargetLanguage
 	}
 	s.CopyFormats = validFormats(s.CopyFormats)
-	if len(s.CopyFormats) == 0 {
+	if s.CopyFormats == nil {
 		s.CopyFormats = d.CopyFormats
 	}
 	if s.Hotkeys.Panel == "" {
@@ -224,6 +224,10 @@ func defaultHotkeys(goos string) HotkeySettings {
 }
 
 func validFormats(formats []string) []string {
+	// An explicit empty list disables all naming formats.
+	if len(formats) == 0 {
+		return formats
+	}
 	var out []string
 	for _, f := range formats {
 		if slices.Contains(naming.Styles, f) && !slices.Contains(out, f) {
