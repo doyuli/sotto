@@ -256,9 +256,14 @@ func adjacentFragments(row, left, right bounds) bool {
 	if gap := right.x0 - row.x1; gap >= 0 {
 		return gap <= 1.5*min(row.height(), right.height())
 	}
-	// Expanded OCR boxes can share a glyph's width. Require most of each
-	// fragment to lie outside the overlap so nested boxes stay separate.
-	return left.x1-right.x0 <= min(left.height(), right.height(), left.width()/2, right.width()/2)
+	// A contained box cannot extend the text on this baseline.
+	if left.x0 == right.x0 || right.x1 <= left.x1 {
+		return false
+	}
+	// Even a small overlap can cover more than half of a narrow punctuation mark.
+	height := min(left.height(), right.height())
+	overlap := left.x1 - right.x0
+	return overlap <= .1*height || overlap <= min(height, left.width()/2, right.width()/2)
 }
 
 func proseLike(text string) bool {

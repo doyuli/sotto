@@ -22,6 +22,9 @@ func TestLayoutParagraphsAndBoundaries(t *testing.T) {
 		{"ui-labels", []Line{line("Save", 0, 0, 40, 16), line("Cancel", 0, 20, 40, 16)}, "Save\n\nCancel"},
 		// Expanded boxes on the same baseline used to turn "On Windows" into two paragraphs.
 		{"overlapping-fragments", []Line{line("Windows, set GOFLAGS", 26, 2, 608, 19), line("On", 3, 4, 33, 17)}, "On Windows, set GOFLAGS"},
+		// A few pixels of detector overlap used to split narrow punctuation from its word.
+		{"overlapping-punctuation", []Line{line("Warning", 0, 0, 90, 36), line("!", 87, 0, 5, 36)}, "Warning!"},
+		{"contained-punctuation", []Line{line("Warning", 0, 0, 90, 36), line("!", 87, 0, 3, 36)}, "Warning\n\n!"},
 		// A shorter middle fragment used to shrink the gap allowed before the next word.
 		{"mixed-fragment-heights", []Line{line("Set", 0, 0, 40, 24), line("GOFLAGS", 45, 8, 60, 16), line("for Windows", 135, 0, 120, 24)}, "Set GOFLAGS for Windows"},
 		{"nested-box", []Line{line("Header", 0, 0, 80, 20), line("Label", 55, 0, 25, 20)}, "Header\n\nLabel"},
