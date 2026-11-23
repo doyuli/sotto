@@ -10,6 +10,8 @@ export default defineConfig({
   version: pkg.version,
   updates: updatePublicKey ? { publicKey: updatePublicKey, github: "doyuli/sotto" } : undefined,
   out: "build",
+  // Tray images are embedded in the executable.
+  resourcesExclude: ["tray"],
   macos: {
     minimumSystemVersion: "14.0",
     infoPlist: {

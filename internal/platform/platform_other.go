@@ -8,7 +8,6 @@ import (
 
 func Init()                                                  {}
 func WorkspaceGeneration() uint64                            { return 0 }
-func TrayOptions(o mygo.TrayOptions) mygo.TrayOptions        { return o }
 func SelectionPermissionMessage(error) string                { return "" }
 func SettingsWindow(o mygo.WindowOptions) mygo.WindowOptions { return o }
 func ShowBubbleWindow(w *mygo.Window, trigger string)        { w.Show() }

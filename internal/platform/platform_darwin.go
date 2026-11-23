@@ -3,7 +3,6 @@
 package platform
 
 import (
-	_ "embed"
 	"errors"
 
 	"github.com/egoist/mygo"
@@ -12,16 +11,6 @@ import (
 )
 
 func WorkspaceGeneration() uint64 { return macnative.WorkspaceGeneration() }
-
-// Keep the menu bar silhouette independent of the app icon's colors and tile.
-//
-//go:embed assets/tray-template.png
-var trayTemplatePNG []byte
-
-func TrayOptions(o mygo.TrayOptions) mygo.TrayOptions {
-	o.ID, o.IconIsTemplate, o.Icon = "main", true, trayTemplatePNG
-	return o
-}
 
 func SelectionPermissionMessage(err error) string {
 	if errors.Is(err, macnative.ErrAccessibility) {

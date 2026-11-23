@@ -5,11 +5,12 @@ import (
 	"github.com/egoist/mygo"
 
 	"sotto/internal/platform"
+	"sotto/resources"
 )
 
 // Run handles diagnostic commands or runs the app until it quits. Call it
-// from the main goroutine; iconPNG is the embedded application icon.
-func Run(iconPNG []byte) error {
+// from the main goroutine.
+func Run() error {
 	platform.Init()
 	if platform.HandleNativeCommand() {
 		return nil
@@ -25,8 +26,8 @@ func Run(iconPNG []byte) error {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
-	platform.InitUpdates(iconPNG)
-	a := newApplication(iconPNG)
+	platform.InitUpdates(resources.AppIcon)
+	a := newApplication()
 	mygo.App.WhenReady(a.ready)
 	return mygo.App.Run()
 }

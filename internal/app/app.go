@@ -33,7 +33,6 @@ import (
 // the bubble windows and the settings window. Its mutex guards the
 // fields and is never held across a call that waits for the main thread.
 type application struct {
-	iconPNG       []byte
 	cfgPath       string
 	configWriteMu sync.Mutex
 
@@ -55,8 +54,8 @@ type application struct {
 	keys        credentialStore
 }
 
-func newApplication(iconPNG []byte) *application {
-	return &application{iconPNG: iconPNG, keys: keys.Store{}, snip: &snip.Manager{}}
+func newApplication() *application {
+	return &application{keys: keys.Store{}, snip: &snip.Manager{}}
 }
 
 // isQuitting reports whether a quit is under way. The bubbles' OnClose
@@ -196,6 +195,9 @@ func (a *application) applySettings(s config.Settings) {
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
+	if s.MinimalTranslation != old.MinimalTranslation && mygo.App.IsReady() {
+		mygo.RunOnMain(a.refreshTrayMode)
+	}
 	// Publish only after registration and persistence have succeeded.
 	a.broadcastSettings(a.settings())
 }
@@ -308,18 +310,31 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	}
 }
 
+func (a *application) trayOptions() mygo.TrayOptions {
+	return platform.TrayOptions(a.settings().MinimalTranslation)
+}
+
 func (a *application) setUpTray() {
-	tray, err := mygo.NewTray(platform.TrayOptions(mygo.TrayOptions{
-		Icon:    a.iconPNG,
-		ToolTip: "Sotto 翻译",
-		Menu:    a.trayMenu(),
-	}))
+	opts := a.trayOptions()
+	opts.Menu = a.trayMenu()
+	tray, err := mygo.NewTray(opts)
 	if err != nil {
 		log.Printf("no tray icon: %v", err)
 		return
 	}
 	a.tray = tray
 	tray.OnClick(func() { a.startEntry("panel") })
+}
+
+func (a *application) refreshTrayMode() {
+	if a.tray == nil {
+		return
+	}
+	opts := a.trayOptions()
+	if err := a.tray.SetIcon(opts.Icon, opts.IconIsTemplate); err != nil {
+		log.Printf("update tray icon: %v", err)
+	}
+	a.tray.SetToolTip(opts.ToolTip)
 }
 
 // refreshTrayMenu publishes the autostart and hotkey states actually in force.

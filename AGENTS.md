@@ -63,9 +63,11 @@ Use `build:win:arm64` for Windows ARM64. See the [build instructions](README.md#
 ## Project Structure at a Glance
 
 ```
-main.go               # Embeds the app icon and calls app.Run
+main.go               # Calls app.Run
+resources             # Application artwork, tray variants, and packaged platform assets
 internal/app          # Lifecycle, controllers, hotkeys, service assembly, entry tasks, screenshot orchestration
 internal/ui/bubble    # Bubble window pool, native views, layout, and translation sessions
+internal/ui/overlay   # Text-only results and mode status overlays for minimal translation
 internal/ui/settings  # Native settings view and asynchronous save state
 internal/ui/snip      # Selection overlays, display snapshots, and screenshot sessions
 internal/ui/shared    # Display names and icons shared by bubbles and settings
@@ -76,10 +78,12 @@ internal/hotkey       # Hotkey parsing, normalization, registration transaction;
 internal/langdetect   # Coarse Unicode-script detection (pure functions)
 internal/languages    # Supported language definitions and tags
 internal/naming       # Identifier splitting + five naming styles (pure functions)
-internal/translate    # Translator interface + fan-out + deepl/openai/baidu/tencent/youdao/azure/google/dictionary
+internal/translate    # Translator interface, provider implementations, fan-out, and embedded offline dictionary
+internal/usermessage  # Converts errors into concise Chinese messages for the desktop UI
 internal/selection    # Windows UIA / macOS AX primary path + simulated-copy fallback; outside-click detection
 internal/capture      # Windows GDI / macOS ScreenCaptureKit capture
 internal/ocr          # Windows PP-OCR + Windows.Media.Ocr fallback; macOS Vision
+internal/ocr/pipeline # Platform-independent PP-OCR detection, recognition, and text layout
 internal/speech       # Text-to-speech synthesis (Windows SAPI / macOS AVFoundation)
 internal/screencoords # Screen coordinate conversions between DIPs and physical pixels
 internal/macnative    # Purego macOS system bridge (workspace, geometry, permissions)

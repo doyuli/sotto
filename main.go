@@ -4,17 +4,13 @@
 package main
 
 import (
-	_ "embed"
 	"log"
 
 	"sotto/internal/app"
 )
 
-//go:embed resources/icon.png
-var iconPNG []byte
-
 func main() {
-	if err := app.Run(iconPNG); err != nil {
+	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
