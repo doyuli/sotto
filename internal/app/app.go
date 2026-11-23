@@ -27,6 +27,7 @@ import (
 	"sotto/internal/ui/overlay"
 	"sotto/internal/ui/settings"
 	"sotto/internal/ui/snip"
+	"sotto/internal/usermessage"
 )
 
 // application is the app's state: the settings, the credential store,
@@ -335,9 +336,10 @@ func (a *application) refreshTrayMode() {
 		log.Printf("update tray icon: %v", err)
 	}
 	a.tray.SetToolTip(opts.ToolTip)
+	a.refreshTrayMenu()
 }
 
-// refreshTrayMenu publishes the autostart and hotkey states actually in force.
+// refreshTrayMenu publishes current mode, shortcut, update and window state.
 func (a *application) refreshTrayMenu() {
 	mygo.RunOnMain(func() {
 		if a.tray != nil {
@@ -347,43 +349,39 @@ func (a *application) refreshTrayMenu() {
 }
 
 func (a *application) trayMenu() *mygo.Menu {
-	label := "Sotto"
-	if version := mygo.App.Version(); version != "" {
-		label += " v" + version
-	}
 	a.mu.Lock()
-	panelKey, ocrKey := a.hotkeys["panel"], a.hotkeys["ocr"]
+	panelKey, ocrKey, selectionKey := a.hotkeys["panel"], a.hotkeys["ocr"], a.hotkeys["selection"]
+	modeKey, minimal := a.hotkeys["minimalTranslation"], a.cfg.MinimalTranslation
 	a.mu.Unlock()
 
+	// Hint at the shortcut without taking focus from the source application.
+	selectionHint := &mygo.MenuItem{ID: "selection", Label: hotkeyLabels["selection"], Accelerator: selectionKey, Disabled: true}
+	if selectionKey == "" {
+		selectionHint.Label += "（快捷键未生效）"
+	}
+
 	items := []*mygo.MenuItem{
-		{Label: label, Disabled: true},
-		mygo.Separator(),
-		{Label: "翻译面板", Accelerator: panelKey, Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: hotkeyLabels["panel"], Accelerator: panelKey, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.startEntry("panel")
 		}},
-		{Label: "截图翻译", Accelerator: ocrKey, Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: hotkeyLabels["ocr"], Accelerator: ocrKey, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.startEntry("ocr")
 		}},
+		selectionHint,
+		mygo.Separator(),
+		{ID: "minimalTranslation", Label: hotkeyLabels["minimalTranslation"], Accelerator: modeKey,
+			Type: mygo.MenuItemCheckbox, Checked: minimal, Click: func(*mygo.MenuItem, *mygo.Window) {
+				go a.toggleMinimalTranslation()
+			}},
 		mygo.Separator(),
 		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) }},
-		platform.UpdateMenuItem(a.refreshTrayMenu),
-		{Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
-			Click: func(it *mygo.MenuItem, _ *mygo.Window) {
-				open := it.IsChecked()
-				go func() {
-					if err := a.setOpenAtLogin(open); err != nil {
-						log.Printf("set open at login: %v", err)
-					}
-				}()
-			}},
 	}
 	items = append(items, a.platformMenuItems()...)
-	items = append(items, mygo.Separator(), &mygo.MenuItem{Label: "退出 Sotto", Role: mygo.RoleQuit})
+	items = append(items, platform.UpdateMenuItem(a.refreshTrayMenu), mygo.Separator(), &mygo.MenuItem{Label: "退出 Sotto", Role: mygo.RoleQuit})
 	return mygo.NewMenu(items)
 }
 
 func (a *application) setOpenAtLogin(open bool) error {
-	defer a.refreshTrayMenu()
 	return a.commitOpenAtLogin(open, mygo.App.SetOpenAtLogin)
 }
 
@@ -400,7 +398,7 @@ func (a *application) commitOpenAtLogin(open bool, setLoginItem func(bool) error
 	}
 	// Windows can change the startup entry independently of our settings.
 	if err := setLoginItem(open); err != nil {
-		return fmt.Errorf("set open at login: %w", err)
+		return usermessage.Explain(fmt.Errorf("set open at login: %w", err), "请在系统设置中检查 Sotto 的启动项")
 	}
 	return nil
 }
@@ -417,8 +415,11 @@ func (a *application) showSettings(services bool) {
 	sv := a.settingsView
 	a.mu.Unlock()
 	if win != nil {
-		if services && sv != nil {
-			sv.SetActiveTab(settings.TabServices)
+		if sv != nil {
+			if services {
+				sv.SetActiveTab(settings.TabServices)
+			}
+			sv.RefreshOpenAtLogin()
 		}
 		win.Show()
 		win.Focus()
@@ -434,6 +435,7 @@ func (a *application) showSettings(services bool) {
 		sv.SetActiveTab(tab)
 		sv.RefreshCredentialsAsync()
 	}
+	sv.RefreshOpenAtLogin()
 	w := mygo.NewWindow(platform.SettingsWindow(mygo.WindowOptions{
 		Title:           "Sotto 设置",
 		Content:         ui.View(sv.Render),
@@ -447,6 +449,7 @@ func (a *application) showSettings(services bool) {
 	a.mu.Lock()
 	a.settingsWin = w
 	a.mu.Unlock()
+	w.OnFocus(sv.RefreshOpenAtLogin)
 	w.OnBlur(sv.CancelHotkeyRecording)
 	w.OnClosed(func() {
 		sv.DetachWindow()
@@ -465,6 +468,7 @@ func (a *application) createSettingsView(tab settings.Tab) *settings.View {
 		GetSettings:            svc.Get,
 		SaveSettings:           svc.Set,
 		SaveMinimalTranslation: a.setMinimalTranslation,
+		ReadOpenAtLogin:        mygo.App.OpenAtLogin,
 		SaveOpenAtLogin:        a.setOpenAtLogin,
 		Credentials:            svc.Credentials,
 		SaveService:            svc.SaveService,

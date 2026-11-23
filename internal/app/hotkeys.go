@@ -52,9 +52,7 @@ func (a *application) onShortcut(accel string) func() {
 		}
 		switch action {
 		case "minimalTranslation":
-			if !a.isQuitting() {
-				go a.toggleMinimalTranslation()
-			}
+			go a.toggleMinimalTranslation()
 		case "panel", "selection", "ocr":
 			a.startEntry(action)
 		}
@@ -62,10 +60,14 @@ func (a *application) onShortcut(accel string) func() {
 }
 
 func (a *application) toggleMinimalTranslation() {
+	if a.isQuitting() {
+		return
+	}
 	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
 	message := "已切换到气泡模式"
 	switch {
 	case err != nil:
+		a.refreshTrayMenu()
 		message = usermessage.Format("切换简约翻译失败", err)
 	case enabled:
 		message = "已切换到简约模式"

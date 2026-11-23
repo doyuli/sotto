@@ -57,12 +57,41 @@ func TestHotkeyRegistrationFailureShowsOnlyUserMessage(t *testing.T) {
 	}
 }
 
+func TestTrayAdvertisesOnlyRegisteredSelectionShortcut(t *testing.T) {
+	// A failed registration should show its status without navigating away
+	// from an open settings tab or advertising the dead shortcut.
+	cfg := config.Default()
+	cfg.Hotkeys.Selection = "Ctrl+Shift+D"
+	key := hotkeyValues(canonicalHotkeys(cfg.Hotkeys))["selection"]
+	a := &application{cfg: cfg, bubbles: bubble.NewManager(nil, bubble.Actions{}), shortcutBackend: failingShortcutBackend{
+		shortcut: key, err: hotkey.ErrSystemRegistration,
+	}}
+	if err := a.applyHotkeys(cfg.Hotkeys); err == nil {
+		t.Fatal("expected selection registration failure")
+	}
+	item := a.trayMenu().ItemByID("selection")
+	if item == nil || item.Label != "划词翻译（快捷键未生效）" || item.Accelerator != "" || item.IsEnabled() || item.Click != nil {
+		t.Fatalf("unregistered shortcut should be a status hint: %+v", item)
+	}
+	a.shortcutBackend = failingShortcutBackend{}
+	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
+		t.Fatal(err)
+	}
+	item = a.trayMenu().ItemByID("selection")
+	if item == nil || item.Accelerator != key || item.IsEnabled() || item.Click != nil {
+		t.Fatalf("registered shortcut should be a hint: %+v", item)
+	}
+}
+
 func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	// A general settings snapshot taken before the shortcut must not undo it.
 	cfg := config.Default()
 	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
 	stale := cfg
 	stale.TargetLanguage = "ja"
+	if item := a.trayMenu().ItemByID("minimalTranslation"); item == nil || item.IsChecked() {
+		t.Fatal("tray should offer the unchecked mode before the toggle")
+	}
 	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
 	if err != nil || !enabled {
 		t.Fatalf("toggle enabled=%v err=%v", enabled, err)
@@ -73,6 +102,9 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	saved, err := config.Load(a.cfgPath)
 	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || !a.settings().MinimalTranslation {
 		t.Fatalf("saved mode=%v language=%s err=%v", saved.MinimalTranslation, saved.TargetLanguage, err)
+	}
+	if item := a.trayMenu().ItemByID("minimalTranslation"); item == nil || !item.IsChecked() {
+		t.Fatal("tray did not show the committed mode")
 	}
 }
 

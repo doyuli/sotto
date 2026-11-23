@@ -115,6 +115,67 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	}
 }
 
+func TestSettingsOpenAtLoginReflectsSystemState(t *testing.T) {
+	// The saved preference may be on while the OS disables or rejects the login item.
+	current := testSettingsConfig()
+	current.OpenAtLogin = true
+	var systemEnabled bool
+	var attempts []bool
+	reject := true
+	refreshed := make(chan struct{}, 1)
+	v := NewView(TabGeneral, current, Actions{
+		Invalidate:      func() { refreshed <- struct{}{} },
+		GetSettings:     func() config.Settings { return current },
+		ReadOpenAtLogin: func() bool { return systemEnabled },
+		SaveOpenAtLogin: func(enabled bool) error {
+			attempts = append(attempts, enabled)
+			current.OpenAtLogin = enabled
+			if reject {
+				return errors.New("login item rejected")
+			}
+			systemEnabled = enabled
+			return nil
+		},
+	})
+	defer v.Dispose()
+	tt := ui.NewTester(v.Render, 780, 600)
+	check := func(want bool) {
+		t.Helper()
+		select {
+		case <-refreshed:
+		case <-time.After(time.Second):
+			t.Fatal("settings did not publish the login state")
+		}
+		tt.Frame()
+		sw, found := tt.AccessByRole(ui.RoleSwitch, "切换开机自启")
+		if !found || sw.Checked != want {
+			t.Fatalf("login switch found=%v checked=%v, want %v", found, sw.Checked, want)
+		}
+	}
+	v.RefreshOpenAtLogin()
+	check(false)
+	if len(attempts) != 0 || !current.OpenAtLogin {
+		t.Fatal("reading system status changed the saved preference or requested a system write")
+	}
+	if err := tt.Click("切换开机自启"); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+	if !slices.Equal(attempts, []bool{true}) {
+		t.Fatalf("one click should retry enabling the login item: %v", attempts)
+	}
+	reject = false
+	if err := tt.Click("切换开机自启"); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	systemEnabled = false
+	v.RefreshOpenAtLogin()
+	check(false)
+	v.ApplyExternalSettings(current)
+	check(false)
+}
+
 func TestSettingsViewServicesTab(t *testing.T) {
 	var mu sync.Mutex
 	current := testSettingsConfig()

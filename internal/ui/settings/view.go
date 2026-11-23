@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
@@ -292,6 +293,11 @@ func (v *View) renderSidebar(c *ui.Context, p settingsPalette, active Tab) {
 func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	v.mu.Lock()
 	cfg := cloneSettings(v.settings)
+	openAtLogin, savingOpenAtLogin := cfg.OpenAtLogin, v.savingOpenAtLogin
+	loginStateKnown := v.actions.ReadOpenAtLogin == nil || v.openAtLogin != nil
+	if v.openAtLogin != nil && !savingOpenAtLogin {
+		openAtLogin = *v.openAtLogin
+	}
 	v.mu.Unlock()
 
 	ui.Text(c, "通用").FontSize(18).FontWeight(600).TextColor(p.fg)
@@ -361,16 +367,12 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
-		openAtLogin := cfg.OpenAtLogin
 		v.renderSettingRow(c, p, "开机自启", "登录后常驻托盘", true, func() {
-			sw := ui.Switch(c, &openAtLogin).Label("切换开机自启")
-			if sw.Changed() {
+			ui.Switch(c, &openAtLogin).Label("切换开机自启").Disabled(!loginStateKnown || savingOpenAtLogin).OnClick(func() {
 				v.mu.Lock()
-				next := v.settings
-				next.OpenAtLogin = openAtLogin
-				v.enqueueToggleLocked(next, openAtLogin, v.actions.SaveOpenAtLogin)
-				v.mu.Unlock()
-			}
+				defer v.mu.Unlock()
+				v.enqueueOpenAtLoginLocked(openAtLogin)
+			})
 		})
 
 		autoHide := cfg.Bubble.AutoHide
@@ -397,6 +399,9 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			}
 		})
 	})
+	if version := mygo.App.Version(); version != "" {
+		ui.Text(c, "Sotto v"+version).FillWidth().TextAlign(ui.Center).FontSize(12).TextColor(p.muted)
+	}
 }
 
 func (v *View) renderSettingRow(c *ui.Context, p settingsPalette, title, sub string, divider bool, control func()) {

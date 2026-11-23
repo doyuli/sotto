@@ -372,13 +372,15 @@ func TestPinnedRestorePreservesEntryOwnership(t *testing.T) {
 }
 
 func TestPinnedRestoreRejectsObsoleteMenuActions(t *testing.T) {
-	for _, state := range []string{"unpinned", "closed", "replaced"} {
+	for _, state := range []string{"unpinned", "closing", "closed", "replaced"} {
 		t.Run(state, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, "input", "")
 			b.pinned = true
 			switch state {
 			case "unpinned":
 				b.pinned = false
+			case "closing":
+				b.closeClaimed = true
 			case "closed":
 				delete(m.byID, b.id)
 			case "replaced":

@@ -700,19 +700,19 @@ func (b *bubble) stopStalePresentation(workspace uint64) bool {
 func (m *Manager) claimPinnedRestore(b *bubble, workspace uint64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.byID[b.id] != b || !b.pinned {
+	if m.byID[b.id] != b || !b.pinned || b.closeClaimed {
 		return false
 	}
 	b.workspace = workspace
 	return true
 }
 
-// HiddenPinnedMenuItems returns restore actions in creation order.
-func (m *Manager) HiddenPinnedMenuItems() []*mygo.MenuItem {
+// PinnedRestoreMenuItem lists hidden pinned bubbles in creation order.
+func (m *Manager) PinnedRestoreMenuItem(refresh func()) *mygo.MenuItem {
 	m.mu.Lock()
 	var pinned []*bubble
 	for _, b := range m.byID {
-		if b.pinned {
+		if b.pinned && !b.closeClaimed {
 			pinned = append(pinned, b)
 		}
 	}
@@ -721,12 +721,21 @@ func (m *Manager) HiddenPinnedMenuItems() []*mygo.MenuItem {
 	var items []*mygo.MenuItem
 	for _, b := range pinned {
 		if !b.win.IsVisible() {
-			items = append(items, &mygo.MenuItem{Label: fmt.Sprintf("恢复固定气泡 %d", b.id+1), Click: func(*mygo.MenuItem, *mygo.Window) {
+			items = append(items, &mygo.MenuItem{Label: fmt.Sprintf("固定气泡 %d", b.id+1), Click: func(*mygo.MenuItem, *mygo.Window) {
 				if m.claimPinnedRestore(b, platform.WorkspaceGeneration()) {
 					b.win.Show()
 				}
+				refresh()
 			}})
 		}
 	}
-	return items
+	switch len(items) {
+	case 0:
+		return nil
+	case 1:
+		items[0].Label = "恢复" + items[0].Label
+		return items[0]
+	default:
+		return &mygo.MenuItem{Label: "恢复固定气泡", Submenu: items}
+	}
 }

@@ -24,10 +24,13 @@ func (a *application) platformMenuItems() []*mygo.MenuItem {
 		}
 	}
 	items := []*mygo.MenuItem{{Label: "系统权限", Submenu: []*mygo.MenuItem{
-		{Label: "辅助功能（划词翻译）…", Click: openPermission("Privacy_Accessibility")},
-		{Label: "屏幕录制（截图翻译）…", Click: openPermission("Privacy_ScreenCapture")},
+		{Label: "辅助功能", Click: openPermission("Privacy_Accessibility")},
+		{Label: "屏幕录制", Click: openPermission("Privacy_ScreenCapture")},
 	}}}
-	return append(items, a.bubbles.HiddenPinnedMenuItems()...)
+	if item := a.bubbles.PinnedRestoreMenuItem(a.refreshTrayMenu); item != nil {
+		items = append(items, item)
+	}
+	return items
 }
 
 func (a *application) readyPlatform() {

@@ -33,6 +33,7 @@ type Actions struct {
 	GetSettings            func() config.Settings
 	SaveSettings           func(config.Settings) error
 	SaveMinimalTranslation func(bool) error
+	ReadOpenAtLogin        func() bool
 	SaveOpenAtLogin        func(bool) error
 	Credentials            func(service string) (CredentialStatus, error)
 	SaveService            func(name string, changes ServiceChanges) (ServiceSaveResult, error)
@@ -98,6 +99,9 @@ type View struct {
 	probeCancels     map[string]context.CancelFunc
 	serviceHandles   map[string]*serviceRowHandles
 	focusService     string
+
+	openAtLogin       *bool // Last observed system state, independent of the saved preference.
+	savingOpenAtLogin bool
 
 	credentialsLoaded bool
 	credentials       CredentialStatus
@@ -213,6 +217,18 @@ func (v *View) ApplyExternalSettings(cfg config.Settings) {
 	}
 }
 
+func (v *View) RefreshOpenAtLogin() {
+	if read := v.actions.ReadOpenAtLogin; read != nil {
+		v.enqueueTask(func() {
+			open := read()
+			v.mu.Lock()
+			v.openAtLogin = &open
+			v.mu.Unlock()
+			v.invalidate()
+		})
+	}
+}
+
 // Tasks serialize persistent mutations and their readbacks across window reopenings.
 func (v *View) enqueueTaskLocked(task func()) {
 	if v.disposed {
@@ -266,6 +282,29 @@ func (v *View) enqueueToggleLocked(next config.Settings, enabled bool, save func
 		return
 	}
 	v.enqueueSettingsWriteLocked(next, func() error { return save(enabled) })
+}
+
+func (v *View) enqueueOpenAtLoginLocked(enabled bool) {
+	if v.disposed || v.savingOpenAtLogin {
+		return
+	}
+	next := v.settings
+	next.OpenAtLogin = enabled
+	read, save := v.actions.ReadOpenAtLogin, v.actions.SaveOpenAtLogin
+	if read == nil || save == nil {
+		v.enqueueToggleLocked(next, enabled, save)
+		return
+	}
+	v.savingOpenAtLogin = true
+	v.enqueueSettingsWriteLocked(next, func() error {
+		err := save(enabled)
+		open := read()
+		v.mu.Lock()
+		v.openAtLogin = &open
+		v.savingOpenAtLogin = false
+		v.mu.Unlock()
+		return err
+	})
 }
 
 func (v *View) enqueueSettingsWriteLocked(next config.Settings, save func() error) {
