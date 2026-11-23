@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
@@ -63,13 +64,13 @@ func TestTrayAdvertisesOnlyRegisteredSelectionShortcut(t *testing.T) {
 	cfg := config.Default()
 	cfg.Hotkeys.Selection = "Ctrl+Shift+D"
 	key := hotkeyValues(canonicalHotkeys(cfg.Hotkeys))["selection"]
-	a := &application{cfg: cfg, bubbles: bubble.NewManager(nil, bubble.Actions{}), shortcutBackend: failingShortcutBackend{
+	a := &application{cfg: cfg, shortcutBackend: failingShortcutBackend{
 		shortcut: key, err: hotkey.ErrSystemRegistration,
 	}}
 	if err := a.applyHotkeys(cfg.Hotkeys); err == nil {
 		t.Fatal("expected selection registration failure")
 	}
-	item := a.trayMenu().ItemByID("selection")
+	item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("selection")
 	if item == nil || item.Label != "划词翻译（快捷键未生效）" || item.Accelerator != "" || item.IsEnabled() || item.Click != nil {
 		t.Fatalf("unregistered shortcut should be a status hint: %+v", item)
 	}
@@ -77,7 +78,7 @@ func TestTrayAdvertisesOnlyRegisteredSelectionShortcut(t *testing.T) {
 	if err := a.applyHotkeys(cfg.Hotkeys); err != nil {
 		t.Fatal(err)
 	}
-	item = a.trayMenu().ItemByID("selection")
+	item = mygo.NewMenu(a.trayTranslationItems()).ItemByID("selection")
 	if item == nil || item.Accelerator != key || item.IsEnabled() || item.Click != nil {
 		t.Fatalf("registered shortcut should be a hint: %+v", item)
 	}
@@ -89,7 +90,7 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
 	stale := cfg
 	stale.TargetLanguage = "ja"
-	if item := a.trayMenu().ItemByID("minimalTranslation"); item == nil || item.IsChecked() {
+	if item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation"); item == nil || item.IsChecked() {
 		t.Fatal("tray should offer the unchecked mode before the toggle")
 	}
 	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
@@ -103,7 +104,7 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || !a.settings().MinimalTranslation {
 		t.Fatalf("saved mode=%v language=%s err=%v", saved.MinimalTranslation, saved.TargetLanguage, err)
 	}
-	if item := a.trayMenu().ItemByID("minimalTranslation"); item == nil || !item.IsChecked() {
+	if item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation"); item == nil || !item.IsChecked() {
 		t.Fatal("tray did not show the committed mode")
 	}
 }

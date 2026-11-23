@@ -349,6 +349,15 @@ func (a *application) refreshTrayMenu() {
 }
 
 func (a *application) trayMenu() *mygo.Menu {
+	items := append(a.trayTranslationItems(), mygo.Separator(), &mygo.MenuItem{
+		Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) },
+	})
+	items = append(items, a.platformMenuItems()...)
+	items = append(items, platform.UpdateMenuItem(a.refreshTrayMenu), mygo.Separator(), &mygo.MenuItem{Label: "退出 Sotto", Role: mygo.RoleQuit})
+	return mygo.NewMenu(items)
+}
+
+func (a *application) trayTranslationItems() []*mygo.MenuItem {
 	a.mu.Lock()
 	panelKey, ocrKey, selectionKey := a.hotkeys["panel"], a.hotkeys["ocr"], a.hotkeys["selection"]
 	modeKey, minimal := a.hotkeys["minimalTranslation"], a.cfg.MinimalTranslation
@@ -360,7 +369,7 @@ func (a *application) trayMenu() *mygo.Menu {
 		selectionHint.Label += "（快捷键未生效）"
 	}
 
-	items := []*mygo.MenuItem{
+	return []*mygo.MenuItem{
 		{Label: hotkeyLabels["panel"], Accelerator: panelKey, Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.startEntry("panel")
 		}},
@@ -373,12 +382,7 @@ func (a *application) trayMenu() *mygo.Menu {
 			Type: mygo.MenuItemCheckbox, Checked: minimal, Click: func(*mygo.MenuItem, *mygo.Window) {
 				go a.toggleMinimalTranslation()
 			}},
-		mygo.Separator(),
-		{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) }},
 	}
-	items = append(items, a.platformMenuItems()...)
-	items = append(items, platform.UpdateMenuItem(a.refreshTrayMenu), mygo.Separator(), &mygo.MenuItem{Label: "退出 Sotto", Role: mygo.RoleQuit})
-	return mygo.NewMenu(items)
 }
 
 func (a *application) setOpenAtLogin(open bool) error {
