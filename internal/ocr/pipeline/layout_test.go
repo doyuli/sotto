@@ -20,6 +20,11 @@ func TestLayoutParagraphsAndBoundaries(t *testing.T) {
 		{"cjk", []Line{line("这是连续中文段落的", 0, 0, 200, 16), line("第二行内容。", 0, 20, 100, 16)}, "这是连续中文段落的第二行内容。"},
 		{"mixed", []Line{line("我们可以在这里使用 Windows", 0, 0, 200, 16), line("进行截图翻译。", 0, 20, 150, 16)}, "我们可以在这里使用 Windows进行截图翻译。"},
 		{"ui-labels", []Line{line("Save", 0, 0, 40, 16), line("Cancel", 0, 20, 40, 16)}, "Save\n\nCancel"},
+		// Expanded boxes on the same baseline used to turn "On Windows" into two paragraphs.
+		{"overlapping-fragments", []Line{line("Windows, set GOFLAGS", 26, 2, 608, 19), line("On", 3, 4, 33, 17)}, "On Windows, set GOFLAGS"},
+		// A shorter middle fragment used to shrink the gap allowed before the next word.
+		{"mixed-fragment-heights", []Line{line("Set", 0, 0, 40, 24), line("GOFLAGS", 45, 8, 60, 16), line("for Windows", 135, 0, 120, 24)}, "Set GOFLAGS for Windows"},
+		{"nested-box", []Line{line("Header", 0, 0, 80, 20), line("Label", 55, 0, 25, 20)}, "Header\n\nLabel"},
 		{"blank", []Line{line("First paragraph.", 0, 0, 200, 16), line("Another paragraph.", 0, 52, 200, 16)}, "First paragraph.\n\nAnother paragraph."},
 		{"list", []Line{line("- First item", 0, 0, 100, 16), line("2. Second item", 0, 20, 100, 16)}, "- First item\n2. Second item"},
 		{"code", []Line{line("func main() {", 0, 0, 200, 16), line("  return value", 0, 20, 190, 16), line("}", 0, 40, 10, 16)}, "func main() {\n  return value\n}"},

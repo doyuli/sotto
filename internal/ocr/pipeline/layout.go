@@ -236,8 +236,8 @@ func makeRows(indices []int, lines []Line, boxes []bounds, preserve bool) []layo
 			join := false
 			if len(merged) > start {
 				prev := &merged[len(merged)-1]
-				gap := b.x0 - prev.box.x1
-				join = gap >= -.1*min(b.height(), prev.box.height()) && gap <= 1.5*min(b.height(), prev.box.height())
+				last := prev.indices[len(prev.indices)-1]
+				join = adjacentFragments(prev.box, boxes[last], b)
 				if join {
 					prev.indices = append(prev.indices, index)
 					prev.box = prev.box.union(b)
@@ -250,6 +250,15 @@ func makeRows(indices []int, lines []Line, boxes []bounds, preserve bool) []layo
 		}
 	}
 	return merged
+}
+
+func adjacentFragments(row, left, right bounds) bool {
+	if gap := right.x0 - row.x1; gap >= 0 {
+		return gap <= 1.5*min(row.height(), right.height())
+	}
+	// Expanded OCR boxes can share a glyph's width. Require most of each
+	// fragment to lie outside the overlap so nested boxes stay separate.
+	return left.x1-right.x0 <= min(left.height(), right.height(), left.width()/2, right.width()/2)
 }
 
 func proseLike(text string) bool {
