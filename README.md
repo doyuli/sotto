@@ -74,6 +74,7 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | **Bilibili (Index)** | Keyless | Experimental endpoint, enabled by default |
 | **Offline Dictionary** | Keyless | Phonetics and Chinese definitions for single English words |
 | **Google Translate** | Keyless | Disabled by default; toggle on in Settings |
+| **Youdao Dictionary & Translation** | Keyless | Web translation and Chinese dictionary entries for single English words in the full bubble |
 | **DeepL** | API Key | Industry-leading translation quality; supports both DeepL Free and DeepL Pro keys |
 | **OpenAI-Compatible** | API Key | Fully custom Base URL and model names (works seamlessly with DeepSeek, Moonshot, Qwen, etc.) |
 | **SiliconFlow** | API Key | Aggregated open-source LLMs; defaults to `tencent/Hunyuan-MT-7B` |
@@ -82,7 +83,6 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | **Baidu Translate** | API Key | General text translation API |
 | **Tencent Cloud (TMT)** | API Key | Tencent Cloud machine translation service |
 | **Youdao** | API Key | NetEase Youdao translation API |
-| **Youdao Dictionary & Translation** | Keyless | Web translation and Chinese dictionary entries for single English words in the full bubble |
 | **Microsoft Azure** | API Key | Azure Cognitive Services Translator |
 
 > [!NOTE]
