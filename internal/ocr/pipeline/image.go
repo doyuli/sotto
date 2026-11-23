@@ -9,6 +9,7 @@ import (
 
 type pixels struct {
 	image image.Image
+	rgba  *image.RGBA
 	nrgba *image.NRGBA
 	w, h  int
 	min   image.Point
@@ -26,14 +27,21 @@ func source(img image.Image, c Config) (pixels, error) {
 	if w > c.MaxImageSide || h > c.MaxImageSide || w > c.MaxImagePixels/h {
 		return pixels{}, fmt.Errorf("%w: image %dx%d", ErrLimit, w, h)
 	}
+	rgba, _ := img.(*image.RGBA)
 	nrgba, _ := img.(*image.NRGBA)
-	return pixels{img, nrgba, w, h, b.Min}, nil
+	return pixels{image: img, rgba: rgba, nrgba: nrgba, w: w, h: h, min: b.Min}, nil
 }
 
 // Screenshots are opaque. Transparent inputs are deterministically composited
 // onto white to avoid content-dependent background changes.
 func (s pixels) at(x, y int) [3]float64 {
 	x, y = min(max(x, 0), s.w-1), min(max(y, 0), s.h-1)
+	if s.rgba != nil {
+		p := s.rgba.RGBAAt(x+s.min.X, y+s.min.Y)
+		// RGBA channels are already premultiplied; add only the white background.
+		white := 255 - int(p.A)
+		return [3]float64{float64(int(p.B) + white), float64(int(p.G) + white), float64(int(p.R) + white)}
+	}
 	if s.nrgba != nil {
 		i := s.nrgba.PixOffset(x+s.min.X, y+s.min.Y)
 		p := s.nrgba.Pix[i : i+4]

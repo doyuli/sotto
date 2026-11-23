@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// The wrapper exercises image.Image without the NRGBA fast path.
+// The wrapper forces sampling through the image.Image interface.
 type genericImage struct{ image.Image }
 
 func smallConfig() Config { c := DefaultConfig(); c.DetectorSide = 32; return c }
@@ -56,7 +56,12 @@ func BenchmarkScreenshotPreprocessing(b *testing.B) {
 				if legacy {
 					c.DetectorSide, c.MaxDetectorPixels = 736, 4<<20
 				}
-				src, err := source(image.NewNRGBA(image.Rect(0, 0, size[0], size[1])), c)
+				// Snip crops are opaque RGBA images.
+				img := image.NewRGBA(image.Rect(0, 0, size[0], size[1]))
+				for i := 3; i < len(img.Pix); i += 4 {
+					img.Pix[i] = 255
+				}
+				src, err := source(img, c)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -68,6 +73,35 @@ func BenchmarkScreenshotPreprocessing(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+func TestRGBASamplingMatchesGeneric(t *testing.T) {
+	// A cropped RGBA image can retain its parent's stride and nonzero origin.
+	parent := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	img := parent.SubImage(image.Rect(3, 4, 5, 6)).(*image.RGBA)
+	img.SetRGBA(3, 4, color.RGBA{R: 200, G: 100, B: 50, A: 255})
+	img.SetRGBA(4, 4, color.RGBA{R: 85, G: 63, B: 7, A: 128})
+	img.SetRGBA(3, 5, color.RGBA{R: 1, A: 1})
+	// The remaining pixel is fully transparent.
+	src, err := source(img, smallConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := source(genericImage{img}, smallConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := -1; y <= src.h; y++ {
+		for x := -1; x <= src.w; x++ {
+			if got, want := src.at(x, y), ref.at(x, y); got != want {
+				t.Fatalf("pixel (%d,%d): got %v, want %v", x, y, got, want)
+			}
+		}
+	}
+	// Sampling through image.Image.At used to allocate once per screenshot sample.
+	if allocs := testing.AllocsPerRun(100, func() { src.at(0, 0) }); allocs != 0 {
+		t.Fatalf("RGBA sampling allocated %v times per pixel", allocs)
 	}
 }
 
