@@ -2,15 +2,60 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/config"
 	"sotto/internal/selection"
 	"sotto/internal/translate"
+	"sotto/internal/ui/bubble"
+	"sotto/internal/ui/settings"
 )
+
+func TestOpenAtLoginSurvivesQueuedSettingsSave(t *testing.T) {
+	// Saving an unrelated form snapshot used to undo a newer tray login choice.
+	cfg := config.Default()
+	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
+	started, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	view := settings.NewView(settings.TabGeneral, cfg, settings.Actions{
+		GetSettings: a.settings,
+		SaveSettings: func(s config.Settings) error {
+			close(started)
+			<-release
+			err := a.updateSettings(s)
+			done <- err
+			return err
+		},
+	})
+	defer view.Dispose()
+	a.settingsView = view
+	tt := ui.NewTester(view.Render, 780, 600)
+	if err := tt.Click("切换失焦自动隐藏"); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	var applied []bool
+	apply := func(open bool) error { applied = append(applied, open); return nil }
+	err := a.commitOpenAtLogin(true, apply)
+	close(release)
+	if saveErr := <-done; saveErr != nil || err != nil {
+		t.Fatalf("tray save=%v, form save=%v", err, saveErr)
+	}
+	saved, err := config.Load(a.cfgPath)
+	if err != nil || !saved.OpenAtLogin || saved.Bubble.AutoHide || !a.settings().OpenAtLogin {
+		t.Fatalf("saved login=%v autoHide=%v active login=%v err=%v", saved.OpenAtLogin, saved.Bubble.AutoHide, a.settings().OpenAtLogin, err)
+	}
+	// Reassert the native choice even when the saved preference already matches.
+	if err := a.commitOpenAtLogin(true, apply); err != nil || !slices.Equal(applied, []bool{true, true}) {
+		t.Fatalf("login item updates=%v err=%v", applied, err)
+	}
+}
 
 func TestPrepareTranslationRequestCleansAndValidatesSource(t *testing.T) {
 	// Cleanup can make the input empty or expand an identifier past the limit.

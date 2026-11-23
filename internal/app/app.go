@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"slices"
@@ -144,13 +145,15 @@ func (a *application) settings() config.Settings {
 	return a.cfg
 }
 
-// updateSettings saves the general settings form. Mode changes use a separate
-// transaction so a queued form snapshot cannot overwrite a shortcut toggle.
+// A queued form snapshot may predate a shortcut or tray change. Those two
+// preferences are committed independently against the latest settings.
 func (a *application) updateSettings(s config.Settings) error {
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
 
-	s.MinimalTranslation = a.settings().MinimalTranslation
+	current := a.settings()
+	s.MinimalTranslation = current.MinimalTranslation
+	s.OpenAtLogin = current.OpenAtLogin
 	return a.saveSettings(config.Normalize(s))
 }
 
@@ -180,9 +183,7 @@ func (a *application) saveSettings(s config.Settings) error {
 	return a.saveSettingsWithHotkeys(s, "")
 }
 
-// applySettings swaps the settings in and follows them: autostart,
-// update checks, hotkeys, the bubble's focus hiding, the tray's checkbox and every
-// open page.
+// applySettings publishes committed preferences to the updater and open views.
 func (a *application) applySettings(s config.Settings) {
 	a.mu.Lock()
 	old := a.cfg
@@ -191,12 +192,6 @@ func (a *application) applySettings(s config.Settings) {
 
 	if s.AutoUpdate != old.AutoUpdate {
 		platform.SetAutomaticUpdates(s.AutoUpdate)
-	}
-	if s.OpenAtLogin != old.OpenAtLogin {
-		if err := mygo.App.SetOpenAtLogin(s.OpenAtLogin); err != nil {
-			log.Printf("set open at login: %v", err)
-		}
-		a.refreshTrayMenu()
 	}
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
@@ -359,7 +354,12 @@ func (a *application) trayMenu() *mygo.Menu {
 		platform.UpdateMenuItem(a.refreshTrayMenu),
 		{Label: "开机自启", Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(),
 			Click: func(it *mygo.MenuItem, _ *mygo.Window) {
-				go a.setTrayOpenAtLogin(it.IsChecked())
+				open := it.IsChecked()
+				go func() {
+					if err := a.setOpenAtLogin(open); err != nil {
+						log.Printf("set open at login: %v", err)
+					}
+				}()
 			}},
 	}
 	items = append(items, a.platformMenuItems()...)
@@ -367,24 +367,27 @@ func (a *application) trayMenu() *mygo.Menu {
 	return mygo.NewMenu(items)
 }
 
-func (a *application) setTrayOpenAtLogin(open bool) {
+func (a *application) setOpenAtLogin(open bool) error {
+	defer a.refreshTrayMenu()
+	return a.commitOpenAtLogin(open, mygo.App.SetOpenAtLogin)
+}
+
+func (a *application) commitOpenAtLogin(open bool, setLoginItem func(bool) error) error {
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
 
 	cfg := a.settings()
-	if cfg.OpenAtLogin == open {
-		// Windows can change the startup entry independently of our settings.
-		if err := mygo.App.SetOpenAtLogin(open); err != nil {
-			log.Printf("set open at login: %v", err)
+	if cfg.OpenAtLogin != open {
+		cfg.OpenAtLogin = open
+		if err := a.saveSettings(cfg); err != nil {
+			return err
 		}
-		a.refreshTrayMenu()
-		return
 	}
-	cfg.OpenAtLogin = open
-	if err := a.saveSettings(cfg); err != nil {
-		log.Printf("save settings: %v", err)
-		a.refreshTrayMenu()
+	// Windows can change the startup entry independently of our settings.
+	if err := setLoginItem(open); err != nil {
+		return fmt.Errorf("set open at login: %w", err)
 	}
+	return nil
 }
 
 // showSettings opens the settings window, or focuses the one there is.
@@ -447,6 +450,7 @@ func (a *application) createSettingsView(tab settings.Tab) *settings.View {
 		GetSettings:            svc.Get,
 		SaveSettings:           svc.Set,
 		SaveMinimalTranslation: a.setMinimalTranslation,
+		SaveOpenAtLogin:        a.setOpenAtLogin,
 		Credentials:            svc.Credentials,
 		SaveService:            svc.SaveService,
 		TestService:            svc.TestService,

@@ -209,18 +209,19 @@ type bubbleView struct {
 	pinned              bool
 	maxHeight           float64
 
-	settings      config.Settings
-	sourceLang    string
-	targetLang    string
-	detected      string
-	submittedText string
-	composerText  string
-	lastComposer  string
-	retryService  string
-	runServices   map[string]bool
-	serviceReqIDs map[string]string
-	cards         map[string]*bubbleCard
-	collapsed     map[string]bool
+	settings       config.Settings
+	sourceLang     string
+	targetLang     string
+	autoTargetLang string // resolved target of the current automatic translation
+	detected       string
+	submittedText  string
+	composerText   string
+	lastComposer   string
+	retryService   string
+	runServices    map[string]bool
+	serviceReqIDs  map[string]string
+	cards          map[string]*bubbleCard
+	collapsed      map[string]bool
 
 	headerHandle   ui.Handle
 	bodyHandle     ui.Handle
@@ -298,6 +299,7 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	v.composerText = st.Text
 	v.lastComposer = st.Text
 	v.retryService = ""
+	v.autoTargetLang = ""
 	if st.SourceLang != "" {
 		v.sourceLang = st.SourceLang
 	} else {
@@ -400,7 +402,11 @@ func (v *bubbleView) applyMeta(meta RunMetaMsg) {
 		v.sourceLang = meta.SourceLang
 	}
 	if meta.TargetLang != "" {
-		v.targetLang = meta.TargetLang
+		if v.targetLang == "auto" {
+			v.autoTargetLang = meta.TargetLang
+		} else {
+			v.targetLang = meta.TargetLang
+		}
 	}
 	if meta.InputError != "" {
 		v.phase, v.message = "error", meta.InputError
@@ -542,8 +548,15 @@ func (v *bubbleView) showingServices() []string {
 	return out
 }
 
+func (v *bubbleView) resultTargetLang() string {
+	if v.targetLang == "auto" && v.autoTargetLang != "" {
+		return v.autoTargetLang
+	}
+	return v.targetLang
+}
+
 func (v *bubbleView) canSwapLanguages() bool {
-	return !(v.sourceLang == "auto" && v.detected == "")
+	return v.resultTargetLang() != "auto" && (v.sourceLang != "auto" || v.detected != "")
 }
 
 func (v *bubbleView) setPendingCard(service string) {
@@ -581,7 +594,9 @@ func (v *bubbleView) StartRun(text string, service string) {
 	v.phase = ""
 	v.message = ""
 
+	target := v.targetLang
 	if service == "" {
+		v.autoTargetLang = ""
 		v.retryService = ""
 		v.submittedText = text
 		v.pendingScrollTop = true
@@ -594,6 +609,7 @@ func (v *bubbleView) StartRun(text string, service string) {
 			v.serviceReqIDs[svc] = nextReqID
 		}
 	} else {
+		target = v.resultTargetLang()
 		v.retryService = service
 		v.setPendingCard(service)
 		v.serviceReqIDs[service] = nextReqID
@@ -613,7 +629,7 @@ func (v *bubbleView) StartRun(text string, service string) {
 			Source:     sourceTrigger,
 			Text:       text,
 			SourceLang: v.sourceLang,
-			TargetLang: v.targetLang,
+			TargetLang: target,
 		})
 	}
 }
@@ -645,6 +661,7 @@ func (v *bubbleView) clearRun() {
 	v.cards = make(map[string]*bubbleCard)
 	v.serviceReqIDs = make(map[string]string)
 	v.submittedText = ""
+	v.autoTargetLang = ""
 	v.detected = ""
 	v.phase = ""
 	v.message = ""
@@ -694,7 +711,7 @@ func (v *bubbleView) swapLanguages() {
 	if !languages.Valid(nextTarget) {
 		return
 	}
-	v.sourceLang = v.targetLang
+	v.sourceLang = v.resultTargetLang()
 	v.targetLang = nextTarget
 	v.detected = ""
 	if strings.TrimSpace(v.composerText) != "" {
@@ -1203,6 +1220,12 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 	if source {
 		selected, label = &v.sourceLang, "源语言"
 	}
+	languageName := func(code string) string {
+		if !source && code == "auto" {
+			return "自动互译"
+		}
+		return shared.LanguageName(code)
+	}
 	before := *selected
 	selectParts := ui.SelectBase(c, selected)
 	trigger := selectParts.Trigger.Label(label).Disabled(v.isRecognizing()).
@@ -1223,7 +1246,11 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 	}
 	trigger.Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(4).Children(func() {
-			ui.Text(c, shared.LanguageName(*selected)).FontSize(13).TextColor(p.fg).SingleLine()
+			name := languageName(*selected)
+			if !source && *selected == "auto" && v.autoTargetLang != "" {
+				name = "自动 · " + shared.LanguageName(v.autoTargetLang)
+			}
+			ui.Text(c, name).FontSize(13).TextColor(p.fg).SingleLine()
 			ui.Icon(c, shared.ChevronDown).Size(12, 12).TextColor(p.muted)
 		})
 	})
@@ -1233,10 +1260,7 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 		panel.Label(label+"选项").Width(trigger.Bounds().W).Padding(4).
 			Margin(4, 0, 0, 0).Radius(10).Background(p.panel).
 			Border(1, p.pill).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
-		codes := languages.List
-		if source {
-			codes = append([]string{"auto"}, codes...)
-		}
+		codes := append([]string{"auto"}, languages.List...)
 		_, windowH := c.Size()
 		bounds := trigger.Bounds()
 		room := max(bounds.Y-8, windowH-bounds.Y-bounds.H-8)
@@ -1249,7 +1273,7 @@ func (v *bubbleView) renderLanguageSelect(c *ui.Context, p bubblePalette, source
 					item.Background(p.control)
 				}
 				item.Children(func() {
-					ui.Text(c, shared.LanguageName(code)).FontSize(13).TextColor(p.fg).SingleLine()
+					ui.Text(c, languageName(code)).FontSize(13).TextColor(p.fg).SingleLine()
 				})
 			}
 		})
@@ -1371,7 +1395,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 						return
 					}
 
-					if ready && v.targetLang == "en" && len(v.settings.CopyFormats) > 0 {
+					if ready && v.resultTargetLang() == "en" && len(v.settings.CopyFormats) > 0 {
 						words := naming.SplitWords(card.Text)
 						if len(words) > 0 {
 							for _, style := range v.settings.CopyFormats {
@@ -1415,7 +1439,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 					if ready {
 						speakTip = "朗读"
 					}
-					v.renderSpeakButton(c.Key("speak"), p, "朗读 "+title, speakTip, card.Text, v.targetLang, ready, 14)
+					v.renderSpeakButton(c.Key("speak"), p, "朗读 "+title, speakTip, card.Text, v.resultTargetLang(), ready, 14)
 
 					copyTip := "译文完成后可复制"
 					if ready {

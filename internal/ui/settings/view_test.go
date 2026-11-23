@@ -54,8 +54,17 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 		SaveSettings: func(s config.Settings) error {
 			mu.Lock()
 			defer mu.Unlock()
+			s.OpenAtLogin = current.OpenAtLogin
+			s.MinimalTranslation = current.MinimalTranslation
 			current = s
 			saved = append(saved, s)
+			return nil
+		},
+		SaveOpenAtLogin: func(enabled bool) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current.OpenAtLogin = enabled
+			saved = append(saved, current)
 			return nil
 		},
 		SaveMinimalTranslation: func(enabled bool) error {

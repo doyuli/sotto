@@ -33,6 +33,7 @@ type Actions struct {
 	GetSettings            func() config.Settings
 	SaveSettings           func(config.Settings) error
 	SaveMinimalTranslation func(bool) error
+	SaveOpenAtLogin        func(bool) error
 	Credentials            func(service string) (CredentialStatus, error)
 	SaveService            func(name string, changes ServiceChanges) (ServiceSaveResult, error)
 	TestService            func(ctx context.Context, name string) string
@@ -259,14 +260,12 @@ func (v *View) enqueueSaveLocked(next config.Settings) {
 	})
 }
 
-func (v *View) enqueueMinimalTranslationLocked(enabled bool) {
-	next := v.settings
-	next.MinimalTranslation = enabled
-	if v.actions.SaveMinimalTranslation == nil {
+func (v *View) enqueueToggleLocked(next config.Settings, enabled bool, save func(bool) error) {
+	if save == nil {
 		v.enqueueSaveLocked(next)
 		return
 	}
-	v.enqueueSettingsWriteLocked(next, func() error { return v.actions.SaveMinimalTranslation(enabled) })
+	v.enqueueSettingsWriteLocked(next, func() error { return save(enabled) })
 }
 
 func (v *View) enqueueSettingsWriteLocked(next config.Settings, save func() error) {

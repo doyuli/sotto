@@ -355,7 +355,9 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			ui.Switch(c, &minimalTranslation).Label("切换简约翻译模式").OnClick(func() {
 				v.mu.Lock()
 				defer v.mu.Unlock()
-				v.enqueueMinimalTranslationLocked(minimalTranslation)
+				next := v.settings
+				next.MinimalTranslation = minimalTranslation
+				v.enqueueToggleLocked(next, minimalTranslation, v.actions.SaveMinimalTranslation)
 			})
 		})
 
@@ -364,9 +366,9 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			sw := ui.Switch(c, &openAtLogin).Label("切换开机自启")
 			if sw.Changed() {
 				v.mu.Lock()
-				next := cloneSettings(v.settings)
+				next := v.settings
 				next.OpenAtLogin = openAtLogin
-				v.enqueueSaveLocked(next)
+				v.enqueueToggleLocked(next, openAtLogin, v.actions.SaveOpenAtLogin)
 				v.mu.Unlock()
 			}
 		})

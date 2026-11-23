@@ -6,6 +6,81 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestBubbleAutomaticTargetAcrossSubmissions(t *testing.T) {
+	// Resolved metadata used to turn the next automatic submission into a fixed target.
+	cfg := testBubbleConfig()
+	cfg.TargetLanguage = "auto"
+	var req RunReq
+	var spokenLang string
+	v := newBubbleView(1, cfg, bubbleViewActions{
+		run:       func(r RunReq) { req = r },
+		speakText: func(_, lang string, _ func()) { spokenLang = lang },
+	})
+	v.applyState(BubbleState{SessionID: "auto", Trigger: "input", Settings: cfg}, true)
+	tt := ui.NewTester(v.render, 480, 700)
+	tt.Type("早安")
+	tt.Key(0, ui.KeyEnter)
+	if req.TargetLang != "auto" || req.Text != "早安" {
+		t.Fatalf("first submission = %+v", req)
+	}
+	v.applyMeta(RunMetaMsg{ReqID: req.ReqID, TargetLang: "en", Services: cfg.Services.Enabled})
+	v.applyResult(TranslationUpdateMsg{ReqID: req.ReqID, Service: "google", Text: "Good morning", DetectedLang: "zh"})
+	v.applyResult(TranslationUpdateMsg{ReqID: req.ReqID, Service: "baidu", Err: "超时"})
+	tt.Frame()
+	if err := tt.Click("朗读 Google"); err != nil || spokenLang != "en" || !tt.HasText("aB") {
+		t.Fatalf("English result actions: speech=%q err=%v", spokenLang, err)
+	}
+	if err := tt.Click("重试"); err != nil || req.Service != "baidu" || req.TargetLang != "en" {
+		t.Fatalf("card retry = %+v, err=%v", req, err)
+	}
+	v.applyMeta(RunMetaMsg{ReqID: req.ReqID, TargetLang: "en", Services: cfg.Services.Enabled})
+	if err := tt.Click("要翻译的原文"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("Good morning")
+	tt.Key(0, ui.KeyEnter)
+	if req.Text != "Good morning" || req.TargetLang != "auto" || req.Service != "" {
+		t.Fatalf("next full submission = %+v", req)
+	}
+	v.applyMeta(RunMetaMsg{ReqID: req.ReqID, TargetLang: "zh-HANS", Services: cfg.Services.Enabled})
+	v.applyResult(TranslationUpdateMsg{ReqID: req.ReqID, Service: "google", Text: "早安", DetectedLang: "en"})
+	tt.Frame()
+	if err := tt.Click("交换语言"); err != nil || req.SourceLang != "zh-HANS" || req.TargetLang != "en" {
+		t.Fatalf("swapped direction = %+v, err=%v", req, err)
+	}
+}
+
+func TestBubbleCanLockResolvedTarget(t *testing.T) {
+	// Selecting the displayed translation language must also leave automatic mode.
+	cfg := testBubbleConfig()
+	cfg.TargetLanguage = "auto"
+	var runs []RunReq
+	v := newBubbleView(1, cfg, bubbleViewActions{run: func(r RunReq) { runs = append(runs, r) }})
+	v.applyState(BubbleState{SessionID: "lock", ReqID: "first", Trigger: "selection", Text: "早安", Settings: cfg}, false)
+	v.applyMeta(RunMetaMsg{ReqID: "first", TargetLang: "en", Services: cfg.Services.Enabled})
+	tt := ui.NewTester(v.render, 480, 700)
+	for _, label := range []string{"目标语言", "英语", "要翻译的原文"} {
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("Good morning")
+	tt.Key(0, ui.KeyEnter)
+	if len(runs) != 2 || runs[0].TargetLang != "en" || runs[1].Text != "Good morning" || runs[1].TargetLang != "en" {
+		t.Fatalf("manual target submissions = %+v", runs)
+	}
+	for _, label := range []string{"目标语言", "自动互译"} {
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(runs) != 3 || runs[2].TargetLang != "auto" {
+		t.Fatalf("restore automatic target = %+v", runs)
+	}
+}
+
 func TestBubbleCardWholeHeaderTogglesOnce(t *testing.T) {
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{})
