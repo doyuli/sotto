@@ -64,14 +64,11 @@ func (a *application) toggleMinimalTranslation() {
 		return
 	}
 	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
-	message := "已切换到气泡模式"
-	switch {
-	case err != nil:
-		a.refreshTrayMenu()
-		message = usermessage.Format("切换简约翻译失败", err)
-	case enabled:
-		message = "已切换到简约模式"
+	if err == nil {
+		return
 	}
+	a.refreshTrayMenu()
+	message := usermessage.Format("切换简约翻译失败", err)
 	mygo.RunOnMain(func() {
 		if !a.isQuitting() && a.settings().MinimalTranslation == enabled {
 			a.overlays.ShowStatus(message)

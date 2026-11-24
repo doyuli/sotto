@@ -1,11 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -14,6 +16,7 @@ import (
 	"sotto/internal/hotkey"
 	"sotto/internal/ui/bubble"
 	"sotto/internal/ui/settings"
+	"sotto/resources"
 )
 
 type failingShortcutBackend struct {
@@ -87,16 +90,22 @@ func TestTrayAdvertisesOnlyRegisteredSelectionShortcut(t *testing.T) {
 func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	// A general settings snapshot taken before the shortcut must not undo it.
 	cfg := config.Default()
-	a := &application{cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"), bubbles: bubble.NewManager(nil, bubble.Actions{})}
+	accel := hotkeyValues(canonicalHotkeys(cfg.Hotkeys))["minimalTranslation"]
+	a := &application{
+		cfg:     cfg,
+		cfgPath: filepath.Join(t.TempDir(), "settings.json"),
+		bubbles: bubble.NewManager(nil, bubble.Actions{}),
+		hotkeys: map[string]string{"minimalTranslation": accel},
+	}
 	stale := cfg
 	stale.TargetLanguage = "ja"
 	if item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation"); item == nil || item.IsChecked() {
 		t.Fatal("tray should offer the unchecked mode before the toggle")
 	}
-	enabled, err := a.updateMinimalTranslation(func(current bool) bool { return !current })
-	if err != nil || !enabled {
-		t.Fatalf("toggle enabled=%v err=%v", enabled, err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		a.onShortcut(accel)()
+		synctest.Wait()
+	})
 	if err := a.updateSettings(stale); err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +113,17 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || !a.settings().MinimalTranslation {
 		t.Fatalf("saved mode=%v language=%s err=%v", saved.MinimalTranslation, saved.TargetLanguage, err)
 	}
-	if item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation"); item == nil || !item.IsChecked() {
+	item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation")
+	if item == nil || !item.IsChecked() || !bytes.Equal(a.trayOptions().Icon, resources.TrayOutline) {
 		t.Fatal("tray did not show the committed mode")
+	}
+	synctest.Test(t, func(t *testing.T) {
+		item.Click(item, nil)
+		synctest.Wait()
+	})
+	item = mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation")
+	if item == nil || item.IsChecked() || !bytes.Equal(a.trayOptions().Icon, resources.TrayFilled) {
+		t.Fatal("tray did not return to bubble mode")
 	}
 }
 
