@@ -126,3 +126,39 @@ func TestHistoryShortcutCanBeCustomized(t *testing.T) {
 		t.Fatalf("saved calls: %v, configuration: %+v", calls, v.settings.Hotkeys)
 	}
 }
+
+func TestHistoryClearConfirmationInSettings(t *testing.T) {
+	cleared := 0
+	v := NewView(TabGeneral, config.Default(), Actions{
+		SaveHistory:  func(config.HistorySettings, int64) error { return nil },
+		ClearHistory: func() error { cleared++; return nil },
+	})
+	defer v.Dispose()
+	tt := ui.NewTester(v.Render, 780, 900)
+	click := func(label string) {
+		t.Helper()
+		if err := tt.Click(label); err != nil {
+			t.Fatal(err)
+		}
+		drainSettingsTasks(v)
+		tt.Frame()
+	}
+	click("清空翻译历史")
+	if !tt.Focused("取消") || !tt.HasText("所有原文和译文都将删除，且无法恢复。") {
+		t.Fatalf("unexpected clear confirmation state: texts=%v", tt.Texts())
+	}
+	tt.Key(0, ui.KeyEscape)
+	if cleared != 0 || tt.HasText("确认清空") {
+		t.Fatalf("Escape left modal open or cleared history: cleared=%d", cleared)
+	}
+	click("清空翻译历史")
+	click("取消")
+	if cleared != 0 || tt.HasText("确认清空") {
+		t.Fatalf("Cancel left modal open or cleared history: cleared=%d", cleared)
+	}
+	click("清空翻译历史")
+	click("确认清空")
+	if cleared != 1 || tt.HasText("确认清空") {
+		t.Fatalf("confirm did not clear history cleanly: cleared=%d", cleared)
+	}
+}

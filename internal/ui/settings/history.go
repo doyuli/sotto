@@ -80,7 +80,7 @@ func (v *View) renderHistorySettings(c *ui.Context, p settingsPalette, cfg confi
 	})
 }
 
-func (v *View) renderHistoryConfirmation(c *ui.Context) {
+func (v *View) renderHistoryConfirmation(c *ui.Context, p settingsPalette) {
 	v.mu.Lock()
 	prompt := v.historyPrompt
 	v.mu.Unlock()
@@ -99,27 +99,28 @@ func (v *View) renderHistoryConfirmation(c *ui.Context) {
 	if prompt.clear {
 		title, message, commit = "清空翻译历史？", "所有原文和译文都将删除，且无法恢复。", "确认清空"
 	}
-	dialog := ui.Modal(c.Key("history-confirmation"), &open, func() {
-		ui.Column(c).Width(330).Gap(12).Children(func() {
-			ui.Text(c, title).FontSize(16).FontWeight(600)
-			ui.Text(c, message).FontSize(13)
-			ui.Row(c).FillWidth().Gap(8).Children(func() {
-				ui.Box(c).Grow(1)
-				ui.Button(c, "取消").AutoFocus().OnClick(cancel)
-				ui.Button(c, commit).OnClick(func() {
-					cancel()
-					if prompt.clear {
-						v.runHistoryChange(config.HistorySettings{}, v.actions.ClearHistory, true)
-					} else {
-						v.saveHistory(prompt.next, prompt.count)
-					}
-				})
-			})
-		})
+	shared.ConfirmDialog(c.Key("history-confirmation"), &open, shared.ConfirmDialogOptions{
+		Title:        title,
+		Message:      message,
+		CancelLabel:  "取消",
+		ConfirmLabel: commit,
+		Colors: shared.ConfirmDialogColors{
+			Dark:   p.dark,
+			Panel:  p.panel,
+			Border: p.border,
+			Text:   p.fg,
+			Muted:  p.muted,
+		},
+		OnCancel: cancel,
+		OnConfirm: func() {
+			cancel()
+			if prompt.clear {
+				v.runHistoryChange(config.HistorySettings{}, v.actions.ClearHistory, true)
+			} else {
+				v.saveHistory(prompt.next, prompt.count)
+			}
+		},
 	})
-	if dialog.Dismissed() {
-		cancel()
-	}
 }
 
 func (v *View) saveHistory(next config.HistorySettings, approved int64) {

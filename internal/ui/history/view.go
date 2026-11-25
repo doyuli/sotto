@@ -19,6 +19,7 @@ const DefaultWidth, DefaultHeight = 720, 460
 const (
 	railDividerWidth   float32 = 1
 	detailPaddingX     float32 = 20
+	providerMenuWidth  float32 = 132
 	sourceFontSize     float32 = 15
 	sourceLineHeight   float32 = 1.5
 	sourcePreviewLines         = 5
@@ -218,16 +219,19 @@ func (v *View) Render(c *ui.Context) {
 			v.renderFooter(c, p)
 		})
 		if v.clearOpen {
-			ui.Modal(c.Key("confirm-clear"), &v.clearOpen, func() {
-				ui.Column(c).Width(320).Gap(12).Children(func() {
-					ui.Text(c, "清空翻译历史？").FontSize(16).FontWeight(600)
-					ui.Text(c, "所有原文和译文都将删除，且无法恢复。").FontSize(13).TextColor(p.muted)
-					ui.Row(c).FillWidth().Gap(8).Children(func() {
-						ui.Box(c).Grow(1)
-						ui.Button(c, "取消").AutoFocus().OnClick(func() { v.clearOpen = false })
-						ui.Button(c, "确认清空").OnClick(func() { v.clearOpen = false; v.delete(0) })
-					})
-				})
+			shared.ConfirmDialog(c.Key("confirm-clear"), &v.clearOpen, shared.ConfirmDialogOptions{
+				Title:        "清空翻译历史？",
+				Message:      "所有原文和译文都将删除，且无法恢复。",
+				CancelLabel:  "取消",
+				ConfirmLabel: "确认清空",
+				Colors: shared.ConfirmDialogColors{
+					Dark:   p.dark,
+					Panel:  p.panel,
+					Border: p.line,
+					Text:   p.ink,
+					Muted:  p.muted,
+				},
+				OnConfirm: func() { v.delete(0) },
 			})
 		}
 	})
@@ -786,21 +790,29 @@ func (v *View) renderProviders(c *ui.Context, p palette, entry history.Entry, pr
 		return
 	}
 	menu := ui.MenuBase(c.Key(entry.ID), &v.providerOpen)
-	trigger := menu.Trigger.Label("换源翻译").Padding(5, 9).Radius(7).
-		Background(p.control).Disabled(pending).Cursor(ui.CursorPointer)
+	hoverBg := p.hover
+	if p.dark {
+		hoverBg = p.selected
+	}
+	trigger := menu.Trigger.Label("换源翻译").Width(providerMenuWidth).Padding(5, 10).Radius(8).
+		Background(p.field).Border(1, p.line).Disabled(pending).Cursor(ui.CursorPointer)
 	if pending {
 		trigger.Cursor(ui.CursorDefault)
 	} else if trigger.Hovered() || menu.Open() {
-		trigger.Background(p.hover)
+		trigger.Background(hoverBg)
+	}
+	labelColor, iconColor := p.ink, p.muted
+	if pending {
+		labelColor, iconColor = p.muted.Alpha(0.45), p.muted.Alpha(0.45)
 	}
 	trigger.Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "换源翻译").FontSize(12).TextColor(p.ink)
-			ui.Icon(c, shared.ChevronDown).Size(12, 12).TextColor(p.muted)
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "换源翻译").Grow(1).MinWidth(0).SingleLine().FontSize(12).TextColor(labelColor)
+			ui.Icon(c, shared.ChevronDown).Size(12, 12).TextColor(iconColor)
 		})
 	})
 	menu.Popup(func(panel ui.Element) {
-		panel.Width(168).Padding(4).Margin(4, 0, 0, 0).Gap(2).Radius(10).
+		panel.Label("换源翻译选项").Width(providerMenuWidth).Padding(4).Margin(4, 0, 0, 0).Gap(2).Radius(10).
 			Background(p.panel).Border(1, p.line).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
 		for _, provider := range available {
 			name := providerName(provider)
@@ -812,10 +824,10 @@ func (v *View) renderProviders(c *ui.Context, p palette, entry history.Entry, pr
 				}
 			})
 			if item.Highlighted() {
-				item.Background(p.hover)
+				item.Background(hoverBg)
 			}
 			item.Children(func() {
-				ui.Text(c, name).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(13).TextColor(p.ink)
+				ui.Text(c, name).Grow(1).MinWidth(0).SingleLine().Ellipsis("…").FontSize(12).TextColor(p.ink)
 			})
 		}
 	})

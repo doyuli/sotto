@@ -346,6 +346,24 @@ func TestHistoryClearConfirmation(t *testing.T) {
 	h.put("one record", "一条记录")
 	h.open()
 	h.click("清空历史")
+	if !h.ui.Focused("取消") {
+		t.Fatal("opening destructive confirmation did not default focus to cancel")
+	}
+	h.ui.Key(0, ui.KeyEnter)
+	h.settle()
+	if n, err := h.store.Count(t.Context()); err != nil || n != 1 || h.closed != 0 {
+		t.Fatalf("Enter on default focus changed data or closed history: n=%d closed=%d err=%v", n, h.closed, err)
+	}
+	h.click("清空历史")
+	h.ui.Key(0, ui.KeyEscape)
+	h.settle()
+	if n, err := h.store.Count(t.Context()); err != nil || n != 1 || h.closed != 0 {
+		t.Fatalf("Escape dismissed wrong layer or cleared data: n=%d closed=%d err=%v", n, h.closed, err)
+	}
+	if _, ok := h.ui.Find("确认清空"); ok {
+		t.Fatal("Escape left confirmation modal open")
+	}
+	h.click("清空历史")
 	h.click("取消")
 	if n, err := h.store.Count(t.Context()); err != nil || n != 1 {
 		t.Fatalf("cancel cleared records: %d, %v", n, err)
@@ -1311,6 +1329,54 @@ func TestHistoryNamingChipsSkipLongOrMultilineTranslations(t *testing.T) {
 	}
 }
 
+func TestHistoryProviderMenuAlignmentAndToggle(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		source        string
+	}{
+		{name: "default", width: DefaultWidth, height: DefaultHeight, source: "hello world"},
+		{name: "narrow", width: 560, height: DefaultHeight, source: "hello world"},
+		{name: "compact-long-source", width: 560, height: 360, source: strings.Repeat("A long source sentence before the provider menu. ", 15)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.providers = []string{"deepl", "google", "youdaoweb", "openai", "siliconflow",
+				"zhipu", "baidu", "volcengine", "tencent", "youdao", "azure", "index-translate"}
+			h.put(tc.source, "你好世界")
+			h.open()
+			h.ui.SetSize(tc.width, tc.height)
+
+			// The provider popup previously used a wider fixed width that overflowed and shifted out of alignment with the trigger.
+			trigger, ok := h.ui.Find("换源翻译")
+			if !ok {
+				t.Fatal("missing provider menu trigger")
+			}
+			h.click("换源翻译")
+			popup, ok := h.ui.Find("换源翻译选项")
+			if !ok {
+				t.Fatal("missing provider menu popup")
+			}
+			if popup.X != trigger.X || popup.W != trigger.W {
+				t.Fatalf("popup does not align with trigger: trigger=%+v popup=%+v", trigger, popup)
+			}
+			if popup.X < 0 || popup.Y < 0 || popup.X+popup.W > float32(tc.width) || popup.Y+popup.H > float32(tc.height) {
+				t.Fatalf("popup overflows %dx%d window: %+v", tc.width, tc.height, popup)
+			}
+			if popup.Y < trigger.Y+trigger.H && popup.Y+popup.H > trigger.Y {
+				t.Fatalf("popup overlaps trigger: trigger=%+v popup=%+v", trigger, popup)
+			}
+			if _, ok := h.ui.Find("有道查词与翻译 · 新增译文"); !ok {
+				t.Fatal("missing youdaoweb option in provider menu")
+			}
+			h.ui.ClickAt(trigger.X+trigger.W/2, trigger.Y+trigger.H/2)
+			if _, ok := h.ui.Find("换源翻译选项"); ok {
+				t.Fatal("second click on trigger did not close provider menu")
+			}
+		})
+	}
+}
+
 func TestHistoryPreview(t *testing.T) {
 	dir := os.Getenv("SOTTO_HISTORY_PREVIEW")
 	if dir == "" {
@@ -1393,6 +1459,12 @@ func TestHistoryPreview(t *testing.T) {
 	_, _ = h.store.Record(t.Context(), enReq, "google", "account name", history.ResultTranslation)
 	h.click("清空搜索")
 	h.click("折叠 Google")
+	h.click("清空历史")
+	save("confirm-clear")
+	h.ui.SetDark(true)
+	save("confirm-clear-dark")
+	h.click("取消")
+	h.ui.SetDark(false)
 	h.click("下划线：user_name")
 	h.ui.Advance(200 * time.Millisecond)
 	save("naming-and-toast")

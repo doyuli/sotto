@@ -249,7 +249,7 @@ func (v *View) Render(c *ui.Context) {
 				})
 			})
 		})
-		v.renderHistoryConfirmation(c)
+		v.renderHistoryConfirmation(c, p)
 	})
 }
 
