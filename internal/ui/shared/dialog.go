@@ -82,20 +82,21 @@ type buttonColors struct {
 }
 
 func dialogButtonStyle(colors ConfirmDialogColors) buttonColors {
+	const alpha = float32(254.0 / 255.0) // disable Windows ClearType subpixel fringes inside dialog buttons
 	if colors.Dark {
 		return buttonColors{
-			bg:      ui.Hex("#2c2d30"),
-			hover:   ui.Hex("#35373b"),
-			pressed: ui.Hex("#3e4046"),
+			bg:      ui.Hex("#2c2d30").Alpha(alpha),
+			hover:   ui.Hex("#35373b").Alpha(alpha),
+			pressed: ui.Hex("#3e4046").Alpha(alpha),
 			border:  ui.Hex("#3a3c42"),
 			text:    colors.Text,
 		}
 	}
 	return buttonColors{
-		bg:      ui.Hex("#ffffff"),
-		hover:   ui.Hex("#f4f5f7"),
-		pressed: ui.Hex("#eceef2"),
-		border:  ui.Hex("#dfe2e8"),
+		bg:      ui.Hex("#f3f4f6").Alpha(alpha),
+		hover:   ui.Hex("#ebedf0").Alpha(alpha),
+		pressed: ui.Hex("#e2e5ea").Alpha(alpha),
+		border:  ui.Hex("#e2e5ea"),
 		text:    colors.Text,
 	}
 }
@@ -104,7 +105,8 @@ func dialogButton(c *ui.Context, label string, autoFocus bool, style buttonColor
 	btn := ui.ButtonBase(c).
 		Label(label).
 		Radius(7).
-		Padding(6, 14).
+		MinHeight(30).
+		Padding(0, 14).
 		Border(1, style.border).
 		FocusRing(true).
 		Cursor(ui.CursorPointer)
@@ -120,6 +122,6 @@ func dialogButton(c *ui.Context, label string, autoFocus bool, style buttonColor
 	}
 	btn.Background(bg).OnClick(onClick)
 	btn.Children(func() {
-		ui.Text(c, label).FontSize(13).TextColor(style.text).SingleLine()
+		ui.Text(c, label).FontSize(13).TextColor(style.text).SingleLine().Padding(0, 0, 1, 0)
 	})
 }
