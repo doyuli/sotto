@@ -77,25 +77,34 @@ func ConfirmDialog(c *ui.Context, open *bool, opts ConfirmDialogOptions) ui.Elem
 	return dialog
 }
 
+// GrayscaleSurface nudges fully opaque colors 1/255 below full alpha so MyGo
+// uses grayscale text antialiasing instead of ClearType RGB subpixel fringes
+// on 100%-DPI Windows CJK text when ancestor surfaces are also below 255.
+func GrayscaleSurface(c ui.Color) ui.Color {
+	if c.A == 255 {
+		c.A = 254
+	}
+	return c
+}
+
 type buttonColors struct {
 	bg, hover, pressed, border, text ui.Color
 }
 
 func dialogButtonStyle(colors ConfirmDialogColors) buttonColors {
-	const alpha = float32(254.0 / 255.0) // disable Windows ClearType subpixel fringes inside dialog buttons
 	if colors.Dark {
 		return buttonColors{
-			bg:      ui.Hex("#2c2d30").Alpha(alpha),
-			hover:   ui.Hex("#35373b").Alpha(alpha),
-			pressed: ui.Hex("#3e4046").Alpha(alpha),
+			bg:      GrayscaleSurface(ui.Hex("#2c2d30")),
+			hover:   GrayscaleSurface(ui.Hex("#35373b")),
+			pressed: GrayscaleSurface(ui.Hex("#3e4046")),
 			border:  ui.Hex("#3a3c42"),
 			text:    colors.Text,
 		}
 	}
 	return buttonColors{
-		bg:      ui.Hex("#f3f4f6").Alpha(alpha),
-		hover:   ui.Hex("#ebedf0").Alpha(alpha),
-		pressed: ui.Hex("#e2e5ea").Alpha(alpha),
+		bg:      GrayscaleSurface(ui.Hex("#f3f4f6")),
+		hover:   GrayscaleSurface(ui.Hex("#ebedf0")),
+		pressed: GrayscaleSurface(ui.Hex("#e2e5ea")),
 		border:  ui.Hex("#e2e5ea"),
 		text:    colors.Text,
 	}
@@ -122,6 +131,7 @@ func dialogButton(c *ui.Context, label string, autoFocus bool, style buttonColor
 	}
 	btn.Background(bg).OnClick(onClick)
 	btn.Children(func() {
+		// 1 DIP bottom padding balances DirectWrite YaHei upper headroom on Windows.
 		ui.Text(c, label).FontSize(13).TextColor(style.text).SingleLine().Padding(0, 0, 1, 0)
 	})
 }

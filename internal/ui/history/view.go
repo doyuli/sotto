@@ -71,23 +71,13 @@ type palette struct {
 	theme      *ui.Theme
 }
 
-// grayscaleSurface nudges opaque window/region backgrounds 1/255 below full
-// alpha so MyGo disables ClearType subpixel antialiasing in favor of grayscale
-// glyphs, avoiding RGB color fringes on thin 100%-DPI Windows CJK text.
-func grayscaleSurface(c ui.Color) ui.Color {
-	if c.A == 255 {
-		c.A = 254
-	}
-	return c
-}
-
 func buildHistoryPalette(p palette, t *ui.Theme, accentText, scrollbar ui.Color) palette {
-	p.panel = grayscaleSurface(p.panel)
-	p.rail = grayscaleSurface(p.rail)
-	p.field = grayscaleSurface(p.field)
-	p.control = grayscaleSurface(p.control)
-	p.hover = grayscaleSurface(p.hover)
-	p.selected = grayscaleSurface(p.selected)
+	p.panel = shared.GrayscaleSurface(p.panel)
+	p.rail = shared.GrayscaleSurface(p.rail)
+	p.field = shared.GrayscaleSurface(p.field)
+	p.control = shared.GrayscaleSurface(p.control)
+	p.hover = shared.GrayscaleSurface(p.hover)
+	p.selected = shared.GrayscaleSurface(p.selected)
 	t.DisableAutoDimming = true
 	t.Background = p.panel
 	t.Surface = p.control
@@ -286,7 +276,7 @@ func (v *View) renderSearch(c *ui.Context, p palette) {
 			clearBtn.Children(func() {
 				fg := p.clearFg
 				if clearBtn.Hovered() && !p.dark {
-					fg = p.panel
+					fg = ui.Hex("#ffffff")
 				}
 				ui.Icon(c, shared.CloseIcon).Size(10, 10).TextColor(fg)
 			})
@@ -887,6 +877,7 @@ func (v *View) renderFooter(c *ui.Context, p palette) {
 			message = fmt.Sprintf("%d 条记录", len(v.entries))
 			hint = "↑↓ 切换 · Enter 复制"
 		}
+		// 1 DIP bottom padding compensates for DirectWrite YaHei upper headroom on Windows.
 		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(6).Padding(0, 0, 1, 0).Children(func() {
 			ui.Text(c, message).FontSize(12).TextColor(p.muted).SingleLine().Ellipsis("…")
 			if hint != "" {
@@ -932,7 +923,10 @@ func quietButton(c *ui.Context, p palette, text, label string, disabled bool, fn
 		button.Background(p.hover)
 		color = p.ink
 	}
-	button.Children(func() { ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().Padding(0, 0, 1, 0) })
+	button.Children(func() {
+		// 1 DIP bottom padding compensates for DirectWrite YaHei upper headroom on Windows.
+		ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().Padding(0, 0, 1, 0)
+	})
 }
 
 func iconButton(c *ui.Context, p palette, icon *ui.SVG, label, tip string, disabled bool, fn func()) {
