@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -15,6 +16,17 @@ import (
 
 const searchLabel = "搜索原文或译文"
 const DefaultWidth, DefaultHeight = 720, 460
+const (
+	railDividerWidth   float32 = 1
+	detailPaddingX     float32 = 20
+	sourceFontSize     float32 = 15
+	sourceLineHeight   float32 = 1.5
+	sourcePreviewLines         = 5
+	resultFontSize     float32 = 15
+	resultLongLines            = 10
+	maxNamingTextBytes         = 120
+	maxNamingWords             = 8
+)
 
 var groupLabels = [...]string{"今天", "近 3 天", "更早"}
 
@@ -198,8 +210,8 @@ func (v *View) Render(c *ui.Context) {
 					ui.Column(c).Width(railW).FillHeight().Background(p.rail).Children(func() {
 						v.renderRail(c, p, rows)
 					})
-					ui.Box(c).Width(1).FillHeight().Background(p.line)
-					v.renderDetail(c, p)
+					ui.Box(c).Width(railDividerWidth).FillHeight().Background(p.line)
+					v.renderDetail(c, p, width-railW-railDividerWidth)
 				})
 			}
 			rule(c, p)
@@ -324,8 +336,7 @@ func (v *View) renderRail(c *ui.Context, p palette, rows []railRow) {
 			}
 			entry := r.entry
 			selected := v.selected == entry.ID
-			button := ui.ButtonBase(c).FillWidth().Padding(6, 8).Radius(6).Label(entry.Text).
-				Tooltip("双击复制首条译文").Cursor(ui.CursorPointer)
+			button := ui.ButtonBase(c).FillWidth().Padding(6, 8).Radius(6).Label(entry.Text).Cursor(ui.CursorPointer)
 			if selected {
 				button.Background(p.selected)
 			} else if button.Hovered() {
@@ -359,20 +370,38 @@ func (v *View) marked(c *ui.Context, p palette, text string) ui.Element {
 	return ui.RichText(c, searchSpans(text, v.query, p.mark, ui.Span{})...)
 }
 
+func asciiFold(r rune) rune {
+	if r >= 'A' && r <= 'Z' {
+		return r + ('a' - 'A')
+	}
+	return r
+}
+
+func firstFoldedMatch(text, query string) (int, int, bool) {
+	if query == "" {
+		return 0, 0, false
+	}
+	folded, word := strings.Map(asciiFold, text), strings.Map(asciiFold, query)
+	offset := strings.Index(folded, word)
+	if offset < 0 {
+		return 0, 0, false
+	}
+	return offset, offset + len(word), true
+}
+
+func foldedContains(text, query string) bool {
+	_, _, ok := firstFoldedMatch(text, query)
+	return ok
+}
+
 func searchSpans(text, query string, mark ui.Color, style ui.Span) []ui.Span {
 	style.Text = text
 	if query == "" {
 		return []ui.Span{style}
 	}
-	fold := func(r rune) rune {
-		if r >= 'A' && r <= 'Z' {
-			return r + ('a' - 'A')
-		}
-		return r
-	}
 	// SQLite's ASCII fold preserves byte offsets. Limit spans on long
 	// translations so a one-letter query cannot dominate layout.
-	folded, word := strings.Map(fold, text), strings.Map(fold, query)
+	folded, word := strings.Map(asciiFold, text), strings.Map(asciiFold, query)
 	var spans []ui.Span
 	start := 0
 	for range 128 {
@@ -430,9 +459,9 @@ func (v *View) renderGroup(c *ui.Context, p palette, row railRow, first bool) {
 	})
 }
 
-func (v *View) renderDetail(c *ui.Context, p palette) {
+func (v *View) renderDetail(c *ui.Context, p palette, width float32) {
 	ui.Scroll(c).Grow(1).MinWidth(0).FillHeight().TrackScroll(&v.detailScroll).Children(func() {
-		ui.Column(c.Key(v.selected)).FillWidth().Padding(16, 20).Gap(8).Children(func() {
+		ui.Column(c.Key(v.selected)).FillWidth().Padding(16, detailPaddingX).Gap(8).Children(func() {
 			if v.detailError {
 				ui.Text(c, "无法读取这条译文").FontSize(13).TextColor(p.muted)
 				ui.Button(c, "重新读取").OnClick(func() { v.loadDetail(v.selected) })
@@ -442,14 +471,38 @@ func (v *View) renderDetail(c *ui.Context, p palette) {
 			if entry.ID == 0 {
 				return
 			}
+			textW := max(1, width-2*detailPaddingX)
+			measured := v.measureDetail(c, entry, textW)
+			sourceExpanded := v.sourceExpanded
+			if !v.sourceManual && measured.sourceMatchHidden {
+				sourceExpanded = true
+			}
+
 			direction := shared.LanguageName(entry.SourceLang) + " → " + shared.LanguageName(entry.TargetLang)
 			ui.Row(c).FillWidth().Gap(2).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "原文 · "+direction).Grow(1).MinWidth(0).FontSize(12).TextColor(p.muted).SingleLine().Ellipsis("…")
 				v.renderSpeakButton(c, p, entry.ID, "朗读原文", "朗读原文", entry.Text, entry.SourceLang)
 				v.renderCopyButton(c, p, "复制原文", "复制原文", "source", false, v.copySource)
 			})
-			v.marked(c, p, entry.Text).FillWidth().Selectable().SelectionColor(p.selection).
-				FontSize(17).FontWeight(600).LineHeight(1.45).TextColor(p.ink)
+			sourceText := v.marked(c, p, entry.Text).FillWidth().Selectable().SelectionColor(p.selection).
+				FontSize(sourceFontSize).FontWeight(600).LineHeight(sourceLineHeight).TextColor(p.ink)
+			if measured.sourceOverflow && !sourceExpanded {
+				sourceText.MaxLines(sourcePreviewLines).Ellipsis("…")
+			}
+			if measured.sourceOverflow {
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+					toggleLabel := "展开全文"
+					if sourceExpanded {
+						toggleLabel = "收起原文"
+					}
+					linkButton(c.Key("source-disclosure"), p, toggleLabel, sourceExpanded, func() {
+						v.sourceExpanded = !sourceExpanded
+						v.sourceManual = true
+					})
+					ui.Text(c, fmt.Sprintf("共 %d 字", utf8.RuneCountInString(entry.Text))).
+						FontSize(12).TextColor(p.muted.Alpha(0.8))
+				})
+			}
 			translated := time.UnixMilli(entry.TranslatedMS).In(v.now().Location())
 			ui.Text(c, "最近翻译 "+translated.Format("2006-01-02 15:04")).FontSize(12).TextColor(p.muted)
 
@@ -464,17 +517,17 @@ func (v *View) renderDetail(c *ui.Context, p palette) {
 			v.renderRetryStatus(c, p, entry, retry, slices.Contains(providers, retry.provider))
 
 			for _, result := range v.results {
-				v.renderResult(c, p, entry, result, providers, formats, false)
+				v.renderResult(c, p, entry, result, providers, formats, false, measured.defaultCollapsed[result.Provider])
 			}
 			if unsaved := retry.result.Text; unsaved != "" {
 				result := history.Result{Provider: retry.resultProvider, Text: unsaved, Type: retry.result.Type}
-				v.renderResult(c, p, entry, result, providers, formats, true)
+				v.renderResult(c, p, entry, result, providers, formats, true, false)
 			}
 		})
 	})
 }
 
-func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, result history.Result, providers, formats []string, unsaved bool) {
+func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, result history.Result, providers, formats []string, unsaved, defaultCollapsed bool) {
 	provider, text, resultType := result.Provider, result.Text, result.Type
 	name := providerName(provider)
 	title, speechName := name, name
@@ -488,7 +541,10 @@ func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, resul
 	retry := v.retries[entry.ID]
 	canRetry := slices.Contains(providers, provider) && v.providerEligible(provider) && (unsaved || retry.result.Text == "" || retry.resultProvider != provider)
 	rowKey := "result:" + collapseKey
-	collapsed := v.collapsed[collapseKey]
+	collapsed, manual := v.manualCollapse[collapseKey]
+	if !manual {
+		collapsed = defaultCollapsed
+	}
 	c.Key(rowKey + ":rule")
 	rule(c, p)
 	ui.Column(c.Key(rowKey)).FillWidth().Padding(8, 0).Gap(6).Children(func() {
@@ -504,7 +560,7 @@ func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, resul
 				Radius(5).
 				Cursor(ui.CursorPointer).
 				OnClick(func() {
-					v.collapsed[collapseKey] = !collapsed
+					v.manualCollapse[collapseKey] = !collapsed
 				})
 			toggleBtn.Children(func() {
 				color := p.ink
@@ -542,11 +598,11 @@ func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, resul
 }
 
 func (v *View) renderNamingChips(c *ui.Context, p palette, entry history.Entry, cardKey, text string, formats []string) {
-	if len(formats) == 0 {
+	if len(formats) == 0 || len(text) > maxNamingTextBytes || strings.ContainsAny(text, "\r\n") {
 		return
 	}
 	words := naming.SplitWords(text)
-	if len(words) == 0 {
+	if len(words) == 0 || len(words) > maxNamingWords {
 		return
 	}
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Wrap().Gap(4).Children(func() {
@@ -640,7 +696,55 @@ func (v *View) renderCopyButton(c *ui.Context, p palette, label, tip, feedbackKe
 
 func (v *View) renderResultText(c *ui.Context, p palette, resultType history.ResultType, text string) {
 	ui.RichText(c, resultSpans(resultType, text, v.query, p)...).
-		FillWidth().Selectable().SelectionColor(p.selection).FontSize(15).LineHeight(1.6).TextColor(p.ink)
+		FillWidth().Selectable().SelectionColor(p.selection).FontSize(resultFontSize).LineHeight(1.6).TextColor(p.ink)
+}
+
+func (v *View) measureDetail(c *ui.Context, entry history.Entry, textW float32) detailMeasurement {
+	m := v.detailMeasure
+	if m.entryID == entry.ID && m.width == textW && m.query == v.query && m.resultCount == len(v.results) {
+		return m
+	}
+	m = detailMeasurement{
+		entryID:        entry.ID,
+		width:          textW,
+		query:          v.query,
+		resultCount:    len(v.results),
+		sourceOverflow: exceedsLines(c, entry.Text, textW, sourceFontSize, 600, sourcePreviewLines),
+	}
+	if m.sourceOverflow && v.query != "" {
+		if _, end, ok := firstFoldedMatch(entry.Text, v.query); ok {
+			// Treat matches reaching the ellipsis line as hidden so they expand cleanly.
+			m.sourceMatchHidden = exceedsLines(c, entry.Text[:end], textW, sourceFontSize, 600, sourcePreviewLines-1)
+		}
+	}
+	if len(v.results) > 1 && slices.ContainsFunc(v.results, func(r history.Result) bool {
+		return exceedsLines(c, r.Text, textW, resultFontSize, 400, resultLongLines)
+	}) {
+		// Recompute defaults with the layout; only explicit toggles persist across refreshes.
+		m.defaultCollapsed = make(map[string]bool)
+		for _, r := range v.results[1:] {
+			if !foldedContains(r.Text, v.query) {
+				m.defaultCollapsed[r.Provider] = true
+			}
+		}
+	}
+	v.detailMeasure = m
+	return m
+}
+
+func exceedsLines(c *ui.Context, text string, width, size float32, weight, maxLines int) bool {
+	if text == "" || maxLines <= 0 {
+		return false
+	}
+	if strings.Count(text, "\n") >= maxLines {
+		return true
+	}
+	_, lineH := c.MeasureText(0, ui.Span{Text: "M", Size: size, Weight: weight})
+	if lineH <= 0 {
+		return false
+	}
+	_, fullH := c.MeasureText(width, ui.Span{Text: text, Size: size, Weight: weight})
+	return fullH > lineH*float32(maxLines)+0.5
 }
 
 func resultSpans(resultType history.ResultType, text, query string, p palette) []ui.Span {
@@ -786,6 +890,17 @@ func (v *View) renderFooter(c *ui.Context, p palette) {
 			quietButton(c, p, "清空历史", "清空历史", v.deleting || v.loadError || !v.ready || len(v.entries) == 0, true, func() {
 				v.clearOpen = true
 			})
+		}
+	})
+}
+
+func linkButton(c *ui.Context, p palette, label string, expanded bool, fn func()) {
+	button := ui.ButtonBase(c).Label(label).Expanded(expanded).Padding(2, 2).Radius(4).FocusRing(true).
+		Cursor(ui.CursorPointer).OnClick(fn)
+	button.Children(func() {
+		txt := ui.Text(c, label).FontSize(12).TextColor(p.accentText).SingleLine()
+		if button.Hovered() {
+			txt.Underline()
 		}
 	})
 }

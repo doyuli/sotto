@@ -76,7 +76,9 @@ type View struct {
 	clearOpen, deleting           bool
 	providerOpen                  bool
 	retries                       map[int64]retryState
-	collapsed                     map[string]bool
+	manualCollapse                map[string]bool
+	sourceExpanded, sourceManual  bool
+	detailMeasure                 detailMeasurement
 	groupCounts                   [3]int64
 	hasGroupCounts                bool
 	pendingToast                  string
@@ -87,6 +89,16 @@ type View struct {
 	rail         ui.ListState
 	detailScroll ui.ScrollState
 	searchField  ui.Handle
+}
+
+type detailMeasurement struct {
+	entryID           int64
+	width             float32
+	query             string
+	resultCount       int
+	sourceOverflow    bool
+	sourceMatchHidden bool
+	defaultCollapsed  map[string]bool
 }
 
 func New(store *history.Store, actions Actions, now func() time.Time) *View {
@@ -103,7 +115,7 @@ func (v *View) Open() {
 		v.searchDue, v.buckets = time.Time{}, dayBuckets{}
 		v.older, v.clearOpen, v.deleting, v.providerOpen = false, false, false, false
 		v.retries = make(map[int64]retryState)
-		v.collapsed = make(map[string]bool)
+		v.resetDetailDisclosure()
 		v.groupCounts, v.hasGroupCounts = [3]int64{}, false
 		v.pendingToast, v.clearToasts = "", true
 		v.copiedKey, v.copiedUntil = "", time.Time{}
@@ -190,6 +202,7 @@ func (v *View) reset(clearSelection bool) {
 			}
 			if clearSelection {
 				v.rail.ScrollTo(0, ui.Start)
+				v.resetDetailDisclosure()
 			}
 			// Publish the list and first detail in the same frame so retained
 			// results don't pass through an empty or partially updated view.
@@ -363,14 +376,20 @@ func (v *View) cancelDetailRead() {
 	v.detailTarget = 0
 }
 
+func (v *View) resetDetailDisclosure() {
+	v.manualCollapse = make(map[string]bool)
+	v.sourceExpanded, v.sourceManual = false, false
+}
+
 func (v *View) commitDetail(id int64, entry history.Entry, results []history.Result, err error) {
 	if v.selected != id {
 		v.speechSerial++
 		v.providerOpen, v.status = false, ""
-		v.collapsed = make(map[string]bool)
+		v.resetDetailDisclosure()
 		v.copiedKey, v.copiedUntil = "", time.Time{}
 		v.detailScroll.ScrollTo(0, 0, ui.Animation{})
 	}
+	v.detailMeasure = detailMeasurement{}
 	v.selected, v.entry, v.results, v.detailError = id, entry, results, err != nil
 }
 

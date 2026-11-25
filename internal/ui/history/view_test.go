@@ -103,7 +103,8 @@ func (h *harness) one() {
 func (h *harness) settle() {
 	h.t.Helper()
 	if h.ui != nil && !h.view.searchDue.IsZero() {
-		h.ui.Advance(searchDelay)
+		// Advance past MyGo's 1ms minimum timer clamp when 60Hz animations land just before searchDue.
+		h.ui.Advance(max(searchDelay, h.view.searchDue.Sub(h.ui.Now())) + 2*time.Millisecond)
 	}
 	for i := 0; i < 20; i++ {
 		if len(h.work) == 0 && len(h.post) == 0 {
@@ -1112,6 +1113,201 @@ func TestHistoryRetryCardKeepsLayoutStableWhileRetrying(t *testing.T) {
 	afterRect, ok := h.ui.Find("已有译文")
 	if !ok || afterRect.Y != beforeRect.Y {
 		t.Fatalf("failed retry shifted layout: before=%+v after=%+v", beforeRect, afterRect)
+	}
+}
+
+func TestHistoryLongSourceCollapsesAndAutoExpandsOnHiddenSearchMatch(t *testing.T) {
+	h := newHarness(t)
+	h.put("short source", "短译文")
+	h.now = h.now.Add(time.Second)
+
+	var lines []string
+	lines = append(lines, "earlyNeedle on first line")
+	for i := 2; i <= 9; i++ {
+		lines = append(lines, fmt.Sprintf("middle filler line %d with enough words to stay readable", i))
+	}
+	lines = append(lines, "deepNeedle hidden past preview")
+	longSource := strings.Join(lines, "\n")
+	h.put(longSource, "长原文的译文")
+	h.open()
+
+	// Long source starts collapsed while copy still writes the full text.
+	if _, ok := h.ui.Find("展开全文"); !ok {
+		t.Fatalf("long source did not show expand control: %v", h.ui.Texts())
+	}
+	transBefore, ok := h.ui.Find("译文")
+	if !ok {
+		t.Fatal("translation heading missing")
+	}
+	h.click("复制原文")
+	if !slices.Equal(h.copied, []string{longSource}) {
+		t.Fatalf("copy original while collapsed = %q, want full source", h.copied)
+	}
+
+	// The label changes on expand, but the same control must keep keyboard focus.
+	for i := 0; i < 20 && !h.ui.Focused("展开全文"); i++ {
+		h.ui.Key(0, ui.KeyTab)
+	}
+	if !h.ui.Focused("展开全文") {
+		t.Fatal("could not reach the expand control with Tab")
+	}
+	h.ui.Key(0, ui.KeyEnter)
+	if !h.ui.Focused("收起原文") {
+		t.Fatal("expanding long source lost focus on the toggle")
+	}
+	transExpanded, ok := h.ui.Find("译文")
+	if !ok || transExpanded.Y <= transBefore.Y {
+		t.Fatalf("expanding long source did not push translation down: before=%+v expanded=%+v", transBefore, transExpanded)
+	}
+	h.ui.Key(0, ui.KeyEnter)
+	if !h.ui.Focused("展开全文") {
+		t.Fatal("pressing Enter again did not collapse the source and retain focus")
+	}
+	transRestored, ok := h.ui.Find("译文")
+	if !ok || transRestored.Y != transBefore.Y {
+		t.Fatalf("collapsing long source did not restore layout: before=%+v restored=%+v", transBefore, transRestored)
+	}
+
+	// Short source omits the expand/collapse toggle.
+	h.click("short source")
+	if _, ok := h.ui.Find("展开全文"); ok {
+		t.Fatal("short source unexpectedly showed expand control")
+	}
+	if _, ok := h.ui.Find("收起原文"); ok {
+		t.Fatal("short source unexpectedly showed collapse control")
+	}
+
+	// Search match within the visible preview keeps source collapsed.
+	h.click(searchLabel)
+	h.ui.Type("earlyNeedle")
+	h.settle()
+	if _, ok := h.ui.Find("展开全文"); !ok {
+		t.Fatal("visible match unnecessarily expanded long source")
+	}
+
+	// Search match past the preview auto-expands source, while manual collapse stays respected.
+	h.click("清空搜索")
+	h.ui.Type("deepNeedle")
+	h.settle()
+	if _, ok := h.ui.Find("收起原文"); !ok {
+		t.Fatal("hidden search match did not auto-expand long source")
+	}
+	h.click("收起原文")
+	if _, ok := h.ui.Find("展开全文"); !ok {
+		t.Fatal("manual collapse after search auto-expand was overridden")
+	}
+}
+
+func TestHistorySourceDisclosureUpdatesOnResize(t *testing.T) {
+	h := newHarness(t)
+	const wideWidth = 960
+	h.put(strings.TrimSpace(strings.Repeat("one two three four five six seven eight nine ten ", 8)), "译文")
+	h.open()
+	h.ui.SetSize(wideWidth, DefaultHeight)
+	if h.ui.HasText("展开全文") {
+		t.Fatal("source should fit at the wider width")
+	}
+
+	// Measuring the previous frame's width left the disclosure stale until another redraw.
+	h.ui.SetSize(560, DefaultHeight)
+	if !h.ui.HasText("展开全文") {
+		t.Fatal("narrowing the window did not immediately reveal the disclosure")
+	}
+	h.ui.SetSize(wideWidth, DefaultHeight)
+	if h.ui.HasText("展开全文") {
+		t.Fatal("restoring the window width did not immediately hide the disclosure")
+	}
+}
+
+func TestHistoryLongResultCollapsesSecondaryProviders(t *testing.T) {
+	h := newHarness(t)
+	longFirst := strings.Repeat("这是第一条非常长的译文内容，用来测试单源超长时其他翻译源的默认折叠行为。\n", 12) + "firstTail"
+	longSecond := strings.Repeat("这是第二条也很长的译文内容。\n", 12) + "googleMatch"
+	shortThird := "第三条简短译文"
+	h.put("long result entry", longFirst, longSecond, shortThird)
+	h.open()
+
+	// A long result keeps only the first provider expanded by default.
+	if !h.ui.HasText(longFirst) {
+		t.Fatalf("first long translation was hidden: %v", h.ui.Texts())
+	}
+	if h.ui.HasText(longSecond) || h.ui.HasText(shortThird) {
+		t.Fatalf("secondary providers were not collapsed by default: %v", h.ui.Texts())
+	}
+	h.ui.Scroll(500, 250, 0, 800)
+	h.click("复制 Google 译文")
+	if !slices.Equal(h.copied, []string{longSecond}) {
+		t.Fatalf("copying collapsed secondary provider copied %q", h.copied)
+	}
+	h.click("折叠 Google")
+	if !h.ui.HasText(longSecond) {
+		t.Fatal("clicking collapsed secondary provider did not expand it")
+	}
+
+	// Searching a term in a secondary provider keeps that matching provider expanded.
+	h.click(searchLabel)
+	h.ui.Type("googleMatch")
+	h.settle()
+	if !h.ui.HasText(longSecond) || h.ui.HasText(shortThird) {
+		t.Fatalf("search did not expand matching secondary provider only: %v", h.ui.Texts())
+	}
+}
+
+func TestHistoryResultCollapseDefaultsFollowRefresh(t *testing.T) {
+	h := newHarness(t)
+	const source = "original text"
+	const secondary = "secondary translation"
+	h.put(source, "short translation", secondary)
+	h.open()
+	if !h.ui.HasText(secondary) {
+		t.Fatal("secondary translation should start expanded when all results are short")
+	}
+
+	refresh := func(first string) {
+		h.now = h.now.Add(time.Second)
+		h.put(source, first, secondary)
+		h.view.Refresh()
+		h.settle()
+	}
+	longFirst := strings.Repeat("a longer translation\n", 11)
+	// A refresh of the same entry used to keep the defaults from its initial render.
+	refresh(longFirst + "first ending")
+	if h.ui.HasText(secondary) {
+		t.Fatal("secondary translation stayed expanded after the first result became long")
+	}
+	h.ui.Scroll(500, 250, 0, 800)
+	h.click("折叠 Google")
+	if !h.ui.HasText(secondary) {
+		t.Fatal("could not manually expand the secondary translation")
+	}
+	refresh(longFirst + "new ending")
+	if !h.ui.HasText(secondary) {
+		t.Fatal("refresh overrode the manually expanded secondary translation")
+	}
+}
+
+func TestHistoryNamingChipsSkipLongOrMultilineTranslations(t *testing.T) {
+	for name, text := range map[string]string{
+		"multiline":  "user\nname",
+		"byte limit": strings.Repeat("é", 61),
+		"word limit": "one two three four five six seven eight nine",
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			req := h.store.Begin(history.Key{Text: "中文输入", SourceLang: "zh-HANS", TargetLang: "en"}, []string{"deepl"})
+			defer req.Done()
+			if ok, err := h.store.Record(t.Context(), req, "deepl", text, history.ResultTranslation); err != nil || !ok {
+				t.Fatalf("seed English translation: %v, %v", ok, err)
+			}
+			h.open()
+			if !h.ui.HasText(text) {
+				t.Fatal("fixture translation is not displayed")
+			}
+			// Each limit independently suppresses naming chips for unsuitable translations.
+			if h.ui.HasText("下划线：") {
+				t.Fatalf("unexpected naming chip for %q", text)
+			}
+		})
 	}
 }
 
