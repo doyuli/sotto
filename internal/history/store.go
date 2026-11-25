@@ -95,15 +95,16 @@ type success struct {
 }
 
 type Request struct {
-	store *Store
-	group *inflight
-	key   Key
-	at    int64
-	seq   uint64
-	epoch uint64
-	order []string
-	seen  map[string]bool // guarded by store.writes
-	ended bool            // guarded by store.stateMu
+	store   *Store
+	group   *inflight
+	key     Key
+	entryID int64 // zero for ordinary translations, which may create an entry
+	at      int64
+	seq     uint64
+	epoch   uint64
+	order   []string
+	seen    map[string]bool // guarded by store.writes
+	ended   bool            // guarded by store.stateMu
 }
 
 func New(policy Policy, now func() time.Time) *Store {
@@ -210,8 +211,7 @@ func (s *Store) Begin(key Key, order []string) *Request {
 		seq: s.sequence, epoch: s.epoch, order: slices.Clone(order), seen: make(map[string]bool)}
 }
 
-// BeginForEntry binds a history retranslation to an existing row. Deletion and
-// clear are serialized with this check, so a stale action cannot recreate it.
+// BeginForEntry binds a retranslation to the selected row even if its key is later reused.
 func (s *Store) BeginForEntry(ctx context.Context, id int64, order []string) (Entry, *Request, error) {
 	s.writes.Lock()
 	defer s.writes.Unlock()
@@ -219,7 +219,11 @@ func (s *Store) BeginForEntry(ctx context.Context, id int64, order []string) (En
 	if err != nil {
 		return Entry{}, nil, err
 	}
-	return entry, s.Begin(entry.Key, order), nil
+	r := s.Begin(entry.Key, order)
+	if r != nil {
+		r.entryID = entry.ID
+	}
+	return entry, r, nil
 }
 
 // Done lets arbitration state expire once there are no outstanding requests
@@ -270,8 +274,8 @@ func (s *Store) Record(ctx context.Context, r *Request, provider, text string, r
 	key := r.key
 	entryArgs := []any{key.Text, key.SourceLang, key.TargetLang, r.at, s.Revision() + 1}
 	res, err := db.Transaction(ctx, []sqlite.Statement{
-		{SQL: insertEntry, Args: entryArgs},
-		{SQL: upsertResult, Args: []any{key.Text, key.SourceLang, key.TargetLang, provider, int64(resultType), text, r.at, rank}},
+		{SQL: insertEntry, Args: append(entryArgs, r.entryID)},
+		{SQL: upsertResult, Args: []any{key.Text, key.SourceLang, key.TargetLang, provider, int64(resultType), text, r.at, rank, r.entryID}},
 		{SQL: touchEntry, Args: entryArgs},
 	})
 	if err != nil {

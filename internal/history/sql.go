@@ -36,12 +36,13 @@ var schemaV1 = []sqlite.Statement{
 }
 
 const insertEntry = `INSERT INTO history_entry (source_text, source_lang, target_lang, last_translated_ms, changed_revision)
-VALUES (?1, ?2, ?3, ?4, ?5)
+SELECT ?1, ?2, ?3, ?4, ?5 WHERE ?6 = 0
 ON CONFLICT (source_text, source_lang, target_lang) DO NOTHING`
 
 const upsertResult = `INSERT INTO history_result (entry_id, provider_id, result_type, translated_text, translated_ms, display_rank)
 SELECT id, ?4, ?5, ?6, ?7, ?8 FROM history_entry
 WHERE source_text = ?1 AND source_lang = ?2 AND target_lang = ?3
+AND (?9 = 0 OR id = ?9)
 ON CONFLICT (entry_id, provider_id) DO UPDATE SET
 result_type = excluded.result_type, translated_text = excluded.translated_text, translated_ms = excluded.translated_ms
 WHERE excluded.translated_ms >= history_result.translated_ms`

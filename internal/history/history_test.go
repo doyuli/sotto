@@ -248,6 +248,53 @@ func TestHistoryLateResultsAndDeletion(t *testing.T) {
 	assertChildCount(t, s, 1)
 }
 
+func TestHistoryRetranslationAfterPruning(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recreate bool
+	}{{"removed", false}, {"recreated", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, now, _ := fixture(t, 7)
+			key := Key{"hello", "en", "zh-HANS"}
+			seed := s.Begin(key, nil)
+			record(t, s, seed, "google", "original", true)
+			seed.Done()
+			id := page(t, s, "", Cursor{}, 1)[0].ID
+
+			*now = now.Add(8 * 24 * time.Hour)
+			ordinary := s.Begin(key, nil)
+			defer ordinary.Done()
+			*now = now.Add(time.Second)
+			_, retry, err := s.BeginForEntry(ctx, id, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer retry.Done()
+			if err := s.Cleanup(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var replacementID int64
+			if tc.recreate {
+				record(t, s, ordinary, "google", "replacement", true)
+				replacementID = page(t, s, "", Cursor{}, 1)[0].ID
+				if replacementID == id {
+					t.Fatal("replacement reused the expired entry")
+				}
+			}
+
+			// Matching by text let the late retry recreate the expired row or overwrite its replacement.
+			record(t, s, retry, "google", "late retry", false)
+			if tc.recreate {
+				if got, err := s.CopyText(ctx, replacementID, "google"); err != nil || got != "replacement" {
+					t.Fatalf("replacement translation = %q, %v", got, err)
+				}
+			} else if entries := page(t, s, "", Cursor{}, 1); len(entries) != 0 {
+				t.Fatalf("retry recreated the expired entry: %+v", entries)
+			}
+		})
+	}
+}
+
 func TestHistoryRetention(t *testing.T) {
 	s, now, dir := fixture(t, 30)
 	start := *now
