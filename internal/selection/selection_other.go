@@ -16,11 +16,11 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 	return Selection{}, ErrUnsupported
 }
 
-func WatchWindowLeave(hwnd uintptr, changed func(primaryPress bool)) (func(), error) {
+func WatchWindowLeave(hwnd uintptr, changed func(PrimaryPress)) (func(), error) {
 	return nil, ErrUnsupported
 }
 
-func HasPrimaryPress() bool { return false }
+func CapturePrimaryPress() PrimaryPress { return PrimaryPress{} }
 
 func WindowOwnsForeground(hwnd uintptr) bool { return false }
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 
 	"sotto/internal/config"
+	"sotto/internal/selection"
 )
 
 func newDismissTestBubble(t *testing.T, trigger, phase string) (*Manager, *bubble) {
@@ -409,8 +411,17 @@ func TestCommitTransientBubbleHideOnlyNotifiesInputAutoHide(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, b := newDismissTestBubble(t, tc.trigger, "")
 			calls, hidden := 0, 0
-			m.actions.OnInputAutoHide = func() { calls++ }
-			m.commitTransientBubbleHide(b, tc.primaryPress, func(*bubbleView, RunStoppedMsg) { hidden++ })
+			var press selection.PrimaryPress
+			if tc.primaryPress {
+				press = selection.PrimaryPress{At: time.Unix(0, 0), Point: mygo.Point{X: 10, Y: 20}}
+			}
+			m.actions.OnInputAutoHide = func(got selection.PrimaryPress) {
+				calls++
+				if got != press {
+					t.Errorf("dismissal press = %+v, want %+v", got, press)
+				}
+			}
+			m.commitTransientBubbleHide(b, press, func(*bubbleView, RunStoppedMsg) { hidden++ })
 			if hidden != 1 || calls != tc.wantCalls {
 				t.Fatalf("hidden=%d OnInputAutoHide calls=%d, want hidden=1 calls=%d", hidden, calls, tc.wantCalls)
 			}

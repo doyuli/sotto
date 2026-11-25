@@ -177,7 +177,7 @@ func TestTrayAutoDismissSuppression(t *testing.T) {
 	trayBounds := mygo.Rectangle{X: 1180, Y: 0, Width: 28, Height: 24}
 	inside := mygo.Point{X: 1192, Y: 12}
 	dismissedAt := time.Unix(0, 0)
-	dismissal := trayAutoDismiss{kind: config.TrayActionHistory, at: dismissedAt, point: inside}
+	press := selection.PrimaryPress{At: dismissedAt, Point: inside}
 	for _, tc := range []struct {
 		name    string
 		action  string
@@ -193,8 +193,8 @@ func TestTrayAutoDismissSuppression(t *testing.T) {
 		{"tray bounds unavailable", config.TrayActionHistory, 150 * time.Millisecond, mygo.Point{}, mygo.Rectangle{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := &application{lastTrayDismiss: dismissal}
-			a.lastTrayDismiss.point = tc.point
+			a := &application{cfg: config.Settings{TrayClickAction: config.TrayActionHistory}}
+			a.recordTrayAutoDismiss(config.TrayActionHistory, selection.PrimaryPress{At: dismissedAt, Point: tc.point})
 			now := dismissedAt.Add(tc.elapsed)
 			bounds := func() mygo.Rectangle { return tc.bounds }
 			if got := a.consumeTrayAutoDismissAt(tc.action, now, bounds); got != tc.want {
@@ -206,10 +206,26 @@ func TestTrayAutoDismissSuppression(t *testing.T) {
 		})
 	}
 
-	a := &application{lastTrayDismiss: dismissal}
+	a := &application{cfg: config.Settings{TrayClickAction: config.TrayActionHistory}}
+	a.recordTrayAutoDismiss(config.TrayActionHistory, press)
 	a.popUpTrayMenu()
 	if a.consumeTrayAutoDismissAt(config.TrayActionHistory, dismissedAt, func() mygo.Rectangle { return trayBounds }) {
 		t.Fatal("opening the tray menu should clear a pending dismissal")
+	}
+}
+
+func TestTrayMenuDoesNotReopenAfterNativeDismissal(t *testing.T) {
+	// The popup can close before the left-click callback arrives, even when opened by right-click.
+	a := &application{cfg: config.Settings{TrayClickAction: config.TrayActionMenu}}
+	press := selection.PrimaryPress{At: time.Unix(0, 0), Point: mygo.Point{X: 1200, Y: 12}}
+	a.recordTrayAutoDismiss(config.TrayActionMenu, press)
+	bounds := func() mygo.Rectangle { return mygo.Rectangle{X: 1196, Y: 8, Width: 9, Height: 9} }
+	now := press.At.Add(150 * time.Millisecond)
+	if !a.consumeTrayAutoDismissAt(config.TrayActionMenu, now, bounds) {
+		t.Fatal("the click that closed the menu reopened it")
+	}
+	if a.consumeTrayAutoDismissAt(config.TrayActionMenu, now, bounds) {
+		t.Fatal("the next click should open the menu")
 	}
 }
 

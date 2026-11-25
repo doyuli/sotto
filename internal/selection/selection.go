@@ -6,10 +6,21 @@ package selection
 import (
 	"context"
 	"errors"
+	"time"
+
+	"github.com/egoist/mygo"
 )
 
 // Rect is a rectangle in mygo's DIP screen coordinates.
 type Rect struct{ X, Y, W, H int }
+
+// PrimaryPress captures a left press before a window-leave callback is queued.
+// The point is in physical pixels on Windows and MyGo screen DIPs on macOS.
+// A zero time means there was no primary press.
+type PrimaryPress struct {
+	At    time.Time
+	Point mygo.Point
+}
 
 // Selection is what a grab found. Rect is the selection's on-screen
 // bounds, when the path could see them, for placing the bubble.

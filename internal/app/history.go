@@ -243,7 +243,7 @@ func (a *application) showHistory() {
 		w.Invalidate()
 	}
 	a.dismissHistory = view.Dismiss
-	dismissOnLeave := func(outsideNonactivatingPanel, primaryPress bool) {
+	dismissOnLeave := func(outsideNonactivatingPanel bool, press selection.PrimaryPress) {
 		// Blur can arrive during a native focus transition. Check the current
 		// window and any popup it owns when the transition has settled.
 		w.Update(func() {
@@ -251,14 +251,12 @@ func (a *application) showHistory() {
 				return
 			}
 			if outsideNonactivatingPanel || (!w.IsFocused() && !selection.WindowOwnsForeground(w.NativeHandle())) {
-				if primaryPress {
-					a.recordTrayAutoDismiss(config.TrayActionHistory)
-				}
+				a.recordTrayAutoDismiss(config.TrayActionHistory, press)
 				view.Dismiss()
 			}
 		})
 	}
-	w.OnBlur(func() { dismissOnLeave(false, selection.HasPrimaryPress()) })
+	w.OnBlur(func() { dismissOnLeave(false, selection.CapturePrimaryPress()) })
 	var stopWatching func()
 	w.OnShow(func() {
 		w.Update(func() {
@@ -266,10 +264,10 @@ func (a *application) showHistory() {
 				return
 			}
 			var err error
-			stopWatching, err = selection.WatchWindowLeave(w.NativeHandle(), func(primaryPress bool) {
+			stopWatching, err = selection.WatchWindowLeave(w.NativeHandle(), func(press selection.PrimaryPress) {
 				// AppKit can leave a nonactivating panel key after an outside click.
 				// The monitor has already excluded clicks inside the panel and its menus.
-				dismissOnLeave(runtime.GOOS == "darwin", primaryPress)
+				dismissOnLeave(runtime.GOOS == "darwin", press)
 			})
 			if err != nil && !errors.Is(err, selection.ErrUnsupported) {
 				log.Printf("watch translation history window: %v", err)

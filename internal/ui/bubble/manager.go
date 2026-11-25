@@ -26,7 +26,7 @@ type Actions struct {
 	Settings        func() config.Settings
 	StartOCR        func()
 	OpenSettings    func(source *mygo.Window)
-	OnInputAutoHide func()
+	OnInputAutoHide func(selection.PrimaryPress)
 }
 
 // Manager keeps one reusable window for all entries. Pinning detaches
@@ -323,16 +323,16 @@ func (m *Manager) blurHandler(b *bubble) func() {
 		m.mu.Lock()
 		showID := b.showID
 		m.mu.Unlock()
-		primaryPress := selection.HasPrimaryPress()
+		press := selection.CapturePrimaryPress()
 		go mygo.RunOnMain(func() {
-			m.hideAfterBlur(b, showID, primaryPress)
+			m.hideAfterBlur(b, showID, press)
 		})
 	}
 }
 
 // hideAfterBlur runs on the main thread, including for foreground notifications
 // from an owned popup that does not deliver another blur to the bubble itself.
-func (m *Manager) hideAfterBlur(b *bubble, showID int64, primaryPress bool) {
+func (m *Manager) hideAfterBlur(b *bubble, showID int64, press selection.PrimaryPress) {
 	visible, focused := b.win.IsVisible(), b.win.IsFocused()
 	if (runtime.GOOS == "windows" || runtime.GOOS == "darwin") && !focused {
 		focused = selection.WindowOwnsForeground(b.win.NativeHandle())
@@ -342,7 +342,7 @@ func (m *Manager) hideAfterBlur(b *bubble, showID int64, primaryPress bool) {
 	m.mu.Unlock()
 	if hide {
 		log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
-		m.hideTransientBubble(b, primaryPress)
+		m.hideTransientBubble(b, press)
 	}
 }
 
@@ -457,7 +457,7 @@ func (m *Manager) refreshWindowLeave(b *bubble) {
 			return
 		}
 		active := true // accessed only on the main thread
-		notify := func(primaryPress bool) {
+		notify := func(press selection.PrimaryPress) {
 			mygo.RunOnMain(func() {
 				m.mu.Lock()
 				dismiss := active && b.sessionID == sessionID && b.showID == showID && b.offBlur != nil
@@ -466,10 +466,10 @@ func (m *Manager) refreshWindowLeave(b *bubble) {
 					if runtime.GOOS == "darwin" {
 						// A click in the menu bar may leave a nonactivating panel
 						// key. The native monitor already excluded owned menus.
-						m.hideTransientBubble(b, primaryPress)
+						m.hideTransientBubble(b, press)
 					} else {
 						// A select popup may have closed since the hook hit test.
-						m.hideAfterBlur(b, showID, primaryPress)
+						m.hideAfterBlur(b, showID, press)
 					}
 				}
 			})
@@ -681,19 +681,19 @@ func (m *Manager) HideTransient() {
 	b := m.transient
 	m.mu.Unlock()
 	if b != nil {
-		m.hideTransientBubble(b, false)
+		m.hideTransientBubble(b, selection.PrimaryPress{})
 	}
 }
 
 // Semantic dismissal, unlike ShowTask's internal layout Hide, revokes all work
 // before native events can deliver late requests or results for this session.
-func (m *Manager) hideTransientBubble(b *bubble, primaryPress bool) {
+func (m *Manager) hideTransientBubble(b *bubble, press selection.PrimaryPress) {
 	mygo.RunOnMain(func() {
-		m.commitTransientBubbleHide(b, primaryPress, b.hideStopped)
+		m.commitTransientBubbleHide(b, press, b.hideStopped)
 	})
 }
 
-func (m *Manager) commitTransientBubbleHide(b *bubble, primaryPress bool, hide func(*bubbleView, RunStoppedMsg)) {
+func (m *Manager) commitTransientBubbleHide(b *bubble, press selection.PrimaryPress, hide func(*bubbleView, RunStoppedMsg)) {
 	m.mu.Lock()
 	trigger := b.trigger
 	dismissed := m.byID[b.id] == b && b.dismiss()
@@ -702,8 +702,8 @@ func (m *Manager) commitTransientBubbleHide(b *bubble, primaryPress bool, hide f
 	onAutoHide := m.actions.OnInputAutoHide
 	m.mu.Unlock()
 	if dismissed {
-		if primaryPress && trigger == "input" && onAutoHide != nil {
-			onAutoHide()
+		if !press.At.IsZero() && trigger == "input" && onAutoHide != nil {
+			onAutoHide(press)
 		}
 		hide(view, stopped)
 	}

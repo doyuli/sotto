@@ -228,22 +228,28 @@ func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
 
 const macControlModifier = 1 << 18
 
-// HasPrimaryPress is sampled on the UI thread before deferring a blur.
-func HasPrimaryPress() bool {
+// CapturePrimaryPress is sampled on the UI thread before deferring a blur.
+func CapturePrimaryPress() PrimaryPress {
 	events := macnative.Class("NSEvent")
-	return events.Send(macnative.Sel("pressedMouseButtons"))&1 != 0 &&
-		events.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0
+	if events.Send(macnative.Sel("pressedMouseButtons"))&1 != 0 &&
+		events.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0 {
+		return PrimaryPress{At: time.Now(), Point: mygo.Screen.CursorScreenPoint()}
+	}
+	return PrimaryPress{}
 }
 
-func WatchWindowLeave(handle uintptr, changed func(primaryPress bool)) (stop func(), err error) {
+func WatchWindowLeave(handle uintptr, changed func(PrimaryPress)) (stop func(), err error) {
 	var global, local, activation func()
 	mygo.RunOnMain(func() {
 		const leftMouseDown = 1
 		const mask uint64 = 1<<leftMouseDown | 1<<3 | 1<<25
 		notify := func(event objc.ID) {
-			primaryPress := event.Send(macnative.Sel("type")) == leftMouseDown &&
-				event.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0
-			go changed(primaryPress)
+			var press PrimaryPress
+			if event.Send(macnative.Sel("type")) == leftMouseDown &&
+				event.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0 {
+				press = PrimaryPress{At: time.Now(), Point: mygo.Screen.CursorScreenPoint()}
+			}
+			go changed(press)
 		}
 		global, err = macnative.Monitor(mask, false, notify)
 		if err != nil {
@@ -259,7 +265,7 @@ func WatchWindowLeave(handle uintptr, changed func(primaryPress bool)) (stop fun
 			global()
 			return
 		}
-		activation, err = macnative.WatchActivation(func() { go changed(false) })
+		activation, err = macnative.WatchActivation(func() { go changed(PrimaryPress{}) })
 		if err != nil {
 			global()
 			local()

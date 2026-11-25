@@ -40,7 +40,7 @@ On Windows, verify the architecture-specific package includes `Sqlitecore.dll` b
 ## Tray Click Actions
 
 - Set **点击托盘图标** to the input panel and then to history. For each, verify that the first left-click opens the window, the second closes it, and the third reopens it. The corresponding shortcut should still toggle the window.
-- On Windows, repeat with the **托盘菜单** action. A second left-click closes the menu and a third opens it again. Check all three actions with the icon on the taskbar and in the notification-area overflow.
+- On Windows, repeat with the **托盘菜单** action. Verify that left-click closes the menu whether it was opened by left-click or right-click. The next left-click opens it again. Check all three actions with the icon on the taskbar and in the notification-area overflow.
 - With the pointer over the icon, switch away from the window via keyboard, then immediately left-click the icon. It should reopen on the first click. Repeat after opening and dismissing the tray context menu (right-click on Windows; right-click or Control-click on macOS).
 
 ## Settings Window on Multiple Displays
