@@ -212,3 +212,22 @@ func TestTrayAutoDismissSuppression(t *testing.T) {
 		t.Fatal("opening the tray menu should clear a pending dismissal")
 	}
 }
+
+func TestTrayMenuToggleHandlesNativeReentry(t *testing.T) {
+	// Windows can deliver the second tray click while the first popup is tracking.
+	a := &application{}
+	opened, closed := 0, 0
+	show := func() { opened++ }
+	closeMenu := func() { closed++ }
+	a.toggleTrayMenu(func() {
+		show()
+		a.toggleTrayMenu(show, closeMenu)
+	}, closeMenu)
+	if opened != 1 || closed != 1 {
+		t.Fatalf("after two clicks: opened=%d closed=%d, want 1 each", opened, closed)
+	}
+	a.toggleTrayMenu(show, closeMenu)
+	if opened != 2 || closed != 1 {
+		t.Fatalf("after three clicks: opened=%d closed=%d, want 2 and 1", opened, closed)
+	}
+}

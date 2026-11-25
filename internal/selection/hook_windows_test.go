@@ -76,6 +76,10 @@ func TestWindowContainsNativePopup(t *testing.T) {
 }
 
 func TestForegroundHookFiltersWindows(t *testing.T) {
+	// A foreground event can reach the app after the left button is released.
+	// It still needs the press captured by the mouse hook.
+	previousPress := lastPrimaryMousePress.Swap(&primaryMousePress{at: time.Now()})
+	t.Cleanup(func() { lastPrimaryMousePress.Store(previousPress) })
 	window := newHookTestWindow(t)
 	const wsPopup, wsChild = 0x80000000, 0x40000000
 	host := window(0, wsPopup)
@@ -105,9 +109,16 @@ func TestForegroundHookFiltersWindows(t *testing.T) {
 				previous, _ := watch.outside.Load().([]*windowLeaveWatch)
 				defer watch.outside.Store(previous)
 				var got [2]int
+				var primary [2]bool
 				watch.outside.Store([]*windowLeaveWatch{
-					{hwnd: bubble, changed: func(bool) { got[0]++ }},
-					{hwnd: other, changed: func(bool) { got[1]++ }},
+					{hwnd: bubble, changed: func(press bool) {
+						got[0]++
+						primary[0] = press
+					}},
+					{hwnd: other, changed: func(press bool) {
+						got[1]++
+						primary[1] = press
+					}},
 				})
 				foregroundHookProc(0, tt.event, tt.hwnd, 0, 0, 0, 0)
 				// Wait for dispatched goroutines without sleeps, including when
@@ -115,6 +126,11 @@ func TestForegroundHookFiltersWindows(t *testing.T) {
 				synctest.Wait()
 				if got != tt.want {
 					t.Errorf("foreground notifications = %v, want %v", got, tt.want)
+				}
+				for i, count := range got {
+					if count != 0 && !primary[i] {
+						t.Errorf("notification %d lost the primary press", i)
+					}
 				}
 			})
 		})

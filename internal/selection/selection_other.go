@@ -20,7 +20,7 @@ func WatchWindowLeave(hwnd uintptr, changed func(primaryPress bool)) (func(), er
 	return nil, ErrUnsupported
 }
 
-func PrimaryMousePressed() bool { return false }
+func HasPrimaryPress() bool { return false }
 
 func WindowOwnsForeground(hwnd uintptr) bool { return false }
 

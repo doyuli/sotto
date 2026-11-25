@@ -10,8 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
+	"github.com/egoist/mygo"
 	"golang.org/x/sys/windows"
 )
 
@@ -66,6 +68,8 @@ var (
 	procGetWindow               = modUser32.NewProc("GetWindow")
 	procSetWinEventHook         = modUser32.NewProc("SetWinEventHook")
 	procUnhookWinEvent          = modUser32.NewProc("UnhookWinEvent")
+	procGetPhysicalCursorPos    = modUser32.NewProc("GetPhysicalCursorPos")
+	procGetSystemMetrics        = modUser32.NewProc("GetSystemMetrics")
 )
 
 // windowHooks shares mouse and foreground hooks across visible bubbles.
@@ -84,6 +88,39 @@ type windowLeaveWatch struct {
 }
 
 var watch windowHooks
+
+type primaryMousePress struct {
+	at    time.Time
+	point mygo.Point // physical screen pixels
+}
+
+var lastPrimaryMousePress atomic.Pointer[primaryMousePress]
+
+// WatchPrimaryMousePresses keeps the shared hook installed while the native
+// tray menu is open, when there may be no window to watch for focus changes.
+func WatchPrimaryMousePresses() (func(), error) { return WatchWindowLeave(0, nil) }
+
+func LastPrimaryMousePress() (time.Time, mygo.Point) {
+	if press := lastPrimaryMousePress.Load(); press != nil {
+		return press.at, press.point
+	}
+	return time.Time{}, mygo.Point{}
+}
+
+func ClearPrimaryMousePress() { lastPrimaryMousePress.Store(nil) }
+
+// CursorDragBounds uses the same physical pixels as the mouse hook. The shell
+// click already identifies the tray icon, including when it is in overflow.
+func CursorDragBounds() mygo.Rectangle {
+	var cursor struct{ X, Y int32 }
+	if ok, _, _ := procGetPhysicalCursorPos.Call(uintptr(unsafe.Pointer(&cursor))); ok == 0 {
+		return mygo.Rectangle{}
+	}
+	const smCXDrag, smCYDrag = 68, 69
+	x, _, _ := procGetSystemMetrics.Call(smCXDrag)
+	y, _, _ := procGetSystemMetrics.Call(smCYDrag)
+	return mygo.Rectangle{X: int(cursor.X) - int(x), Y: int(cursor.Y) - int(y), Width: 2*int(x) + 1, Height: 2*int(y) + 1}
+}
 
 // startMu serializes starts and stops, so two racing starts cannot
 // install duplicate hooks; mu stays for the hook thread's state access.
@@ -112,10 +149,9 @@ func WatchWindowLeave(hwnd uintptr, changed func(primaryPress bool)) (stop func(
 	}, nil
 }
 
-func PrimaryMousePressed() bool {
-	const vkLButton = 0x01
-	return keyDown(vkLButton)
-}
+// HasPrimaryPress can outlive the release: Windows can deliver blur after
+// mouse-up. The tray handler checks the press time and position before using it.
+func HasPrimaryPress() bool { return lastPrimaryMousePress.Load() != nil }
 
 // ensureWindowHooks and stopWindowHooksIfIdle run under startMu.
 func ensureWindowHooks() error {
@@ -205,11 +241,12 @@ func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uint
 		return 0
 	}
 	outside, _ := watch.outside.Load().([]*windowLeaveWatch)
+	primaryPress := HasPrimaryPress()
 	for _, w := range outside {
 		// Avoid dispatching internal activation changes. The caller still
 		// rechecks live focus because this event may already be stale.
-		if !windowContains(w.hwnd, hwnd) {
-			go w.changed(false)
+		if w.changed != nil && !windowContains(w.hwnd, hwnd) {
+			go w.changed(primaryPress)
 		}
 	}
 	return 0
@@ -223,7 +260,11 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 		case wmLButtonDown, wmRButtonDown, wmMButtonDown, wmXButtonDown:
 			h := (*msllHookStruct)(native(lparam))
 			if outside, _ := watch.outside.Load().([]*windowLeaveWatch); len(outside) != 0 {
-				go notifyOutside(outside, h.X, h.Y, wparam == wmLButtonDown)
+				primaryPress := wparam == wmLButtonDown
+				if primaryPress {
+					lastPrimaryMousePress.Store(&primaryMousePress{at: time.Now(), point: mygo.Point{X: int(h.X), Y: int(h.Y)}})
+				}
+				go notifyOutside(outside, h.X, h.Y, primaryPress)
 			}
 		}
 	}
@@ -237,7 +278,7 @@ func notifyOutside(watches []*windowLeaveWatch, x, y int32, primaryPress bool) {
 	point := uint64(uint32(x)) | uint64(uint32(y))<<32
 	hit, _, _ := procWindowFromPhysicalPoint.Call(uintptr(point))
 	for _, w := range watches {
-		if !windowContains(w.hwnd, hit) {
+		if w.changed != nil && !windowContains(w.hwnd, hit) {
 			w.changed(primaryPress)
 		}
 	}

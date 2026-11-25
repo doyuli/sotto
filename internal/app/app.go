@@ -64,6 +64,7 @@ type application struct {
 	snip        *snip.Manager
 
 	tray            *mygo.Tray      // main thread only
+	trayMenuOpen    bool            // main thread only, while Windows tracks a left-click popup
 	lastTrayDismiss trayAutoDismiss // main thread only
 	keys            credentialStore
 }
@@ -375,6 +376,9 @@ func (a *application) onTrayClick() {
 	case config.TrayActionSettings:
 		a.showSettings(false, nil)
 	case config.TrayActionMenu:
+		if runtime.GOOS == "windows" && a.consumeTrayAutoDismiss(config.TrayActionMenu) {
+			return
+		}
 		a.popUpTrayMenu()
 	default:
 		if a.consumeTrayAutoDismiss(config.TrayActionPanel) {
@@ -387,17 +391,30 @@ func (a *application) onTrayClick() {
 const trayAutoDismissWindow = 800 * time.Millisecond
 
 func (a *application) recordTrayAutoDismiss(kind string) {
+	if a.settings().TrayClickAction != kind {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		if at, point := selection.LastPrimaryMousePress(); !at.IsZero() {
+			a.lastTrayDismiss = trayAutoDismiss{kind: kind, at: at, point: point}
+		}
+		return
+	}
 	a.lastTrayDismiss = trayAutoDismiss{kind: kind, at: time.Now(), point: mygo.Screen.CursorScreenPoint()}
 }
 
 func (a *application) clearTrayAutoDismiss() {
 	a.lastTrayDismiss = trayAutoDismiss{}
+	selection.ClearPrimaryMousePress()
 }
 
 // consumeTrayAutoDismiss reports whether the active tray action's window was
 // just dismissed on mouse-down over the tray icon, preventing mouse-up from
 // flashing it back open instead of toggling it closed.
 func (a *application) consumeTrayAutoDismiss(kind string) bool {
+	if runtime.GOOS == "windows" {
+		return a.consumeTrayAutoDismissAt(kind, time.Now(), selection.CursorDragBounds)
+	}
 	return a.consumeTrayAutoDismissAt(kind, time.Now(), a.tray.Bounds)
 }
 
@@ -417,6 +434,10 @@ func (a *application) popUpTrayMenu() {
 	if a.tray == nil || a.isQuitting() {
 		return
 	}
+	if runtime.GOOS == "windows" {
+		a.toggleTrayMenu(a.showWindowsTrayMenu, platform.CloseTrayMenu)
+		return
+	}
 	if runtime.GOOS == "darwin" {
 		// Install the menu only for this popup on macOS so a persistent
 		// NSStatusItem menu does not intercept primary clicks meant for OnClick.
@@ -426,6 +447,30 @@ func (a *application) popUpTrayMenu() {
 		defer a.tray.SetMenu(nil)
 	}
 	a.tray.PopUpMenu()
+}
+
+func (a *application) toggleTrayMenu(show, closeMenu func()) {
+	// The native popup runs a nested message loop, which can dispatch the
+	// next tray click before PopUpMenu returns.
+	if a.trayMenuOpen {
+		closeMenu()
+		return
+	}
+	a.trayMenuOpen = true
+	defer func() { a.trayMenuOpen = false }()
+	show()
+}
+
+func (a *application) showWindowsTrayMenu() {
+	stop, err := selection.WatchPrimaryMousePresses()
+	if err != nil {
+		log.Printf("watch tray menu mouse input: %v", err)
+	} else {
+		defer stop()
+	}
+	a.tray.PopUpMenu()
+	// An outside mouse-down can end the popup before the tray gets mouse-up.
+	a.recordTrayAutoDismiss(config.TrayActionMenu)
 }
 
 func (a *application) refreshTrayMode() {

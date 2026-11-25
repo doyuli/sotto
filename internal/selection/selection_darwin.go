@@ -228,8 +228,8 @@ func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
 
 const macControlModifier = 1 << 18
 
-// PrimaryMousePressed is sampled on the UI thread before deferring a blur.
-func PrimaryMousePressed() bool {
+// HasPrimaryPress is sampled on the UI thread before deferring a blur.
+func HasPrimaryPress() bool {
 	events := macnative.Class("NSEvent")
 	return events.Send(macnative.Sel("pressedMouseButtons"))&1 != 0 &&
 		events.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0

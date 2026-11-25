@@ -323,7 +323,7 @@ func (m *Manager) blurHandler(b *bubble) func() {
 		m.mu.Lock()
 		showID := b.showID
 		m.mu.Unlock()
-		primaryPress := selection.PrimaryMousePressed()
+		primaryPress := selection.HasPrimaryPress()
 		go mygo.RunOnMain(func() {
 			m.hideAfterBlur(b, showID, primaryPress)
 		})

@@ -258,7 +258,7 @@ func (a *application) showHistory() {
 			}
 		})
 	}
-	w.OnBlur(func() { dismissOnLeave(false, selection.PrimaryMousePressed()) })
+	w.OnBlur(func() { dismissOnLeave(false, selection.HasPrimaryPress()) })
 	var stopWatching func()
 	w.OnShow(func() {
 		w.Update(func() {
