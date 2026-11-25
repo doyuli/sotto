@@ -61,10 +61,22 @@ func (a *application) onShortcut(accel string) func() {
 			go a.toggleMinimalTranslation()
 		case "history":
 			a.toggleHistory()
-		case "panel", "selection", "ocr":
+		case "panel":
+			a.togglePanel()
+		case "selection", "ocr":
 			a.startEntry(action)
 		}
 	}
+}
+
+func (a *application) togglePanel() {
+	if a.isQuitting() {
+		return
+	}
+	if a.bubbles.HideVisibleInput() {
+		return
+	}
+	a.startEntry("panel")
 }
 
 func (a *application) toggleMinimalTranslation() {

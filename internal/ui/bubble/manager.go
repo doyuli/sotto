@@ -105,17 +105,10 @@ func NewManager(isQuitting func() bool, actions Actions) *Manager {
 // FocusVisibleInput runs on the UI thread before a new entry is acquired.
 // A pending selection can leave input visible, so visibility alone is not reuse.
 func (m *Manager) FocusVisibleInput() bool {
-	m.mu.Lock()
-	b := m.transient
-	var valid func() bool
-	if b != nil {
-		valid = b.canShow
-	}
-	m.mu.Unlock()
-	if b == nil || valid == nil || !valid() {
+	b, visible := m.visibleInputCandidate()
+	if b == nil {
 		return false
 	}
-	visible := b.win.IsVisible()
 	m.mu.Lock()
 	reuse := m.transient == b && m.byID[b.id] == b && b.refocusInput(visible)
 	var presented BubblePresentedMsg
@@ -136,14 +129,63 @@ func (m *Manager) FocusVisibleInput() bool {
 	return true
 }
 
+// HideVisibleInput closes a visible transient input bubble when the panel
+// shortcut is pressed again, returning true when an active input was dismissed.
+func (m *Manager) HideVisibleInput() bool {
+	b, visible := m.visibleInputCandidate()
+	if b == nil {
+		return false
+	}
+	m.mu.Lock()
+	dismissed := m.transient == b && m.byID[b.id] == b && b.dismissInput(visible)
+	stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
+	view := b.view
+	m.mu.Unlock()
+	if !dismissed {
+		return false
+	}
+	if view != nil {
+		view.onStopped(stopped)
+		b.win.Invalidate()
+	}
+	b.win.Hide()
+	log.Printf("bubble: toggle hide input id=%d show=%d", b.id, stopped.ShowID)
+	return true
+}
+
+func (m *Manager) visibleInputCandidate() (*bubble, bool) {
+	m.mu.Lock()
+	b := m.transient
+	var valid func() bool
+	if b != nil {
+		valid = b.canShow
+	}
+	m.mu.Unlock()
+	if b == nil || valid == nil || !valid() {
+		return nil, false
+	}
+	return b, b.win.IsVisible()
+}
+
+func (b *bubble) isVisibleInput(visible bool) bool {
+	return visible && b.trigger == "input" && !b.pinned && !b.closeClaimed && b.presentationShown
+}
+
 // refocusInput preserves content and first-show state while revoking callbacks
 // from the previous presentation. Entry ownership is checked separately.
 func (b *bubble) refocusInput(visible bool) bool {
-	if !visible || b.trigger != "input" || b.pinned || b.closeClaimed || !b.presentationShown {
+	if !b.isVisibleInput(visible) {
 		return false
 	}
 	b.showID++
 	return true
+}
+
+func (b *bubble) dismissInput(visible bool) bool {
+	if !b.isVisibleInput(visible) {
+		return false
+	}
+	return b.dismiss()
 }
 
 // ShowTask starts a fresh session in the shared transient window.

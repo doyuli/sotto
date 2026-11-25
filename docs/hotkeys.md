@@ -10,7 +10,7 @@
 - Show "正在保存…" until registration and saving succeed; the old binding remains active. Save tasks run serially, ordinary settings writes use the latest hotkeys, and the final task reads back the actual settings. Closing/reopening the window must not restore old recording state or display late errors from the old window.
 - Combinations that cannot be registered at startup remain in the configuration and appear as "未生效" in settings; they are no longer automatically replaced with alternatives. Canceling recording or reopening the window does not hide this status. Setting the same combination again retries registration.
 - Translation History defaults to `Option+H` on macOS and `Ctrl+Alt+H` on Windows. Missing or empty values use the platform default. Use **翻译历史快捷键** to change the combination. It shares the other shortcuts' conflict checks and rollback, and the tray/menu-bar command remains available.
-- Pressing the global `history` shortcut while its transient window is visible closes/dismisses it instead of refocusing or reopening; the tray/menu-bar action still opens or focuses it.
+- Pressing the global `panel` or `history` shortcut while its transient window is visible closes/dismisses it instead of refocusing or reopening; tray/menu-bar actions and `--panel` still open or focus.
 
 In the History search field, Up and Down move the selected original, Enter copies its first full translation and closes only after a successful clipboard write, and Escape closes without copying. Composition keys remain with the input method.
 

@@ -62,10 +62,33 @@ func TestInputFocusRequiresVisibleReusablePresentation(t *testing.T) {
 			default:
 				b.trigger = blocked
 			}
-			if b.refocusInput(visible) {
-				t.Fatal("non-current input presentation was reused")
+			if b.refocusInput(visible) || b.dismissInput(visible) {
+				t.Fatal("non-current input presentation was reused or dismissed")
 			}
 		})
+	}
+}
+
+func TestVisibleInputDismissStopsWorkAndRevokesShow(t *testing.T) {
+	var gate testGate
+	entry := gate.Begin()
+	m := NewManager(nil, Actions{})
+	w := &mygo.Window{}
+	b := &bubble{win: w, canShow: entry.Valid}
+	m.byID[1], m.transient = b, b
+	b.replaceContent(config.Default(), "input", "submitted text", "", "", nil)
+	b.present()
+	b.ready = true
+	b.claimShow()
+	ctx, ok := m.StartRun(w, RunReq{SessionID: b.sessionID, ReqID: "run", Revision: 1, Text: "submitted text", SourceLang: "en", TargetLang: "ja"})
+	if !ok {
+		t.Fatal("input translation did not start")
+	}
+	if !b.dismissInput(true) || !b.closeClaimed || b.canShow() || ctx.Err() == nil {
+		t.Fatal("dismissing visible input did not stop active presentation and work")
+	}
+	if b.dismissInput(true) {
+		t.Fatal("already dismissed input accepted a second toggle")
 	}
 }
 

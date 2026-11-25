@@ -358,7 +358,7 @@ func TestPinnedRestorePreservesEntryOwnership(t *testing.T) {
 	}
 	// Reject before querying the zero Window: the panel action must acquire
 	// a fresh entry, which will revoke the pending selection.
-	if m.FocusVisibleInput() || !pending.Valid() {
+	if m.FocusVisibleInput() || m.HideVisibleInput() || !pending.Valid() {
 		t.Fatal("old input bypassed entry acquisition")
 	}
 	fresh := gate.Begin()
