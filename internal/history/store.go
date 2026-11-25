@@ -268,9 +268,11 @@ func (s *Store) Record(ctx context.Context, r *Request, provider, text string, r
 		rank = len(r.order)
 	}
 	key := r.key
+	entryArgs := []any{key.Text, key.SourceLang, key.TargetLang, r.at, s.Revision() + 1}
 	res, err := db.Transaction(ctx, []sqlite.Statement{
-		{SQL: upsertEntry, Args: []any{key.Text, key.SourceLang, key.TargetLang, r.at, s.Revision() + 1}},
+		{SQL: insertEntry, Args: entryArgs},
 		{SQL: upsertResult, Args: []any{key.Text, key.SourceLang, key.TargetLang, provider, int64(resultType), text, r.at, rank}},
+		{SQL: touchEntry, Args: entryArgs},
 	})
 	if err != nil {
 		return false, fmt.Errorf("write translation history: %w", err)

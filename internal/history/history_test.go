@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -154,6 +155,46 @@ func TestHistoryRefreshPageTracksSearchChanges(t *testing.T) {
 	*now = now.Add(-time.Hour)
 	put("backdated", "match")
 	refresh()
+}
+
+func TestHistoryFullPageLookahead(t *testing.T) {
+	s, _, _ := fixture(t, 0)
+	put := func(i int) {
+		r := s.Begin(Key{strconv.Itoa(i), "en", "zh-HANS"}, nil)
+		defer r.Done()
+		record(t, s, r, "google", "result", true)
+	}
+	for i := range maxPageSize {
+		put(i)
+	}
+	// A full last page and a full page with one unread entry must be distinguishable.
+	for _, wantMore := range []bool{false, true} {
+		if wantMore {
+			put(maxPageSize)
+		}
+		entries, more, err := s.RefreshPage(ctx, "", nil, 0, false, maxPageSize)
+		if err != nil || len(entries) != maxPageSize || more != wantMore {
+			t.Fatalf("full page: len=%d, more=%v, err=%v; want more=%v", len(entries), more, err, wantMore)
+		}
+	}
+}
+
+func TestHistoryRejectedResultKeepsRevision(t *testing.T) {
+	s, now, _ := fixture(t, 0)
+	key := Key{"late", "en", "zh-HANS"}
+	old := s.Begin(key, nil)
+	defer old.Done()
+	*now = now.Add(time.Second)
+	newer := s.Begin(key, nil)
+	defer newer.Done()
+	record(t, s, newer, "google", "new", true)
+	since := s.Revision()
+	// A rejected result used to mark the entry as changed without notifying readers.
+	record(t, s, old, "google", "old", false)
+	rev, err := scalar(ctx, s.db.Load(), "SELECT changed_revision FROM history_entry")
+	if err != nil || rev != int64(since) || s.Revision() != since {
+		t.Fatalf("after rejection: stored=%d, published=%d, want=%d, err=%v", rev, s.Revision(), since, err)
+	}
 }
 
 func TestHistoryLateResultsAndDeletion(t *testing.T) {

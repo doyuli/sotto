@@ -35,11 +35,9 @@ var schemaV1 = []sqlite.Statement{
 	{SQL: "PRAGMA user_version = 1"},
 }
 
-const upsertEntry = `INSERT INTO history_entry (source_text, source_lang, target_lang, last_translated_ms, changed_revision)
+const insertEntry = `INSERT INTO history_entry (source_text, source_lang, target_lang, last_translated_ms, changed_revision)
 VALUES (?1, ?2, ?3, ?4, ?5)
-ON CONFLICT (source_text, source_lang, target_lang) DO UPDATE SET
-last_translated_ms = max(history_entry.last_translated_ms, excluded.last_translated_ms),
-changed_revision = excluded.changed_revision`
+ON CONFLICT (source_text, source_lang, target_lang) DO NOTHING`
 
 const upsertResult = `INSERT INTO history_result (entry_id, provider_id, result_type, translated_text, translated_ms, display_rank)
 SELECT id, ?4, ?5, ?6, ?7, ?8 FROM history_entry
@@ -47,6 +45,10 @@ WHERE source_text = ?1 AND source_lang = ?2 AND target_lang = ?3
 ON CONFLICT (entry_id, provider_id) DO UPDATE SET
 result_type = excluded.result_type, translated_text = excluded.translated_text, translated_ms = excluded.translated_ms
 WHERE excluded.translated_ms >= history_result.translated_ms`
+
+// changes() refers to the immediately preceding result upsert in the same transaction.
+const touchEntry = `UPDATE history_entry SET last_translated_ms = max(last_translated_ms, ?4), changed_revision = ?5
+WHERE changes() > 0 AND source_text = ?1 AND source_lang = ?2 AND target_lang = ?3`
 
 func migrate(ctx context.Context, db *sqlite.DB) error {
 	if _, err := db.Execute(ctx, "PRAGMA foreign_keys = ON"); err != nil {
@@ -148,6 +150,8 @@ func (s *Store) Find(ctx context.Context, id int64, word string) (Entry, error) 
 	return entryFromRow(rows[0]), nil
 }
 
+const maxPageSize = 100
+
 // List uses keyset pagination. Searching uses SQLite's ASCII lower and literal
 // substring matching, identically for selection and the per-page snippets.
 func (s *Store) List(ctx context.Context, word string, after Cursor, limit int) ([]Entry, error) {
@@ -167,7 +171,7 @@ func (s *Store) List(ctx context.Context, word string, after Cursor, limit int) 
 		sql += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	sql += " ORDER BY e.last_translated_ms DESC, e.id DESC LIMIT ?"
-	rows, err := s.query(ctx, sql, append(args, max(1, min(limit, 100)))...)
+	rows, err := s.query(ctx, sql, append(args, max(1, min(limit, maxPageSize+1)))...)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +191,7 @@ func (s *Store) List(ctx context.Context, word string, after Cursor, limit int) 
 // The caller starts a fresh list after removals. Translation timestamps can stay
 // unchanged when another provider finishes, so use the write revision for snippets.
 func (s *Store) RefreshPage(ctx context.Context, word string, previous []Entry, since uint64, more bool, pageSize int) ([]Entry, bool, error) {
+	pageSize = max(1, min(pageSize, maxPageSize))
 	if len(previous) == 0 {
 		page, err := s.List(ctx, word, Cursor{}, pageSize+1)
 		return page[:min(pageSize, len(page))], len(page) > pageSize, err
