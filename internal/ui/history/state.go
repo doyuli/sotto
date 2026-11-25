@@ -11,10 +11,10 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"sotto/internal/history"
-	"sotto/internal/naming"
 )
 
 const pageSize = 30
+const searchDelay = 100 * time.Millisecond
 const speechUnavailable = "朗读不可用"
 
 type Actions struct {
@@ -24,9 +24,8 @@ type Actions struct {
 	Speak              func(text, lang string, onError func()) // onError runs on the UI thread
 	Close              func()
 	OpenServices       func()
-	DictionaryEligible func(history.Entry) bool // runs on a detail worker after source preprocessing
-	Providers          func() []string          // enabled providers in configured order
-	CopyFormats        func() []string          // enabled naming styles in configured order
+	DictionaryEligible func(history.Entry) bool                 // runs on a detail worker after source preprocessing
+	Options            func() (providers, copyFormats []string) // current settings, in configured order
 	Retry              func(history.Entry, string) (RetryResult, error)
 }
 
@@ -59,6 +58,9 @@ type View struct {
 	revision            uint64
 
 	search, query, requestedQuery string
+	searchDue                     time.Time
+	buckets                       dayBuckets // shared by the committed page and its counts
+	pageRemovals                  uint64
 	focus                         bool
 	more, loading, ready, older   bool
 	refreshing                    bool
@@ -98,6 +100,7 @@ func (v *View) Open() {
 	if v.life == nil {
 		v.life, v.cancel = context.WithCancel(context.Background())
 		v.search, v.query, v.status = "", "", ""
+		v.searchDue, v.buckets = time.Time{}, dayBuckets{}
 		v.older, v.clearOpen, v.deleting, v.providerOpen = false, false, false, false
 		v.retries = make(map[int64]retryState)
 		v.collapsed = make(map[string]bool)
@@ -129,7 +132,7 @@ func (v *View) Dismiss() {
 }
 
 func (v *View) Refresh() {
-	if v.life != nil && v.revision != v.store.Revision() {
+	if v.life != nil && v.searchDue.IsZero() && v.revision != v.store.Revision() {
 		v.reset(false)
 	}
 }
@@ -150,8 +153,8 @@ func (v *View) reset(clearSelection bool) {
 	v.revision = v.store.Revision()
 	v.requestedQuery = query
 	v.refreshing, v.loading = true, false
-	revision, older, now := v.revision, v.older, v.now()
-	todayMS, recentMS := groupBounds(now)
+	revision, older, buckets := v.revision, v.older, groupBounds(v.now())
+	removals := v.store.RemovalRevision()
 	v.actions.Run(func() {
 		entries, err := v.store.List(ctx, query, history.Cursor{}, pageSize+1)
 		more := len(entries) > pageSize
@@ -160,7 +163,7 @@ func (v *View) reset(clearSelection bool) {
 		var results []history.Result
 		var detailErr error
 		if err == nil {
-			entry, detailErr = v.firstPageEntry(ctx, page, id, query, older, now)
+			entry, detailErr = v.firstPageEntry(ctx, page, id, query, older, buckets)
 			// Retaining only the detail would leave arrow navigation anchored to a missing row.
 			for more && entry.ID != 0 {
 				tail := page[len(page)-1]
@@ -191,12 +194,13 @@ func (v *View) reset(clearSelection bool) {
 			// Publish the list and first detail in the same frame so retained
 			// results don't pass through an empty or partially updated view.
 			v.query, v.entries, v.more = query, page, more
+			v.buckets, v.pageRemovals = buckets, removals
 			v.hasGroupCounts = false
 			v.dictionaryEligible = dictionaryEligible
 			v.refreshing, v.ready, v.loadError = false, true, err != nil
 			v.commitDetail(entry.ID, entry, results, detailErr)
 			if more && err == nil {
-				v.loadCounts(ctx, revision, query, todayMS, recentMS)
+				v.loadCounts(ctx, revision, query, buckets.today, buckets.recent)
 			}
 		})
 	})
@@ -215,17 +219,40 @@ func (v *View) loadCounts(ctx context.Context, revision uint64, query string, to
 	})
 }
 
-func (v *View) searchChanged() {
+func (v *View) searchChanged(now time.Time) {
 	next := strings.TrimSpace(v.search)
-	if next != v.requestedQuery {
-		v.copySerial++
-		v.status = ""
+	if next == v.requestedQuery {
+		return
+	}
+	v.copySerial++
+	v.status = ""
+	v.requestedQuery = next
+	v.cancelQuery()
+	v.cancelDetailRead()
+	v.refreshing = true
+	v.searchDue = now.Add(searchDelay)
+	if next == "" {
+		v.searchDue = time.Time{}
 		v.reset(true)
 	}
 }
 
-func (v *View) firstPageEntry(ctx context.Context, page []history.Entry, id int64, query string, older bool, now time.Time) (history.Entry, error) {
-	visible := func(e history.Entry) bool { return older || query != "" || groupOf(now, e) != 2 }
+// The UI clock coalesces edits without timers or goroutines surviving the window.
+func (v *View) updateQuery(c *ui.Context) {
+	if !v.searchDue.IsZero() {
+		if remaining := v.searchDue.Sub(c.Now()); remaining > 0 {
+			c.After(remaining)
+		} else {
+			v.searchDue = time.Time{}
+			v.reset(true)
+		}
+	} else if v.ready && !v.refreshing && groupBounds(v.now()) != v.buckets {
+		v.reset(false)
+	}
+}
+
+func (v *View) firstPageEntry(ctx context.Context, page []history.Entry, id int64, query string, older bool, buckets dayBuckets) (history.Entry, error) {
+	visible := func(e history.Entry) bool { return older || query != "" || buckets.group(e) != 2 }
 	if id != 0 {
 		if i := slices.IndexFunc(page, func(e history.Entry) bool { return e.ID == id }); i >= 0 {
 			if visible(page[i]) {
@@ -391,75 +418,6 @@ func (v *View) speak(id int64, text, lang string) {
 	})
 }
 
-func (v *View) copySelected() {
-	v.copy(v.navigationID(), "", true)
-}
-
-func (v *View) copySource() {
-	if !v.detailUsable() || v.entry.ID == 0 {
-		return
-	}
-	v.copyCustom(v.entry.ID, "", v.entry.Text, "已复制原文", "source", false)
-}
-
-func (v *View) copy(id int64, provider string, closeAfter bool) {
-	v.copyCustom(id, provider, "", "已复制译文", "provider:"+provider, closeAfter)
-}
-
-func (v *View) copyCustom(id int64, provider, overrideText, toastMsg, feedbackKey string, closeAfter bool) {
-	if !v.pageUsable() || id == 0 {
-		return
-	}
-	v.copySerial++
-	v.copyAtRevision(id, provider, overrideText, toastMsg, feedbackKey, closeAfter, v.copySerial)
-}
-
-func (v *View) copyAtRevision(id int64, provider, overrideText, toastMsg, feedbackKey string, closeAfter bool, serial uint64) {
-	ctx := v.life
-	v.actions.Run(func() {
-		revision := v.store.Revision()
-		text, err := v.store.CopyText(ctx, id, provider)
-		if overrideText != "" && err == nil {
-			text = overrideText
-		}
-		v.actions.Post(func() {
-			if ctx.Err() != nil || serial != v.copySerial {
-				return
-			}
-			if v.store.Revision() != revision {
-				v.Refresh()
-				v.copyAtRevision(id, provider, overrideText, toastMsg, feedbackKey, closeAfter, serial)
-				return
-			}
-			if errors.Is(err, history.ErrMissing) {
-				v.reset(false)
-				return
-			}
-			if err != nil {
-				v.status = "无法读取译文，请重试。"
-				return
-			}
-			var copyErr error
-			if !v.store.AtRevision(revision, func() { copyErr = v.actions.Copy(text) }) {
-				v.copyAtRevision(id, provider, overrideText, toastMsg, feedbackKey, closeAfter, serial)
-				return
-			}
-			if copyErr != nil {
-				v.status = "无法写入剪贴板，请重试。"
-				return
-			}
-			if closeAfter {
-				v.Dismiss()
-			} else {
-				v.status = ""
-				v.pendingToast = toastMsg
-				v.copiedKey = feedbackKey
-				v.copiedUntil = time.Time{}
-			}
-		})
-	})
-}
-
 func (v *View) delete(id int64) {
 	if v.deleting || id != 0 && !v.detailUsable() {
 		return
@@ -482,7 +440,12 @@ func (v *View) delete(id int64) {
 			v.deleting = false
 			switch {
 			case err == nil || errors.Is(err, history.ErrMissing):
-				v.reset(false)
+				if id == 0 {
+					clear(v.retries)
+				} else {
+					delete(v.retries, id)
+				}
+				v.Refresh()
 			default:
 				v.status = "无法删除翻译历史，请重试。"
 			}
@@ -508,8 +471,9 @@ func (v *View) providerEligible(provider string) bool {
 
 func (v *View) retry(entry history.Entry, provider string) {
 	state := v.retries[entry.ID]
+	providers, _ := v.actions.Options()
 	if !v.detailUsable() || v.entry.ID != entry.ID || state.pending ||
-		v.actions.Retry == nil || !slices.Contains(v.actions.Providers(), provider) ||
+		v.actions.Retry == nil || !slices.Contains(providers, provider) ||
 		!v.providerEligible(provider) {
 		return
 	}
@@ -524,7 +488,7 @@ func (v *View) retry(entry history.Entry, provider string) {
 	v.actions.Run(func() {
 		result, err := v.actions.Retry(entry, provider)
 		v.actions.Post(func() {
-			if life.Err() != nil {
+			if life.Err() != nil || !v.retries[entry.ID].pending {
 				return
 			}
 			if errors.Is(err, history.ErrMissing) {
@@ -541,18 +505,19 @@ func (v *View) retry(entry history.Entry, provider string) {
 	})
 }
 
-func groupBounds(now time.Time) (int64, int64) {
+type dayBuckets struct{ today, recent int64 }
+
+func groupBounds(now time.Time) dayBuckets {
 	year, month, day := now.Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
-	return today.UnixMilli(), today.AddDate(0, 0, -2).UnixMilli()
+	return dayBuckets{today.UnixMilli(), today.AddDate(0, 0, -2).UnixMilli()}
 }
 
-func groupOf(now time.Time, e history.Entry) int {
-	todayMS, recentMS := groupBounds(now)
+func (b dayBuckets) group(e history.Entry) int {
 	switch {
-	case e.TranslatedMS >= todayMS:
+	case e.TranslatedMS >= b.today:
 		return 0
-	case e.TranslatedMS >= recentMS:
+	case e.TranslatedMS >= b.recent:
 		return 1
 	default:
 		return 2
@@ -560,7 +525,7 @@ func groupOf(now time.Time, e history.Entry) int {
 }
 
 func (v *View) visible(e history.Entry) bool {
-	return v.older || v.query != "" || groupOf(v.now(), e) != 2
+	return v.older || v.query != "" || v.buckets.group(e) != 2
 }
 
 type railRow struct {
@@ -578,11 +543,11 @@ func (r railRow) key() int64 {
 }
 
 func (v *View) rows() []railRow {
-	now, previous := v.now(), -1
+	previous := -1
 	rows := make([]railRow, 0, len(v.entries)+3)
 	header := 0
 	for _, e := range v.entries {
-		group := groupOf(now, e)
+		group := v.buckets.group(e)
 		if group != previous {
 			header = len(rows)
 			rows = append(rows, railRow{header: true, group: group})
@@ -608,13 +573,6 @@ func (v *View) totalCount() int {
 		return int(v.groupCounts[0] + v.groupCounts[1] + v.groupCounts[2])
 	}
 	return len(v.entries)
-}
-
-func (v *View) copyFormats() []string {
-	if v.actions.CopyFormats != nil {
-		return v.actions.CopyFormats()
-	}
-	return naming.Styles
 }
 
 func (v *View) move(delta int) {

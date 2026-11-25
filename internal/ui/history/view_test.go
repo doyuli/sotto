@@ -63,7 +63,7 @@ func newHarness(t *testing.T) *harness {
 		},
 		Close:              func() { h.closed++ },
 		OpenServices:       func() { h.openedServices++ },
-		Providers:          func() []string { return h.providers },
+		Options:            func() ([]string, []string) { return h.providers, naming.Styles },
 		DictionaryEligible: func(e history.Entry) bool { return translate.AllowsEnglishLookup(e.Text, e.SourceLang) },
 		Retry: func(e history.Entry, provider string) (RetryResult, error) {
 			return RetryResult{}, h.onRetry(h.t.Context(), e, provider)
@@ -102,6 +102,9 @@ func (h *harness) one() {
 
 func (h *harness) settle() {
 	h.t.Helper()
+	if h.ui != nil && !h.view.searchDue.IsZero() {
+		h.ui.Advance(searchDelay)
+	}
 	for i := 0; i < 20; i++ {
 		if len(h.work) == 0 && len(h.post) == 0 {
 			return
@@ -353,6 +356,33 @@ func TestHistoryClearConfirmation(t *testing.T) {
 	}
 	if _, ok := h.ui.Find("还没有翻译记录"); !ok {
 		t.Fatalf("empty state missing: %v", h.ui.Texts())
+	}
+}
+
+func TestHistoryDeletionDropsQueuedRetryFeedback(t *testing.T) {
+	for _, clearAll := range []bool{false, true} {
+		h := newHarness(t)
+		h.put("old", "已有译文")
+		h.open()
+		id := h.view.selected
+		h.onRetry = func(context.Context, history.Entry, string) error { return errors.New("离线") }
+		h.click("换源翻译")
+		if err := h.ui.Click("Google · 新增译文"); err != nil {
+			t.Fatal(err)
+		}
+		h.one()
+		late := h.post[0]
+		h.post = nil
+		if clearAll {
+			h.click("清空历史")
+			h.click("确认清空")
+		} else {
+			h.click("删除此条历史")
+		}
+		late()
+		if _, exists := h.view.retries[id]; exists {
+			t.Fatal("late callback restored deleted retry feedback")
+		}
 	}
 }
 
@@ -618,6 +648,64 @@ func TestHistoryCopyDoesNotUseDeletedSelection(t *testing.T) {
 	}
 }
 
+func TestHistoryCopySurvivesUnrelatedInsert(t *testing.T) {
+	h := newHarness(t)
+	h.put("chosen", "first result")
+	h.open()
+	h.ui.Key(0, ui.KeyEnter)
+	h.one()
+	h.put("other", "unrelated result")
+	// An insertion between the read and the clipboard callback must not force a second read.
+	for _, post := range h.post {
+		post()
+	}
+	if !slices.Equal(h.copied, []string{"first result"}) || len(h.work) != 0 {
+		t.Fatalf("copied %v, pending jobs %d", h.copied, len(h.work))
+	}
+}
+
+func TestHistoryDebounceSkipsIntermediateQueries(t *testing.T) {
+	h := newHarness(t)
+	h.put("apple", "苹果")
+	h.open()
+	h.ui.Type("a")
+	h.ui.Advance(60 * time.Millisecond)
+	h.ui.Type("p")
+	h.ui.Advance(60 * time.Millisecond)
+	h.ui.Key(0, ui.KeyEnter)
+	if len(h.work) != 0 || h.closed != 0 {
+		t.Fatal("an intermediate query or stale copy was dispatched")
+	}
+	h.ui.Advance(searchDelay)
+	if len(h.work) != 1 {
+		t.Fatalf("expected one debounced query, got %d", len(h.work))
+	}
+	h.settle()
+	if h.view.query != "ap" || !h.ui.HasText("苹果") {
+		t.Fatalf("last search not published: %v", h.ui.Texts())
+	}
+}
+
+func TestHistorySameOriginalDifferentDirections(t *testing.T) {
+	h := newHarness(t)
+	h.put("apple", "苹果")
+	r := h.store.Begin(history.Key{Text: "apple", SourceLang: "en", TargetLang: "ja"}, []string{"deepl"})
+	defer r.Done()
+	if ok, err := h.store.Record(t.Context(), r, "deepl", "りんご", history.ResultTranslation); err != nil || !ok {
+		t.Fatal(err)
+	}
+	h.open()
+	// Rows with identical labels must still navigate by entry ID.
+	if !h.ui.HasText("りんご") {
+		t.Fatal("newest translation missing")
+	}
+	h.ui.Key(0, ui.KeyDown)
+	h.settle()
+	if !h.ui.HasText("苹果") {
+		t.Fatal("navigation skipped the other translation")
+	}
+}
+
 func TestHistorySearchAcrossCollapsedDays(t *testing.T) {
 	h := newHarness(t)
 	h.now = h.now.AddDate(0, 0, -3)
@@ -676,6 +764,7 @@ func TestHistorySearchReplacesListAndDetailTogether(t *testing.T) {
 	if !h.ui.HasText("正在查看的译文") || h.ui.HasText("正在读取…") {
 		t.Fatalf("typing replaced the current view before the query finished: %v", h.ui.Texts())
 	}
+	h.ui.Advance(searchDelay)
 	h.one()
 	h.ui.Type(" beta")
 	publish := func() {
@@ -691,9 +780,10 @@ func TestHistorySearchReplacesListAndDetailTogether(t *testing.T) {
 		t.Fatalf("the superseded query changed the view: %v", h.ui.Texts())
 	}
 	h.ui.Key(0, ui.KeyEnter)
-	if len(h.work) != 1 || h.closed != 0 || len(h.copied) != 0 {
-		t.Fatal("Enter started copying a stale search result")
+	if len(h.work) != 0 || h.closed != 0 || len(h.copied) != 0 {
+		t.Fatal("Enter started copying a stale search result during debounce")
 	}
+	h.ui.Advance(searchDelay)
 	h.one()
 	publish()
 	if !h.ui.HasText("第二个匹配的译文") || h.ui.HasText("正在查看的译文") ||
@@ -809,7 +899,7 @@ func TestHistoryCopyOriginalNamingChipsAndToastFeedback(t *testing.T) {
 	}
 
 	// Respect configured CopyFormats when provided.
-	h.view.actions.CopyFormats = func() []string { return []string{naming.Kebab} }
+	h.view.actions.Options = func() ([]string, []string) { return h.providers, []string{naming.Kebab} }
 	h.ui.Frame()
 	if _, ok := h.ui.Find("下划线：user_name"); ok {
 		t.Fatal("disabled naming format chip is still visible")
@@ -923,6 +1013,23 @@ func TestHistoryPagedGroupCountsStayAccurate(t *testing.T) {
 	}
 	if !h.ui.HasText(fmt.Sprint(pageSize)) {
 		t.Fatalf("today group count %d missing: %v", pageSize, h.ui.Texts())
+	}
+}
+
+func TestHistoryDateRolloverRecountsPage(t *testing.T) {
+	h := newHarness(t)
+	for i := range pageSize + 2 {
+		h.put(fmt.Sprintf("today %d", i), "result")
+	}
+	h.open()
+	if !h.ui.HasText("今天") {
+		t.Fatal("missing today's entries")
+	}
+	h.now = h.now.AddDate(0, 0, 1)
+	h.ui.Frame()
+	h.settle()
+	if h.ui.HasText("今天") || !h.ui.HasText("近 3 天") || !h.ui.HasText(fmt.Sprint(pageSize+2)) {
+		t.Fatalf("stale counts after midnight: %v", h.ui.Texts())
 	}
 }
 

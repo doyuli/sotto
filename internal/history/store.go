@@ -73,6 +73,7 @@ type Store struct {
 	policy   Policy // guarded by writes
 	closed   bool   // guarded by writes
 	revision atomic.Uint64
+	removals atomic.Uint64 // invalidates pending clipboard reads only when entries disappear
 	changes  chan struct{}
 
 	stateMu  sync.Mutex
@@ -166,19 +167,7 @@ func (s *Store) Close() error {
 func (s *Store) Revision() uint64         { return s.revision.Load() }
 func (s *Store) Changes() <-chan struct{} { return s.changes }
 
-// AtRevision validates a clipboard action without waiting on the UI thread.
-// The caller can re-read the same ID on a worker when a mutation is underway.
-func (s *Store) AtRevision(revision uint64, act func()) bool {
-	if !s.writes.TryLock() {
-		return false
-	}
-	defer s.writes.Unlock()
-	if s.Revision() != revision {
-		return false
-	}
-	act()
-	return true
-}
+func (s *Store) RemovalRevision() uint64 { return s.removals.Load() }
 
 func (s *Store) changed() {
 	s.revision.Add(1)
@@ -293,6 +282,7 @@ func (s *Store) Delete(ctx context.Context, id int64) error {
 	if _, err := s.db.Load().Execute(ctx, "DELETE FROM history_entry WHERE id = ?1", id); err != nil {
 		return fmt.Errorf("delete translation history: %w", err)
 	}
+	s.removals.Add(1)
 	s.stateMu.Lock()
 	if group := s.active[e.Key]; group != nil {
 		group.deletedThrough = s.sequence
@@ -313,6 +303,7 @@ func (s *Store) Clear(ctx context.Context) error {
 	if _, err := db.Execute(ctx, "DELETE FROM history_entry"); err != nil {
 		return fmt.Errorf("clear translation history: %w", err)
 	}
+	s.removals.Add(1)
 	s.stateMu.Lock()
 	s.epoch++
 	s.stateMu.Unlock()
@@ -369,6 +360,7 @@ func (s *Store) Cleanup(ctx context.Context) error {
 func (s *Store) prune(ctx context.Context, db *sqlite.DB, now time.Time) error {
 	n, err := prune(ctx, db, s.policy.Days, now)
 	if n != 0 {
+		s.removals.Add(1)
 		s.changed()
 	}
 	return err

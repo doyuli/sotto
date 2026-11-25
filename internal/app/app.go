@@ -159,8 +159,7 @@ func (a *application) settings() config.Settings {
 	return a.cfg
 }
 
-// A queued form snapshot may predate a shortcut or tray change. Those two
-// preferences are committed independently against the latest settings.
+// Ordinary form saves must not overwrite preferences committed independently.
 func (a *application) updateSettings(s config.Settings) error {
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
@@ -169,7 +168,7 @@ func (a *application) updateSettings(s config.Settings) error {
 	s.MinimalTranslation = current.MinimalTranslation
 	s.OpenAtLogin = current.OpenAtLogin
 	s.History = current.History
-	s.Hotkeys.History = current.Hotkeys.History
+	s.Hotkeys = current.Hotkeys
 	return a.saveSettings(config.Normalize(s))
 }
 
@@ -576,21 +575,31 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 		return
 	}
 	go func() {
-		defer a.bubbles.FinishRun(win, req.ReqID)
+		var writes sync.WaitGroup
 		defer record.Done()
-		emit := func(res translate.Result) {
-			if ctx.Err() != nil {
-				return
-			}
-			msg := bubble.TranslationUpdateMsg{
-				ReqID: req.ReqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang,
-				Err: res.Err, Streaming: res.Streaming, Dictionary: res.Dictionary,
-			}
-			a.bubbles.PushResult(win, msg)
-			a.recordTranslation(ctx, record, res)
-		}
+		defer writes.Wait() // release the request only after its accepted writes finish
+		defer a.bubbles.FinishRun(win, req.ReqID)
+		emit := a.bubbleResultHandler(ctx, record, &writes, req.ReqID, func(msg bubble.TranslationUpdateMsg) bool {
+			return a.bubbles.PushResult(win, msg)
+		})
 		translate.Run(ctx, cfg, credentials, request, emit)
 	}()
+}
+
+func (a *application) bubbleResultHandler(ctx context.Context, record *history.Request, writes *sync.WaitGroup, reqID string, push func(bubble.TranslationUpdateMsg) bool) func(translate.Result) {
+	return func(res translate.Result) {
+		if ctx.Err() != nil {
+			return
+		}
+		accepted := push(bubble.TranslationUpdateMsg{
+			ReqID: reqID, Service: res.Service, Text: res.Text, DetectedLang: res.DetectedLang,
+			Err: res.Err, Streaming: res.Streaming, Dictionary: res.Dictionary,
+		})
+		if accepted && record != nil && !res.Streaming && res.Err == "" {
+			// Once accepted, dismissing the bubble no longer owns the history write.
+			writes.Go(func() { a.recordTranslation(context.WithoutCancel(ctx), record, res) })
+		}
+	}
 }
 
 func prepareTranslationRequest(text, source, target string, cfg config.Settings) (translate.Request, error) {

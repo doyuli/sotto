@@ -140,7 +140,9 @@ func (v *View) runHistoryChange(next config.HistorySettings, action func() error
 		v.mu.Lock()
 		v.historyBusy = false
 		v.pendingWrites--
-		if !clearHistory {
+		if v.pendingWrites == 0 && !v.disposed && v.actions.GetSettings != nil {
+			v.settings = cloneSettings(v.actions.GetSettings())
+		} else if !clearHistory {
 			if v.actions.GetSettings != nil {
 				v.settings.History = v.actions.GetSettings().History
 			} else if err == nil {

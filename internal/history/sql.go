@@ -237,8 +237,6 @@ func (s *Store) Results(ctx context.Context, id int64) ([]Result, error) {
 }
 
 func (s *Store) CopyText(ctx context.Context, id int64, provider string) (string, error) {
-	s.writes.Lock()
-	defer s.writes.Unlock()
 	sql := "SELECT translated_text FROM history_result WHERE entry_id = ?1"
 	args := []any{id}
 	if provider != "" {

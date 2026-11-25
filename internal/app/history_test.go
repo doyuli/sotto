@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"sotto/internal/history"
 	"sotto/internal/keys"
 	"sotto/internal/translate"
+	"sotto/internal/ui/bubble"
 )
 
 func TestHistoryBoundsFollowInvocationDisplay(t *testing.T) {
@@ -100,6 +102,40 @@ func TestRecordOnlyCopyableFinalTranslations(t *testing.T) {
 	a.recordTranslation(ctx, req, final)
 	if final.Err != "" || final.Text != "still successful" {
 		t.Fatalf("recording changed translation: %+v", final)
+	}
+}
+
+func TestHistoryBubbleDismissalAfterAcceptance(t *testing.T) {
+	store, err := history.Open(t.Context(), t.TempDir(), history.Policy{Enabled: true}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	a := &application{history: store}
+	r := store.Begin(history.Key{Text: "hello", SourceLang: "auto", TargetLang: "ja"}, nil)
+	defer r.Done()
+	ctx, dismiss := context.WithCancel(t.Context())
+	defer dismiss()
+	// A stale provider callback is rejected, but closing immediately after accepting a result cannot undo it.
+	var writes sync.WaitGroup
+	emit := a.bubbleResultHandler(ctx, r, &writes, "run", func(msg bubble.TranslationUpdateMsg) bool {
+		if msg.Service == "stale" {
+			return false
+		}
+		dismiss()
+		return true
+	})
+	emit(translate.Result{Service: "stale", Text: "obsolete"})
+	emit(translate.Result{Service: "google", Text: "こんにちは"})
+	emit(translate.Result{Service: "late", Text: "after dismissal"})
+	writes.Wait()
+	rows, err := store.List(t.Context(), "", history.Cursor{}, 1)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("history: %v, %v", rows, err)
+	}
+	results, err := store.Results(t.Context(), rows[0].ID)
+	if err != nil || len(results) != 1 || results[0].Text != "こんにちは" {
+		t.Fatalf("accepted result: %v, %v", results, err)
 	}
 }
 

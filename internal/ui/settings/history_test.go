@@ -68,6 +68,37 @@ func TestHistoryRetentionConfirmationInSettings(t *testing.T) {
 	}
 }
 
+func TestHistoryWriteReadsBackConcurrentModeChange(t *testing.T) {
+	for _, clearHistory := range []bool{false, true} {
+		saved := config.Default()
+		started, release := make(chan struct{}), make(chan struct{})
+		v := NewView(TabGeneral, saved, Actions{GetSettings: func() config.Settings { return saved }})
+		// The shortcut can publish while the history operation is the last pending settings write.
+		next := saved.History
+		next.Enabled = false
+		v.runHistoryChange(next, func() error {
+			close(started)
+			<-release
+			if !clearHistory {
+				saved.History = next
+			}
+			return nil
+		}, clearHistory)
+		<-started
+		saved.MinimalTranslation = true
+		v.ApplyExternalSettings(saved)
+		close(release)
+		drainSettingsTasks(v)
+		v.mu.Lock()
+		got := v.settings
+		v.mu.Unlock()
+		v.Dispose()
+		if !got.MinimalTranslation || got.History != saved.History {
+			t.Fatalf("clear=%v: stale settings: %+v", clearHistory, got)
+		}
+	}
+}
+
 func TestHistoryShortcutCanBeCustomized(t *testing.T) {
 	var calls []string
 	cfg := testSettingsConfig()

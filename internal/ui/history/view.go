@@ -149,27 +149,11 @@ func colors(c *ui.Context) palette {
 	return lightHistoryPalette
 }
 
-func chipTag(style string) string {
-	switch style {
-	case naming.LowerCamel:
-		return "aB"
-	case naming.UpperCamel:
-		return "AB"
-	case naming.Snake:
-		return "a_b"
-	case naming.Constant:
-		return "A_B"
-	case naming.Kebab:
-		return "a-b"
-	default:
-		return style
-	}
-}
-
 func (v *View) Render(c *ui.Context) {
 	if v.life == nil {
 		return
 	}
+	v.updateQuery(c)
 	p := colors(c)
 	c.SetTheme(p.theme)
 
@@ -246,7 +230,7 @@ func (v *View) renderSearch(c *ui.Context, p palette) {
 			Label(searchLabel).Placeholder(searchLabel).PlaceholderColor(p.muted.Alpha(0.75)).
 			Grow(1).FillHeight().MinWidth(0).FontSize(14).TextColor(p.ink).
 			CaretColor(p.accent).SelectionColor(p.selection).FocusRing(false).
-			OnChange(v.searchChanged).
+			OnChange(func() { v.searchChanged(c.Now()) }).
 			OnSubmit(v.copySelected).
 			OnTextKey(func(k ui.TextKey) bool {
 				if k.Mods != 0 {
@@ -274,7 +258,7 @@ func (v *View) renderSearch(c *ui.Context, p palette) {
 				Cursor(ui.CursorPointer).Size(18, 18).Radius(9).Background(p.clearBg).Center().
 				OnClick(func() {
 					v.search = ""
-					v.searchChanged()
+					v.searchChanged(c.Now())
 					v.searchField.Focus(c)
 				})
 			if clearBtn.Hovered() {
@@ -362,8 +346,9 @@ func (v *View) renderRail(c *ui.Context, p palette, rows []railRow) {
 					v.marked(c, p, singleLine.Replace(entry.Text)).FillWidth().MaxLines(2).Ellipsis("…").
 						FontSize(13).FontWeight(400).LineHeight(1.38).TextColor(textColor)
 					if entry.Snippet != "" {
-						line := providerName(entry.SnippetProvider) + " · " + singleLine.Replace(entry.Snippet)
-						v.marked(c, p, line).FillWidth().MaxLines(2).Ellipsis("…").FontSize(11.5).LineHeight(1.35).TextColor(p.muted)
+						spans := []ui.Span{{Text: providerName(entry.SnippetProvider) + " · "}}
+						spans = append(spans, searchSpans(singleLine.Replace(entry.Snippet), v.query, p.mark, ui.Span{})...)
+						ui.RichText(c, spans...).FillWidth().SingleLine().Ellipsis("…").FontSize(11.5).LineHeight(1.35).TextColor(p.muted)
 					}
 				})
 			})
@@ -468,7 +453,8 @@ func (v *View) renderDetail(c *ui.Context, p palette) {
 			translated := time.UnixMilli(entry.TranslatedMS).In(v.now().Location())
 			ui.Text(c, "最近翻译 "+translated.Format("2006-01-02 15:04")).FontSize(12).TextColor(p.muted)
 
-			providers, retry := v.actions.Providers(), v.retries[entry.ID]
+			providers, formats := v.actions.Options()
+			retry := v.retries[entry.ID]
 			ui.Row(c).FillWidth().MinHeight(28).Margin(6, 0, 0, 0).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "译文").FontSize(14).FontWeight(600).TextColor(p.ink)
 				ui.Text(c, fmt.Sprintf("· %d 个源", len(v.results))).FontSize(12).TextColor(p.muted)
@@ -478,17 +464,17 @@ func (v *View) renderDetail(c *ui.Context, p palette) {
 			v.renderRetryStatus(c, p, entry, retry, slices.Contains(providers, retry.provider))
 
 			for _, result := range v.results {
-				v.renderResult(c, p, entry, result, providers, false)
+				v.renderResult(c, p, entry, result, providers, formats, false)
 			}
 			if unsaved := retry.result.Text; unsaved != "" {
 				result := history.Result{Provider: retry.resultProvider, Text: unsaved, Type: retry.result.Type}
-				v.renderResult(c, p, entry, result, providers, true)
+				v.renderResult(c, p, entry, result, providers, formats, true)
 			}
 		})
 	})
 }
 
-func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, result history.Result, providers []string, unsaved bool) {
+func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, result history.Result, providers, formats []string, unsaved bool) {
 	provider, text, resultType := result.Provider, result.Text, result.Type
 	name := providerName(provider)
 	title, speechName := name, name
@@ -550,13 +536,12 @@ func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, resul
 
 		v.renderResultText(c, p, resultType, text)
 		if entry.TargetLang == "en" && resultType != history.ResultDictionary {
-			v.renderNamingChips(c, p, entry, collapseKey, text)
+			v.renderNamingChips(c, p, entry, collapseKey, text, formats)
 		}
 	})
 }
 
-func (v *View) renderNamingChips(c *ui.Context, p palette, entry history.Entry, cardKey, text string) {
-	formats := v.copyFormats()
+func (v *View) renderNamingChips(c *ui.Context, p palette, entry history.Entry, cardKey, text string, formats []string) {
 	if len(formats) == 0 {
 		return
 	}
@@ -571,7 +556,7 @@ func (v *View) renderNamingChips(c *ui.Context, p palette, entry history.Entry, 
 				continue
 			}
 			label := naming.Labels[style]
-			tag := chipTag(style)
+			tag := naming.ChipTag(style)
 			chipKey := "chip:" + cardKey + ":" + style
 			copied := v.copiedKey == chipKey
 			tip := label + "：" + val

@@ -144,11 +144,7 @@ func (m *Manager) HideVisibleInput() bool {
 	if !dismissed {
 		return false
 	}
-	if view != nil {
-		view.onStopped(stopped)
-		b.win.Invalidate()
-	}
-	b.win.Hide()
+	b.hideStopped(view, stopped)
 	log.Printf("bubble: toggle hide input id=%d show=%d", b.id, stopped.ShowID)
 	return true
 }
@@ -697,13 +693,18 @@ func (m *Manager) hideTransientBubble(b *bubble) {
 		view := b.view
 		m.mu.Unlock()
 		if dismissed {
-			if view != nil {
-				view.onStopped(stopped)
-				b.win.Invalidate()
-			}
-			b.win.Hide()
+			b.hideStopped(view, stopped)
 		}
 	})
+}
+
+// Called after releasing the manager lock, on the UI thread.
+func (b *bubble) hideStopped(view *bubbleView, stopped RunStoppedMsg) {
+	if view != nil {
+		view.onStopped(stopped)
+		b.win.Invalidate()
+	}
+	b.win.Hide()
 }
 
 // HideStale hides presentations revoked by the current workspace generation.

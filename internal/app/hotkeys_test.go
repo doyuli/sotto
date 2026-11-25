@@ -99,6 +99,8 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 	}
 	stale := cfg
 	stale.TargetLanguage = "ja"
+	// A stale form must not replace any independently registered accelerator.
+	stale.Hotkeys.Panel = "Ctrl+Shift+P"
 	if item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation"); item == nil || item.IsChecked() {
 		t.Fatal("tray should offer the unchecked mode before the toggle")
 	}
@@ -110,7 +112,7 @@ func TestMinimalTranslationToggleSurvivesQueuedSettingsSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	saved, err := config.Load(a.cfgPath)
-	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || !a.settings().MinimalTranslation {
+	if err != nil || !saved.MinimalTranslation || saved.TargetLanguage != "ja" || saved.Hotkeys != cfg.Hotkeys || !a.settings().MinimalTranslation {
 		t.Fatalf("saved mode=%v language=%s err=%v", saved.MinimalTranslation, saved.TargetLanguage, err)
 	}
 	item := mygo.NewMenu(a.trayTranslationItems()).ItemByID("minimalTranslation")

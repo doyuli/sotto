@@ -166,8 +166,10 @@ func (a *application) showHistory() {
 		},
 		Close:        func() { w.Close() },
 		OpenServices: func() { a.showSettings(true) },
-		Providers:    func() []string { return enabledHistoryProviders(a.settings().Services) },
-		CopyFormats:  func() []string { return a.settings().CopyFormats },
+		Options: func() ([]string, []string) {
+			cfg := a.settings()
+			return enabledHistoryProviders(cfg.Services), cfg.CopyFormats
+		},
 		DictionaryEligible: func(entry history.Entry) bool {
 			_, err := prepareHistoryRequest(entry, "dictionary", a.settings())
 			return err == nil
@@ -200,7 +202,6 @@ func (a *application) showHistory() {
 		view.Open()
 		w.Invalidate()
 		w.Show()
-		w.Focus()
 	}
 	a.refreshHistory = func() {
 		view.Refresh()
@@ -223,7 +224,7 @@ func (a *application) showHistory() {
 	var stopWatching func()
 	w.OnShow(func() {
 		w.Update(func() {
-			if a.historyWin != w || !w.IsVisible() {
+			if a.historyWin != w || !w.IsVisible() || stopWatching != nil {
 				return
 			}
 			var err error
@@ -270,10 +271,11 @@ func historyBoundsForWorkArea(bounds, work mygo.Rectangle) mygo.Rectangle {
 	}
 }
 
+var knownHistoryProviders = config.Default().Services.Order
+
 func enabledHistoryProviders(services config.ServiceSettings) []string {
-	known := config.Default().Services.Order
 	return slices.DeleteFunc(slices.Clone(services.Order), func(id string) bool {
-		return !slices.Contains(services.Enabled, id) || !slices.Contains(known, id)
+		return !slices.Contains(services.Enabled, id) || !slices.Contains(knownHistoryProviders, id)
 	})
 }
 

@@ -30,6 +30,24 @@ var Labels = map[string]string{
 	Kebab:      "短横线",
 }
 
+// ChipTag is a compact example of the naming style for copy buttons.
+func ChipTag(style string) string {
+	switch style {
+	case LowerCamel:
+		return "aB"
+	case UpperCamel:
+		return "AB"
+	case Snake:
+		return "a_b"
+	case Constant:
+		return "A_B"
+	case Kebab:
+		return "a-b"
+	default:
+		return style
+	}
+}
+
 // DetectStyle reports the identifier style of s: one of "camel", "snake",
 // "kebab", "constant" or "none" for plain words, mixed or non-Latin text.
 func DetectStyle(s string) string {

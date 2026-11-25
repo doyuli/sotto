@@ -142,23 +142,6 @@ func bubbleDetectedName(code string) string {
 	}
 }
 
-func bubbleChipTag(style string) string {
-	switch style {
-	case naming.LowerCamel:
-		return "aB"
-	case naming.UpperCamel:
-		return "AB"
-	case naming.Snake:
-		return "a_b"
-	case naming.Constant:
-		return "A_B"
-	case naming.Kebab:
-		return "a-b"
-	default:
-		return style
-	}
-}
-
 // bubbleViewActions wires native bubble UI events back into the manager and OS
 // integration hooks. Keeping callbacks explicit allows headless ui.NewTester tests.
 type bubbleViewActions struct {
@@ -1401,7 +1384,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 									continue
 								}
 								label := naming.Labels[style]
-								tag := bubbleChipTag(style)
+								tag := naming.ChipTag(style)
 								chip := ui.ButtonBase(c).
 									Tooltip(label+"："+val).
 									Cursor(ui.CursorPointer).
