@@ -17,16 +17,16 @@ import (
 const searchLabel = "搜索原文或译文"
 const DefaultWidth, DefaultHeight = 720, 460
 const (
-	railDividerWidth   float32 = 1
-	detailPaddingX     float32 = 20
-	providerMenuWidth  float32 = 132
-	sourceFontSize     float32 = 14
-	sourceLineHeight   float32 = 1.5
-	sourcePreviewLines         = 5
-	resultFontSize     float32 = 14
-	resultLongLines            = 10
-	maxNamingTextBytes         = 120
-	maxNamingWords             = 8
+	railDividerWidth  float32 = 1
+	detailPaddingX    float32 = 20
+	providerMenuWidth float32 = 132
+	sourceFontSize    float32 = 14
+	sourceLineHeight  float32 = 1.5
+	sourcePreviewLines        = 5
+	resultFontSize    float32 = 14
+	resultLongLines           = 10
+	maxNamingTextBytes        = 120
+	maxNamingWords            = 8
 )
 
 var groupLabels = [...]string{"今天", "近 3 天", "更早"}
@@ -54,6 +54,8 @@ type palette struct {
 	hover      ui.Color
 	selected   ui.Color
 	line       ui.Color
+	resultLine ui.Color
+	border     ui.Color
 	ink        ui.Color
 	muted      ui.Color
 	icon       ui.Color
@@ -73,13 +75,15 @@ var lightHistoryPalette = func() palette {
 	p := palette{
 		dark:       false,
 		panel:      ui.Hex("#ffffff"),
-		rail:       ui.Hex("#f6f7f9"),
-		field:      ui.Hex("#f2f3f5"),
-		control:    ui.Hex("#f1f1f1"),
-		pill:       ui.Hex("#e7e7e7"),
-		hover:      ui.Hex("#eceef1"),
-		selected:   ui.Hex("#e5e7eb"),
-		line:       ui.Hex("#e5e7eb"),
+		rail:       ui.Hex("#f7f8fa"),
+		field:      ui.Hex("#f3f4f6"),
+		control:    ui.Hex("#f1f2f4"),
+		pill:       ui.Hex("#e7e9ed"),
+		hover:      ui.Hex("#eceef2"),
+		selected:   ui.Hex("#e8ebf1"),
+		line:       ui.Hex("#eceef2"),
+		resultLine: ui.Hex("#f2f3f6"),
+		border:     ui.Hex("#e2e5ea"),
 		ink:        ui.Hex("#202020"),
 		muted:      ui.Hex("#5f5f5f"),
 		icon:       ui.Hex("#4b4b4b"),
@@ -99,7 +103,7 @@ var lightHistoryPalette = func() palette {
 	t.Surface = p.control
 	t.SurfaceHover = p.hover
 	t.SurfacePressed = p.pill
-	t.Border = p.line
+	t.Border = p.border
 	t.Text = p.ink
 	t.TextMuted = p.muted
 	t.Accent = p.accent
@@ -123,6 +127,8 @@ var darkHistoryPalette = func() palette {
 		hover:      ui.Hex("#26282b"),
 		selected:   ui.Hex("#2f3136"),
 		line:       ui.Hex("#2e3035"),
+		resultLine: ui.Hex("#2e3035"),
+		border:     ui.Hex("#36383e"),
 		ink:        ui.Hex("#f3f4f5"),
 		muted:      ui.Hex("#a0a3a7"),
 		icon:       ui.Hex("#b9bcc0"),
@@ -142,7 +148,7 @@ var darkHistoryPalette = func() palette {
 	t.Surface = p.control
 	t.SurfaceHover = p.hover
 	t.SurfacePressed = p.pill
-	t.Border = p.line
+	t.Border = p.border
 	t.Text = p.ink
 	t.TextMuted = p.muted
 	t.Accent = p.accent
@@ -227,7 +233,7 @@ func (v *View) Render(c *ui.Context) {
 				Colors: shared.ConfirmDialogColors{
 					Dark:   p.dark,
 					Panel:  p.panel,
-					Border: p.line,
+					Border: p.border,
 					Text:   p.ink,
 					Muted:  p.muted,
 				},
@@ -549,18 +555,18 @@ func (v *View) renderResult(c *ui.Context, p palette, entry history.Entry, resul
 	if !manual {
 		collapsed = defaultCollapsed
 	}
-	c.Key(rowKey + ":rule")
-	rule(c, p)
+	ui.Box(c.Key(rowKey+":rule")).FillWidth().Height(1).Background(p.resultLine)
 	ui.Column(c.Key(rowKey)).FillWidth().Padding(8, 0).Gap(6).Children(func() {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(2).Children(func() {
+		ui.Row(c).FillWidth().MinHeight(24).AlignItems(ui.Center).Gap(2).Children(func() {
 			toggleBtn := ui.ButtonBase(c.Key("toggle")).
 				Label("折叠 "+title).
 				Expanded(!collapsed).
 				Grow(1).
 				MinWidth(0).
+				MinHeight(24).
 				Justify(ui.Start).
 				AlignItems(ui.Center).
-				Padding(2, 4, 2, 0).
+				Padding(0, 4, 0, 0).
 				Radius(5).
 				Cursor(ui.CursorPointer).
 				OnClick(func() {
@@ -795,7 +801,7 @@ func (v *View) renderProviders(c *ui.Context, p palette, entry history.Entry, pr
 		hoverBg = p.selected
 	}
 	trigger := menu.Trigger.Label("换源翻译").Width(providerMenuWidth).Padding(5, 10).Radius(8).
-		Background(p.field).Border(1, p.line).Disabled(pending).Cursor(ui.CursorPointer)
+		Background(p.field).Border(1, p.border).Disabled(pending).Cursor(ui.CursorPointer)
 	if pending {
 		trigger.Cursor(ui.CursorDefault)
 	} else if trigger.Hovered() || menu.Open() {
@@ -813,7 +819,7 @@ func (v *View) renderProviders(c *ui.Context, p palette, entry history.Entry, pr
 	})
 	menu.Popup(func(panel ui.Element) {
 		panel.Label("换源翻译选项").Width(providerMenuWidth).Padding(4).Margin(4, 0, 0, 0).Gap(2).Radius(10).
-			Background(p.panel).Border(1, p.line).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
+			Background(p.panel).Border(1, p.border).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
 		for _, provider := range available {
 			name := providerName(provider)
 			c.Key(provider)
@@ -844,7 +850,7 @@ func (v *View) renderRetryStatus(c *ui.Context, p palette, entry history.Entry, 
 		if retry.pending {
 			title, color, err = name+" 重试中…", p.ink, retry.lastErr
 		}
-		ui.Row(c.Key("retry-card")).FillWidth().Padding(6, 10).Gap(8).Radius(8).AlignItems(ui.Center).Background(p.field).Children(func() {
+		ui.Row(c.Key("retry-card")).FillWidth().Padding(8, 12).Gap(8).Radius(10).AlignItems(ui.Center).Background(p.field).Children(func() {
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 				ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(color).SingleLine().Ellipsis("…")
 				ui.Text(c, err.Error()).FillWidth().FontSize(12).TextColor(p.muted)
@@ -863,7 +869,7 @@ func (v *View) renderRetryStatus(c *ui.Context, p palette, entry history.Entry, 
 }
 
 func (v *View) renderFooter(c *ui.Context, p palette) {
-	ui.Row(c).FillWidth().Padding(4, 12).MinHeight(32).AlignItems(ui.Center).Gap(8).Children(func() {
+	ui.Row(c).FillWidth().Padding(0, 12).MinHeight(34).AlignItems(ui.Center).Gap(8).Children(func() {
 		message := v.status
 		hint := ""
 		switch {
@@ -884,7 +890,7 @@ func (v *View) renderFooter(c *ui.Context, p palette) {
 			message = fmt.Sprintf("%d 条记录", len(v.entries))
 			hint = "↑↓ 切换 · Enter 复制"
 		}
-		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(6).Children(func() {
+		ui.Row(c).Grow(1).MinWidth(0).AlignItems(ui.Center).Gap(6).Padding(0, 0, 1, 0).Children(func() {
 			ui.Text(c, message).FontSize(12).TextColor(p.muted).SingleLine().Ellipsis("…")
 			if hint != "" {
 				ui.Text(c, "· "+hint).FontSize(12).TextColor(p.muted.Alpha(0.75)).SingleLine().Ellipsis("…")
@@ -918,7 +924,7 @@ func linkButton(c *ui.Context, p palette, label string, expanded bool, fn func()
 }
 
 func quietButton(c *ui.Context, p palette, text, label string, disabled bool, fn func()) {
-	button := ui.ButtonBase(c.Key(label)).Label(label).Disabled(disabled).Radius(5).Padding(4, 7).
+	button := ui.ButtonBase(c.Key(label)).Label(label).Disabled(disabled).Radius(5).Height(24).Padding(0, 8).
 		Cursor(ui.CursorPointer).OnClick(fn)
 	color := p.muted
 	switch {
@@ -929,7 +935,7 @@ func quietButton(c *ui.Context, p palette, text, label string, disabled bool, fn
 		button.Background(p.hover)
 		color = p.ink
 	}
-	button.Children(func() { ui.Text(c, text).FontSize(12).TextColor(color).SingleLine() })
+	button.Children(func() { ui.Text(c, text).FontSize(12).TextColor(color).SingleLine().Padding(0, 0, 1, 0) })
 }
 
 func iconButton(c *ui.Context, p palette, icon *ui.SVG, label, tip string, disabled bool, fn func()) {

@@ -6,8 +6,17 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/egoist/mygo"
 	"golang.org/x/sys/windows"
 )
+
+// HistoryWindow applies platform window options for the history window.
+// Using Transparent on Windows routes native UI through DirectComposition so
+// continuous scrolling does not bypass Windows 11 rounded corner clipping.
+func HistoryWindow(o mygo.WindowOptions) mygo.WindowOptions {
+	o.Transparent = true
+	return SettingsWindow(o)
+}
 
 var (
 	historyUser32           = windows.NewLazySystemDLL("user32.dll")

@@ -221,7 +221,7 @@ func (a *application) showHistory() {
 		},
 	}
 	view := historyview.New(a.history, actions, time.Now)
-	w = mygo.NewWindow(platform.SettingsWindow(mygo.WindowOptions{
+	w = mygo.NewWindow(platform.HistoryWindow(mygo.WindowOptions{
 		Title: "翻译历史", Content: ui.View(view.Render), Width: historyview.DefaultWidth, Height: historyview.DefaultHeight,
 		MinWidth: historyMinWidth, MinHeight: historyMinHeight, Hidden: true, SkipTaskbar: true,
 		TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
