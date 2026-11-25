@@ -190,7 +190,7 @@ func (v *View) Render(c *ui.Context) {
 	}
 
 	width, _ := c.Size()
-	rows := v.rows()
+	rows := v.railRows
 	c.Root().Background(p.panel).Padding(0).Children(func() {
 		if !v.clearOpen && !v.providerOpen {
 			c.OnShortcut(0, ui.KeyEscape, v.Dismiss)
@@ -334,7 +334,7 @@ func (v *View) renderRail(c *ui.Context, p palette, rows []railRow) {
 		ItemKey(func(i int) any { return rows[i].key() }).
 		Rows(func(row ui.ListRow) {
 			c, r := row.Context, rows[row.Index]
-			if r.header {
+			if r.entry == nil {
 				v.renderGroup(c, p, r, row.Index == 0)
 				return
 			}

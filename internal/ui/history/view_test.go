@@ -39,15 +39,28 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	h := &harness{t: t, now: time.Date(2026, 11, 24, 10, 42, 0, 0, time.Local),
-		providers: []string{"deepl", "google", "youdao"}}
-	var err error
-	h.store, err = history.Open(t.Context(), t.TempDir(), history.Policy{Enabled: true, Days: 0}, func() time.Time { return h.now })
-	if err != nil {
+	dir := t.TempDir()
+	h := newHarnessWithDirectory(t, func() (string, error) { return dir, nil })
+	if err := h.view.actions.OpenStore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	return h
+}
+
+func newHarnessWithDirectory(t *testing.T, directory func() (string, error)) *harness {
+	t.Helper()
+	h := &harness{t: t, now: time.Date(2026, 11, 24, 10, 42, 0, 0, time.Local),
+		providers: []string{"deepl", "google", "youdao"}}
+	h.store = history.New(history.Policy{Enabled: true}, func() time.Time { return h.now })
 	t.Cleanup(func() { _ = h.store.Close() })
 	h.view = New(h.store, Actions{
+		OpenStore: func(ctx context.Context) error {
+			dir, err := directory()
+			if err != nil {
+				return err
+			}
+			return h.store.Initialize(ctx, dir, history.Policy{Enabled: true})
+		},
 		Run:  func(f func()) { h.work = append(h.work, f) },
 		Post: func(f func()) { h.post = append(h.post, f) },
 		Copy: func(text string) error {
@@ -748,6 +761,39 @@ func TestHistorySearchAcrossCollapsedDays(t *testing.T) {
 	h.settle()
 	if h.closed != 0 || len(h.copied) != 0 || !h.ui.HasText("没找到匹配的记录") {
 		t.Fatalf("no-match state: %v, clipboard %q, closed %d", h.ui.Texts(), h.copied, h.closed)
+	}
+}
+
+func TestHistoryRetryOpensDatabaseAfterDirectoryRecovers(t *testing.T) {
+	// A failed startup open used to leave Retry querying a nil connection until restart.
+	dir := t.TempDir()
+	available := false
+	h := newHarnessWithDirectory(t, func() (string, error) {
+		if !available {
+			return "", os.ErrPermission
+		}
+		return dir, nil
+	})
+	if err := h.view.actions.OpenStore(t.Context()); err == nil {
+		t.Fatal("expected startup to fail")
+	}
+	h.open()
+	if !h.ui.HasText("无法读取翻译历史") {
+		t.Fatal("missing load error")
+	}
+	h.click("重试")
+	available = true
+	h.click("重试")
+	if !h.ui.HasText("还没有翻译记录") {
+		t.Fatalf("retry did not reopen the database: %v", h.ui.Texts())
+	}
+	h.put("after recovery", "恢复后的译文")
+	h.view.Refresh()
+	h.settle()
+	h.ui.Key(0, ui.KeyEnter)
+	h.settle()
+	if !slices.Equal(h.copied, []string{"恢复后的译文"}) {
+		t.Fatalf("recording after recovery: %v", h.copied)
 	}
 }
 

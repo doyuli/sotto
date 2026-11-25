@@ -18,6 +18,7 @@ const searchDelay = 100 * time.Millisecond
 const speechUnavailable = "朗读不可用"
 
 type Actions struct {
+	OpenStore          func(context.Context) error
 	Run                func(func())
 	Post               func(func())
 	Copy               func(string) error
@@ -60,12 +61,13 @@ type View struct {
 	search, query, requestedQuery string
 	searchDue                     time.Time
 	buckets                       dayBuckets // shared by the committed page and its counts
-	pageRemovals                  uint64
+	pageRevision, pageRemovals    uint64
 	focus                         bool
 	more, loading, ready, older   bool
 	refreshing                    bool
 	loadError, detailError        bool
 	entries                       []history.Entry
+	railRows                      []railRow
 	selected, detailTarget        int64
 	dictionaryEligible            bool
 	entry                         history.Entry
@@ -120,7 +122,7 @@ func (v *View) Open() {
 		v.pendingToast, v.clearToasts = "", true
 		v.copiedKey, v.copiedUntil = "", time.Time{}
 		v.ready, v.loadError = false, false
-		v.entries = nil
+		v.entries, v.railRows = nil, nil
 		v.commitDetail(0, history.Entry{}, nil, nil)
 		v.reset(true)
 	}
@@ -167,10 +169,20 @@ func (v *View) reset(clearSelection bool) {
 	v.refreshing, v.loading = true, false
 	revision, older, buckets := v.revision, v.older, groupBounds(v.now())
 	removals := v.store.RemovalRevision()
+	previous, since, hadMore := v.entries, v.pageRevision, v.more
+	if clearSelection || len(previous) <= pageSize || v.loadError || removals != v.pageRemovals {
+		previous = nil
+	}
 	v.actions.Run(func() {
-		entries, err := v.store.List(ctx, query, history.Cursor{}, pageSize+1)
-		more := len(entries) > pageSize
-		page := entries[:min(len(entries), pageSize)]
+		var page []history.Entry
+		var more bool
+		var err error
+		if !v.store.IsOpen() && v.actions.OpenStore != nil {
+			err = v.actions.OpenStore(ctx)
+		}
+		if err == nil {
+			page, more, err = v.store.RefreshPage(ctx, query, previous, since, hadMore, pageSize)
+		}
 		var entry history.Entry
 		var results []history.Result
 		var detailErr error
@@ -207,8 +219,9 @@ func (v *View) reset(clearSelection bool) {
 			// Publish the list and first detail in the same frame so retained
 			// results don't pass through an empty or partially updated view.
 			v.query, v.entries, v.more = query, page, more
-			v.buckets, v.pageRemovals = buckets, removals
+			v.buckets, v.pageRevision, v.pageRemovals = buckets, revision, removals
 			v.hasGroupCounts = false
+			v.rebuildRows()
 			v.dictionaryEligible = dictionaryEligible
 			v.refreshing, v.ready, v.loadError = false, true, err != nil
 			v.commitDetail(entry.ID, entry, results, detailErr)
@@ -226,6 +239,7 @@ func (v *View) loadCounts(ctx context.Context, revision uint64, query string, to
 			v.actions.Post(func() {
 				if v.queryCurrent(ctx, revision) {
 					v.groupCounts, v.hasGroupCounts = counts, true
+					v.rebuildRows()
 				}
 			})
 		}
@@ -338,6 +352,7 @@ func (v *View) loadPage() {
 			}
 			v.more = len(entries) > pageSize
 			v.entries = append(v.entries, entries[:min(len(entries), pageSize)]...)
+			v.rebuildRows()
 			if v.navigationID() == 0 {
 				v.selectFirst()
 			}
@@ -548,28 +563,28 @@ func (v *View) visible(e history.Entry) bool {
 }
 
 type railRow struct {
-	header bool
-	group  int
-	count  int
-	entry  history.Entry
+	group int
+	count int
+	entry *history.Entry // nil for a group header
 }
 
 func (r railRow) key() int64 {
-	if r.header {
+	if r.entry == nil {
 		return -int64(r.group) - 1
 	}
 	return r.entry.ID
 }
 
-func (v *View) rows() []railRow {
+func (v *View) rebuildRows() {
 	previous := -1
 	rows := make([]railRow, 0, len(v.entries)+3)
 	header := 0
-	for _, e := range v.entries {
-		group := v.buckets.group(e)
+	for i := range v.entries {
+		e := &v.entries[i]
+		group := v.buckets.group(*e)
 		if group != previous {
 			header = len(rows)
-			rows = append(rows, railRow{header: true, group: group})
+			rows = append(rows, railRow{group: group})
 			previous = group
 		}
 		if v.hasGroupCounts {
@@ -584,7 +599,7 @@ func (v *View) rows() []railRow {
 	if v.more && !v.hasGroupCounts && len(rows) != 0 {
 		rows[header].count = 0
 	}
-	return rows
+	v.railRows = rows
 }
 
 func (v *View) totalCount() int {
@@ -598,14 +613,14 @@ func (v *View) move(delta int) {
 	if !v.pageUsable() {
 		return
 	}
-	rows := v.rows()
+	rows := v.railRows
 	id := v.navigationID()
-	i := slices.IndexFunc(rows, func(r railRow) bool { return !r.header && r.entry.ID == id })
+	i := slices.IndexFunc(rows, func(r railRow) bool { return r.entry != nil && r.entry.ID == id })
 	if i < 0 && delta < 0 {
 		i = len(rows)
 	}
 	for i += delta; i >= 0 && i < len(rows); i += delta {
-		if !rows[i].header {
+		if rows[i].entry != nil {
 			v.selectEntry(rows[i].entry.ID)
 			v.rail.ScrollIntoView(i)
 			if delta > 0 && i >= len(rows)-3 && v.canExtend() {
@@ -631,6 +646,7 @@ func (v *View) toggleOlder() {
 	}
 	v.cancelDetailRead()
 	v.older = !v.older
+	v.rebuildRows()
 	if v.older && v.selected == 0 {
 		v.selectFirst()
 	}

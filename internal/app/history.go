@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"sotto/internal/selection"
 	"sotto/internal/translate"
 	"sotto/internal/ui/history"
+	"sotto/internal/usermessage"
 )
 
 const historyMinWidth, historyMinHeight = 560, 360
@@ -28,15 +30,18 @@ func historyPolicy(cfg config.HistorySettings) history.Policy {
 	return history.Policy{Enabled: cfg.Enabled, Days: cfg.RetentionDays}
 }
 
-func (a *application) startHistory(dir string, cfg config.HistorySettings) {
-	s := history.New(historyPolicy(cfg), time.Now)
+func (a *application) startHistory(cfg config.HistorySettings) {
+	policy := historyPolicy(cfg)
+	if a.fallbackSettings {
+		// A request begun before we know the user's recording preference must stay unrecorded.
+		policy = history.Policy{}
+	}
+	s := history.New(policy, time.Now)
 	a.history = s
 	ctx, cancel := context.WithCancel(context.Background())
 	a.historyCtx, a.stopHistory = ctx, cancel
 	go func() {
-		if dir == "" {
-			log.Print("translation history unavailable: no user data path")
-		} else if err := s.Initialize(ctx, dir); err != nil && ctx.Err() == nil {
+		if err := a.initializeHistory(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("translation history unavailable: %v", err)
 		}
 		timer := time.NewTicker(24 * time.Hour)
@@ -60,6 +65,37 @@ func (a *application) startHistory(dir string, cfg config.HistorySettings) {
 	}()
 }
 
+func (a *application) initializeHistory(ctx context.Context) error {
+	a.configWriteMu.Lock()
+	defer a.configWriteMu.Unlock()
+	if a.history.IsOpen() {
+		return nil
+	}
+	if !a.fallbackSettings {
+		return a.history.Initialize(ctx, filepath.Dir(a.cfgPath), historyPolicy(a.settings().History))
+	}
+	// Recover the database under its own retention and recording policy, never the fallback defaults.
+	dir, err := mygo.App.Path(mygo.PathUserData)
+	if err != nil {
+		return fmt.Errorf("locate history settings: %w", err)
+	}
+	recovered, err := config.Load(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return fmt.Errorf("load history settings: %w", err)
+	}
+	if err := a.history.Initialize(ctx, dir, historyPolicy(recovered.History)); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.cfg.History = recovered.History
+	cfg, view := a.cfg, a.settingsView
+	a.mu.Unlock()
+	if view != nil {
+		view.ApplyExternalSettings(cfg)
+	}
+	return nil
+}
+
 func (a *application) closeHistory() {
 	if a.stopHistory != nil {
 		a.stopHistory()
@@ -72,6 +108,9 @@ func (a *application) closeHistory() {
 }
 
 func (a *application) updateHistorySettings(settings config.HistorySettings, approved int64) error {
+	if a.fallbackSettings {
+		return usermessage.New("本次启动未能读取用户设置，请重启后再修改历史设置")
+	}
 	a.configWriteMu.Lock()
 	defer a.configWriteMu.Unlock()
 	cfg := a.settings()
@@ -156,8 +195,9 @@ func (a *application) showHistory() {
 	}
 	var w *mygo.Window
 	actions := historyview.Actions{
-		Post: func(f func()) { w.Update(f) },
-		Copy: func(text string) error { return mygo.Clipboard.Write(transfer.TextData(text)) },
+		OpenStore: a.initializeHistory,
+		Post:      func(f func()) { w.Update(f) },
+		Copy:      func(text string) error { return mygo.Clipboard.Write(transfer.TextData(text)) },
 		Speak: func(text, lang string, onError func()) {
 			a.speaker.Speak(text, lang, func(err error) {
 				log.Printf("speech: %v", err)

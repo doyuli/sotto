@@ -115,16 +115,17 @@ func New(policy Policy, now func() time.Time) *Store {
 
 func Open(ctx context.Context, dir string, policy Policy, now func() time.Time) (*Store, error) {
 	s := New(policy, now)
-	if err := s.Initialize(ctx, dir); err != nil {
+	if err := s.Initialize(ctx, dir, policy); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Store) Initialize(ctx context.Context, dir string) error {
+func (s *Store) IsOpen() bool { return s.db.Load() != nil }
+
+func (s *Store) Initialize(ctx context.Context, dir string, policy Policy) error {
 	s.writes.Lock()
 	defer s.writes.Unlock()
-	defer s.changed()
 	if s.closed {
 		return ErrUnavailable
 	}
@@ -146,11 +147,22 @@ func (s *Store) Initialize(ctx context.Context, dir string) error {
 		_ = db.Close()
 		return err
 	}
-	if _, err := prune(ctx, db, s.policy.Days, s.now()); err != nil {
+	latest, err := scalar(ctx, db, "SELECT COALESCE(MAX(changed_revision), 0) FROM history_entry")
+	if err != nil {
+		_ = db.Close()
+		return fmt.Errorf("read history revision: %w", err)
+	}
+	if _, err := prune(ctx, db, policy.Days, s.now()); err != nil {
 		_ = db.Close()
 		return err
 	}
+	s.policy = policy
+	s.stateMu.Lock()
+	s.enabled = policy.Enabled
+	s.stateMu.Unlock()
+	s.revision.Store(uint64(latest))
 	s.db.Store(db)
+	s.changed()
 	return nil
 }
 
@@ -257,7 +269,7 @@ func (s *Store) Record(ctx context.Context, r *Request, provider, text string, r
 	}
 	key := r.key
 	res, err := db.Transaction(ctx, []sqlite.Statement{
-		{SQL: upsertEntry, Args: []any{key.Text, key.SourceLang, key.TargetLang, r.at}},
+		{SQL: upsertEntry, Args: []any{key.Text, key.SourceLang, key.TargetLang, r.at, s.Revision() + 1}},
 		{SQL: upsertResult, Args: []any{key.Text, key.SourceLang, key.TargetLang, provider, int64(resultType), text, r.at, rank}},
 	})
 	if err != nil {

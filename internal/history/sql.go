@@ -1,8 +1,10 @@
 package history
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,9 +18,11 @@ var schemaV1 = []sqlite.Statement{
 		source_lang TEXT NOT NULL CHECK (source_lang <> ''),
 		target_lang TEXT NOT NULL CHECK (target_lang <> ''),
 		last_translated_ms INTEGER NOT NULL,
+		changed_revision INTEGER NOT NULL,
 		UNIQUE (source_text, source_lang, target_lang)
 	)`},
 	{SQL: `CREATE INDEX history_entry_recent ON history_entry (last_translated_ms DESC, id DESC)`},
+	{SQL: `CREATE INDEX history_entry_changed ON history_entry (changed_revision)`},
 	{SQL: `CREATE TABLE history_result (
 		entry_id INTEGER NOT NULL REFERENCES history_entry(id) ON DELETE CASCADE,
 		provider_id TEXT NOT NULL CHECK (provider_id <> ''),
@@ -31,10 +35,11 @@ var schemaV1 = []sqlite.Statement{
 	{SQL: "PRAGMA user_version = 1"},
 }
 
-const upsertEntry = `INSERT INTO history_entry (source_text, source_lang, target_lang, last_translated_ms)
-VALUES (?1, ?2, ?3, ?4)
+const upsertEntry = `INSERT INTO history_entry (source_text, source_lang, target_lang, last_translated_ms, changed_revision)
+VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT (source_text, source_lang, target_lang) DO UPDATE SET
-last_translated_ms = max(history_entry.last_translated_ms, excluded.last_translated_ms)`
+last_translated_ms = max(history_entry.last_translated_ms, excluded.last_translated_ms),
+changed_revision = excluded.changed_revision`
 
 const upsertResult = `INSERT INTO history_result (entry_id, provider_id, result_type, translated_text, translated_ms, display_rank)
 SELECT id, ?4, ?5, ?6, ?7, ?8 FROM history_entry
@@ -176,6 +181,68 @@ func (s *Store) List(ctx context.Context, word string, after Cursor, limit int) 
 		}
 	}
 	return entries, nil
+}
+
+// RefreshPage reads the first page, or refreshes an already loaded prefix after writes.
+// The caller starts a fresh list after removals. Translation timestamps can stay
+// unchanged when another provider finishes, so use the write revision for snippets.
+func (s *Store) RefreshPage(ctx context.Context, word string, previous []Entry, since uint64, more bool, pageSize int) ([]Entry, bool, error) {
+	if len(previous) == 0 {
+		page, err := s.List(ctx, word, Cursor{}, pageSize+1)
+		return page[:min(pageSize, len(page))], len(page) > pageSize, err
+	}
+	tail := previous[len(previous)-1].Cursor()
+	word = strings.TrimSpace(word)
+	match := "1"
+	args := []any{}
+	if word != "" {
+		match = matches
+		args = append(args, word)
+	}
+	sql := "SELECT " + columns + ", " + match + " FROM history_entry AS e WHERE e.changed_revision > ?"
+	args = append(args, since)
+	if more {
+		sql += " AND (e.last_translated_ms, e.id) >= (?, ?)"
+		args = append(args, tail.TranslatedMS, tail.ID)
+	}
+	rows, err := s.query(ctx, sql, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	changed := make(map[int64]bool, len(rows))
+	entries := make([]Entry, 0, len(previous)+len(rows))
+	for _, row := range rows {
+		changed[row[0].(int64)] = true
+		if row[5].(int64) != 0 {
+			entries = append(entries, entryFromRow(row))
+		}
+	}
+	if word != "" {
+		for batch := range slices.Chunk(entries, 100) {
+			if err := s.snippets(ctx, batch, word); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	for _, e := range previous {
+		if !changed[e.ID] {
+			entries = append(entries, e)
+		}
+	}
+	slices.SortFunc(entries, func(a, b Entry) int {
+		return cmp.Or(cmp.Compare(b.TranslatedMS, a.TranslatedMS), cmp.Compare(b.ID, a.ID))
+	})
+	if more {
+		// Refills a prefix that lost search matches and checks whether unread rows remain.
+		needed := max(0, pageSize-len(entries))
+		next, err := s.List(ctx, word, tail, needed+1)
+		if err != nil {
+			return nil, false, err
+		}
+		more = len(next) > needed
+		entries = append(entries, next[:min(needed, len(next))]...)
+	}
+	return entries, more, nil
 }
 
 func (s *Store) snippets(ctx context.Context, entries []Entry, word string) error {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +24,102 @@ import (
 	"sotto/internal/translate"
 	"sotto/internal/ui/bubble"
 )
+
+// Retrying after a user-data path failure used to open the real database with
+// fallback preferences, pruning old entries and recording despite an opt-out.
+func TestHistoryRecoveryUsesDatabaseDirectorySettings(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	mygo.App.SetPath(mygo.PathUserData, dir)
+	t.Cleanup(func() { mygo.App.SetPath(mygo.PathUserData, "") })
+	now := time.Now()
+	seed, err := history.Open(ctx, dir, history.Policy{Enabled: true}, func() time.Time { return now.AddDate(0, 0, -60) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := history.Key{Text: "old", SourceLang: "en", TargetLang: "ja"}
+	r := seed.Begin(key, nil)
+	if ok, err := seed.Record(ctx, r, "google", "古い", history.ResultTranslation); !ok || err != nil {
+		t.Fatalf("seed: %v, %v", ok, err)
+	}
+	r.Done()
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &application{cfg: config.Default(), cfgPath: filepath.Join(t.TempDir(), "settings.json"),
+		fallbackSettings: true, history: history.New(history.Policy{}, time.Now)}
+	t.Cleanup(a.closeHistory)
+	disk := config.Default()
+	disk.History = config.HistorySettings{Enabled: false, RetentionDays: 0}
+	path := filepath.Join(dir, "settings.json")
+	// A settings read failure must not authorize cleanup. A directory in
+	// place of the file fails on all hosts without relying on permissions.
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.initializeHistory(ctx); err == nil || a.history.IsOpen() {
+		t.Fatalf("opened before settings were readable: %v", err)
+	}
+	if err := a.updateHistorySettings(disk.History, 0); err == nil {
+		t.Fatal("accepted a history policy change while settings were unavailable")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(path, disk); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.initializeHistory(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := a.history.Count(ctx); err != nil || n != 1 {
+		t.Fatalf("lost old entry on retry: count=%d, err=%v", n, err)
+	}
+	if a.settings().History != disk.History || a.history.Begin(key, nil) != nil {
+		t.Fatal("retry did not honor the recording opt-out")
+	}
+	// Even a click queued before recovery cannot write to either settings file.
+	if err := a.updateHistorySettings(config.Default().History, 0); err == nil || !strings.Contains(err.Error(), "重启") {
+		t.Fatalf("expected restart guidance, got %v", err)
+	}
+	if saved, err := config.Load(path); err != nil || saved.History != disk.History {
+		t.Fatalf("changed the real policy: %+v, %v", saved.History, err)
+	}
+	if _, err := os.Stat(a.cfgPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected fallback settings file: %v", err)
+	}
+}
+
+func TestHistoryDatabaseRetryKeepsSettingsEditable(t *testing.T) {
+	dir := t.TempDir()
+	a := &application{cfg: config.Default(), cfgPath: filepath.Join(dir, "settings.json"),
+		bubbles: bubble.NewManager(nil, bubble.Actions{})}
+	a.history = history.New(historyPolicy(a.cfg.History), time.Now)
+	t.Cleanup(a.closeHistory)
+	// A database failure alone must not put a session with valid settings into fallback mode.
+	blocked := filepath.Join(dir, history.Filename)
+	if err := os.Mkdir(blocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.initializeHistory(t.Context()); err == nil {
+		t.Fatal("expected the initial database open to fail")
+	}
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.initializeHistory(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	next := a.cfg.History
+	next.Enabled = false
+	if err := a.updateHistorySettings(next, 0); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := config.Load(a.cfgPath); err != nil || saved.History != next {
+		t.Fatalf("history policy after retry: %+v, %v", saved.History, err)
+	}
+}
 
 func TestHistoryBoundsFollowInvocationDisplay(t *testing.T) {
 	saved := mygo.Rectangle{X: 380, Y: 240, Width: 720, Height: 460}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,6 +115,45 @@ func TestHistorySchemaAndSearch(t *testing.T) {
 	if got := results(t, reopened, id); !reflect.DeepEqual(got, after) {
 		t.Fatalf("reopened results: %+v", got)
 	}
+}
+
+func TestHistoryRefreshPageTracksSearchChanges(t *testing.T) {
+	s, now, _ := fixture(t, 0)
+	put := func(source, text string) {
+		r := s.Begin(Key{source, "en", "zh-HANS"}, []string{"google"})
+		defer r.Done()
+		record(t, s, r, "google", text, true)
+	}
+	// A later provider response can change search membership or a snippet without changing sort time.
+	for _, source := range []string{"unread", "promote", "keep", "drop", "update"} {
+		put(source, "match")
+	}
+	const size = 3
+	previous := page(t, s, "match", Cursor{}, size)
+	since, more := s.Revision(), true
+	refresh := func() {
+		t.Helper()
+		got, hasMore, err := s.RefreshPage(ctx, "match", previous, since, more, size)
+		all := page(t, s, "match", Cursor{}, 100)
+		if err != nil || len(got) > len(all) || !slices.Equal(got, all[:len(got)]) || hasMore != (len(got) < len(all)) || len(got) < min(size, len(all)) {
+			t.Fatalf("refresh = %+v, more=%t, err=%v; fresh search = %+v", got, hasMore, err, all)
+		}
+		previous, since, more = got, s.Revision(), hasMore
+	}
+	put("update", "match changed in the same millisecond")
+	put("drop", "lost")
+	*now = now.Add(time.Second)
+	put("promote", "new match")
+	put("new", "match")
+	refresh()
+	for _, e := range previous {
+		put(e.Text, "lost")
+	}
+	refresh()
+	// An exhausted list must also see previously unmatched entries behind its former tail.
+	*now = now.Add(-time.Hour)
+	put("backdated", "match")
+	refresh()
 }
 
 func TestHistoryLateResultsAndDeletion(t *testing.T) {

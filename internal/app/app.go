@@ -35,8 +35,9 @@ import (
 // the bubble windows and the settings window. Its mutex guards the
 // fields and is never held across a call that waits for the main thread.
 type application struct {
-	cfgPath       string
-	configWriteMu sync.Mutex
+	cfgPath          string
+	fallbackSettings bool // fixed at startup; the session cannot persist history preferences
+	configWriteMu    sync.Mutex
 
 	mu              sync.Mutex
 	cfg             config.Settings
@@ -81,23 +82,22 @@ func (a *application) isQuitting() bool {
 // ready assembles the app once mygo is up: settings, bubbles, hotkeys
 // and the tray. It runs on the main thread.
 func (a *application) ready() {
-	dir, err := mygo.App.Path(mygo.PathUserData)
-	if err != nil {
-		log.Printf("user data path: %v", err)
+	dir, pathErr := mygo.App.Path(mygo.PathUserData)
+	if pathErr != nil {
+		log.Printf("user data path: %v", pathErr)
 		dir = "."
-	}
-	historyDir := dir
-	if err != nil {
-		historyDir = ""
 	}
 	a.cfgPath = filepath.Join(dir, "settings.json")
 	cfg, err := config.Load(a.cfgPath)
 	if err != nil {
 		log.Printf("settings: %v", err)
+		// Keep fallback settings writes away from the unread user-data file.
+		a.cfgPath = "settings.json"
 	}
+	a.fallbackSettings = pathErr != nil || err != nil
 	cfg.Hotkeys = canonicalHotkeys(cfg.Hotkeys)
 	a.cfg = cfg
-	a.startHistory(historyDir, cfg.History)
+	a.startHistory(cfg.History)
 
 	// Restore checks without overwriting choices made in the update window.
 	platform.SetAutomaticUpdates(cfg.AutoUpdate)
