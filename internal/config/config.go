@@ -90,6 +90,23 @@ type BubbleSettings struct {
 	AutoHide bool `json:"autoHide"`
 }
 
+const (
+	TrayActionPanel    = "panel"
+	TrayActionOcr      = "ocr"
+	TrayActionHistory  = "history"
+	TrayActionMenu     = "menu"
+	TrayActionSettings = "settings"
+)
+
+// TrayClickActions lists the supported primary-click actions in display order.
+var TrayClickActions = []string{
+	TrayActionPanel,
+	TrayActionOcr,
+	TrayActionHistory,
+	TrayActionMenu,
+	TrayActionSettings,
+}
+
 // Settings contains the app's persisted preferences.
 type Settings struct {
 	Services           ServiceSettings    `json:"services"`
@@ -99,6 +116,7 @@ type Settings struct {
 	Hotkeys            HotkeySettings     `json:"hotkeys"`
 	History            HistorySettings    `json:"history"`
 	Bubble             BubbleSettings     `json:"bubble"`
+	TrayClickAction    string             `json:"trayClickAction"`
 	MinimalTranslation bool               `json:"minimalTranslation"`
 	OpenAtLogin        bool               `json:"openAtLogin"`
 	AutoUpdate         bool               `json:"autoUpdate"`
@@ -114,12 +132,13 @@ func Default() Settings {
 			SiliconFlow: ModelOptions{Model: DefaultSiliconFlowModel},
 			Zhipu:       ModelOptions{Model: DefaultZhipuModel},
 		},
-		TargetLanguage: "zh-HANS",
-		Identifier:     IdentifierSettings{AutoSplit: true},
-		CopyFormats:    slices.Clone(naming.Styles),
-		Hotkeys:        defaultHotkeys(runtime.GOOS),
-		History:        HistorySettings{Enabled: true, RetentionDays: 30},
-		Bubble:         BubbleSettings{AutoHide: true},
+		TargetLanguage:  "zh-HANS",
+		Identifier:      IdentifierSettings{AutoSplit: true},
+		CopyFormats:     slices.Clone(naming.Styles),
+		Hotkeys:         defaultHotkeys(runtime.GOOS),
+		History:         HistorySettings{Enabled: true, RetentionDays: 30},
+		Bubble:          BubbleSettings{AutoHide: true},
+		TrayClickAction: TrayActionPanel,
 	}
 }
 
@@ -210,6 +229,9 @@ func Normalize(s Settings) Settings {
 	}
 	if s.TargetLanguage != "auto" && !languages.Valid(s.TargetLanguage) {
 		s.TargetLanguage = d.TargetLanguage
+	}
+	if !slices.Contains(TrayClickActions, s.TrayClickAction) {
+		s.TrayClickAction = d.TrayClickAction
 	}
 	s.CopyFormats = validFormats(s.CopyFormats)
 	if s.CopyFormats == nil {

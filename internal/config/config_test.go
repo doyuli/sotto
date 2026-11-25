@@ -15,6 +15,9 @@ func TestDefault(t *testing.T) {
 	if s.TargetLanguage != "zh-HANS" {
 		t.Errorf("default target = %q, want zh-HANS", s.TargetLanguage)
 	}
+	if s.TrayClickAction != TrayActionPanel {
+		t.Errorf("default tray click action = %q, want %q", s.TrayClickAction, TrayActionPanel)
+	}
 	if s.Hotkeys != defaultHotkeys(runtime.GOOS) {
 		t.Errorf("default hotkeys = %+v", s.Hotkeys)
 	}
@@ -386,5 +389,33 @@ func TestHistoryShortcutLoadsDefaultFromUnboundSettings(t *testing.T) {
 	cfg, err := Load(path)
 	if err != nil || cfg.Hotkeys.History != defaultHotkeys(runtime.GOOS).History || cfg.Hotkeys.Panel != "Alt+Q" {
 		t.Fatalf("previously unbound settings: %+v, %v", cfg.Hotkeys, err)
+	}
+}
+
+func TestTrayClickActionNormalizeAndRoundTrip(t *testing.T) {
+	for _, action := range TrayClickActions {
+		cfg := Default()
+		cfg.TrayClickAction = action
+		if got := Normalize(cfg); got.TrayClickAction != action {
+			t.Fatalf("Normalize(%q) = %q, want %q", action, got.TrayClickAction, action)
+		}
+	}
+	for _, invalid := range []string{"", "selection", "unknown"} {
+		cfg := Default()
+		cfg.TrayClickAction = invalid
+		if got := Normalize(cfg); got.TrayClickAction != TrayActionPanel {
+			t.Fatalf("Normalize(%q) = %q, want %q", invalid, got.TrayClickAction, TrayActionPanel)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cfg := Default()
+	cfg.TrayClickAction = TrayActionOcr
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil || got.TrayClickAction != TrayActionOcr {
+		t.Fatalf("Load() trayClickAction = %q, err = %v", got.TrayClickAction, err)
 	}
 }

@@ -226,25 +226,40 @@ func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
 	return sel, err
 }
 
-func WatchWindowLeave(handle uintptr, changed func()) (stop func(), err error) {
+const macControlModifier = 1 << 18
+
+// PrimaryMousePressed is sampled on the UI thread before deferring a blur.
+func PrimaryMousePressed() bool {
+	events := macnative.Class("NSEvent")
+	return events.Send(macnative.Sel("pressedMouseButtons"))&1 != 0 &&
+		events.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0
+}
+
+func WatchWindowLeave(handle uintptr, changed func(primaryPress bool)) (stop func(), err error) {
 	var global, local, activation func()
 	mygo.RunOnMain(func() {
-		const mask uint64 = 1<<1 | 1<<3 | 1<<25
-		global, err = macnative.Monitor(mask, false, func(objc.ID) { go changed() })
+		const leftMouseDown = 1
+		const mask uint64 = 1<<leftMouseDown | 1<<3 | 1<<25
+		notify := func(event objc.ID) {
+			primaryPress := event.Send(macnative.Sel("type")) == leftMouseDown &&
+				event.Send(macnative.Sel("modifierFlags"))&macControlModifier == 0
+			go changed(primaryPress)
+		}
+		global, err = macnative.Monitor(mask, false, notify)
 		if err != nil {
 			return
 		}
 		local, err = macnative.Monitor(mask, true, func(event objc.ID) {
 			hit := event.Send(macnative.Sel("window"))
 			if hit != 0 && !macnative.MenuWindow(hit) && !macnative.WindowContains(objc.ID(handle), hit) {
-				go changed()
+				notify(event)
 			}
 		})
 		if err != nil {
 			global()
 			return
 		}
-		activation, err = macnative.WatchActivation(func() { go changed() })
+		activation, err = macnative.WatchActivation(func() { go changed(false) })
 		if err != nil {
 			global()
 			local()

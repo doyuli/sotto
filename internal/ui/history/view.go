@@ -20,10 +20,10 @@ const (
 	railDividerWidth   float32 = 1
 	detailPaddingX     float32 = 20
 	providerMenuWidth  float32 = 132
-	sourceFontSize     float32 = 15
+	sourceFontSize     float32 = 14
 	sourceLineHeight   float32 = 1.5
 	sourcePreviewLines         = 5
-	resultFontSize     float32 = 15
+	resultFontSize     float32 = 14
 	resultLongLines            = 10
 	maxNamingTextBytes         = 120
 	maxNamingWords             = 8

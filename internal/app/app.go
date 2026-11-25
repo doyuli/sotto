@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -61,8 +62,16 @@ type application struct {
 	overlays    overlay.Manager
 	minimalJobs map[int64]*minimalJob // main thread only
 	snip        *snip.Manager
-	tray        *mygo.Tray // main thread only
-	keys        credentialStore
+
+	tray            *mygo.Tray      // main thread only
+	lastTrayDismiss trayAutoDismiss // main thread only
+	keys            credentialStore
+}
+
+type trayAutoDismiss struct {
+	kind  string
+	at    time.Time
+	point mygo.Point
 }
 
 func newApplication() *application {
@@ -126,11 +135,12 @@ func (a *application) ready() {
 	a.speaker = speech.New()
 	mygo.App.OnQuit(a.speaker.Close)
 	a.bubbles = bubble.NewManager(a.isQuitting, bubble.Actions{
-		Speak:        a.speaker.Speak,
-		Run:          a.runTranslation,
-		Settings:     a.settings,
-		StartOCR:     func() { a.startEntry("ocr") },
-		OpenSettings: func() { a.showSettings(true) },
+		Speak:           a.speaker.Speak,
+		Run:             a.runTranslation,
+		Settings:        a.settings,
+		StartOCR:        func() { a.startEntry("ocr") },
+		OpenSettings:    func(source *mygo.Window) { a.showSettings(true, source) },
+		OnInputAutoHide: func() { a.recordTrayAutoDismiss(config.TrayActionPanel) },
 	})
 	mygo.Screen.OnDisplaysChanged(a.bubbles.RefreshDisplays)
 	mygo.Screen.OnDisplaysChanged(a.overlays.RefreshDisplays)
@@ -234,6 +244,7 @@ func (a *application) startEntry(action string) {
 	if a.isQuitting() {
 		return
 	}
+	a.clearTrayAutoDismiss()
 	// Preserve the active input page before begin revokes its entry ownership.
 	if action == "panel" && a.bubbles.FocusVisibleInput() {
 		return
@@ -332,14 +343,110 @@ func (a *application) trayOptions() mygo.TrayOptions {
 
 func (a *application) setUpTray() {
 	opts := a.trayOptions()
-	opts.Menu = a.trayMenu()
+	if runtime.GOOS != "darwin" {
+		opts.Menu = a.trayMenu()
+	}
 	tray, err := mygo.NewTray(opts)
 	if err != nil {
 		log.Printf("no tray icon: %v", err)
 		return
 	}
 	a.tray = tray
-	tray.OnClick(func() { a.startEntry("panel") })
+	tray.OnClick(a.onTrayClick)
+	if runtime.GOOS == "darwin" {
+		tray.OnRightClick(a.popUpTrayMenu)
+	} else {
+		tray.OnRightClick(a.clearTrayAutoDismiss)
+	}
+}
+
+func (a *application) onTrayClick() {
+	if a.isQuitting() {
+		return
+	}
+	switch a.settings().TrayClickAction {
+	case config.TrayActionOcr:
+		a.startEntry("ocr")
+	case config.TrayActionHistory:
+		if a.consumeTrayAutoDismiss(config.TrayActionHistory) {
+			return
+		}
+		a.toggleHistory()
+	case config.TrayActionSettings:
+		a.showSettings(false, nil)
+	case config.TrayActionMenu:
+		a.popUpTrayMenu()
+	default:
+		if a.consumeTrayAutoDismiss(config.TrayActionPanel) {
+			return
+		}
+		a.togglePanel()
+	}
+}
+
+const trayAutoDismissWindow = 800 * time.Millisecond
+
+func (a *application) recordTrayAutoDismiss(kind string) {
+	a.recordTrayAutoDismissAt(kind, time.Now(), mygo.Screen.CursorScreenPoint())
+}
+
+func (a *application) recordTrayAutoDismissAt(kind string, at time.Time, point mygo.Point) {
+	a.lastTrayDismiss = trayAutoDismiss{kind: kind, at: at, point: point}
+}
+
+func (a *application) clearTrayAutoDismiss() {
+	a.lastTrayDismiss = trayAutoDismiss{}
+}
+
+// consumeTrayAutoDismiss reports whether the active tray action's window was
+// just dismissed on mouse-down over the tray icon, preventing mouse-up from
+// flashing it back open instead of toggling it closed.
+func (a *application) consumeTrayAutoDismiss(kind string) bool {
+	if a.tray == nil {
+		a.clearTrayAutoDismiss()
+		return false
+	}
+	return a.consumeTrayAutoDismissAt(kind, time.Now(), a.tray.Bounds)
+}
+
+func (a *application) consumeTrayAutoDismissAt(kind string, now time.Time, trayBounds func() mygo.Rectangle) bool {
+	d := a.lastTrayDismiss
+	a.lastTrayDismiss = trayAutoDismiss{}
+	if d.kind != kind || d.at.IsZero() {
+		return false
+	}
+	elapsed := now.Sub(d.at)
+	if elapsed < 0 || elapsed > trayAutoDismissWindow {
+		return false
+	}
+	if trayBounds == nil {
+		return false
+	}
+	return pointInRectWithSlack(d.point, trayBounds(), 2)
+}
+
+func pointInRectWithSlack(pt mygo.Point, r mygo.Rectangle, slack int) bool {
+	if r.Width <= 0 || r.Height <= 0 {
+		return false
+	}
+	return pt.X >= r.X-slack && pt.X <= r.X+r.Width+slack &&
+		pt.Y >= r.Y-slack && pt.Y <= r.Y+r.Height+slack
+}
+
+func (a *application) popUpTrayMenu() {
+	a.clearTrayAutoDismiss()
+	if a.tray == nil || a.isQuitting() {
+		return
+	}
+	if runtime.GOOS == "darwin" {
+		// Install the menu only for this popup on macOS so a persistent
+		// NSStatusItem menu does not intercept primary clicks meant for OnClick.
+		// mygo's PopUpMenu builds from the installed menu internally, so this
+		// constructs a temporary NSMenu while keeping left-click free afterwards.
+		a.tray.SetMenu(a.trayMenu())
+		defer a.tray.SetMenu(nil)
+	}
+	a.tray.PopUpMenu()
 }
 
 func (a *application) refreshTrayMode() {
@@ -356,6 +463,11 @@ func (a *application) refreshTrayMode() {
 
 // refreshTrayMenu publishes current mode, shortcut, update and window state.
 func (a *application) refreshTrayMenu() {
+	if runtime.GOOS == "darwin" {
+		// On macOS, popUpTrayMenu builds a fresh menu on every right-click;
+		// setting a persistent menu here would block left-click OnClick events.
+		return
+	}
 	mygo.RunOnMain(func() {
 		if a.tray != nil {
 			a.tray.SetMenu(a.trayMenu())
@@ -365,7 +477,7 @@ func (a *application) refreshTrayMenu() {
 
 func (a *application) trayMenu() *mygo.Menu {
 	items := append(a.trayTranslationItems(), mygo.Separator(), &mygo.MenuItem{
-		Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false) },
+		Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.showSettings(false, nil) },
 	})
 	items = append(items, a.platformMenuItems()...)
 	items = append(items, platform.UpdateMenuItem(a.refreshTrayMenu), mygo.Separator(), &mygo.MenuItem{Label: "退出 Sotto", Role: mygo.RoleQuit})
@@ -426,12 +538,20 @@ func (a *application) commitOpenAtLogin(open bool, setLoginItem func(bool) error
 	return nil
 }
 
-// showSettings opens the settings window, or focuses the one there is.
-// It runs on the main thread (the tray); NewWindow executes directly
-// there, outside the mutex.
-func (a *application) showSettings(services bool) {
+const settingsMinWidth, settingsMinHeight = 660, 500
+
+// showSettings opens or focuses settings on the main thread. In-app actions
+// follow the source window; tray and launch actions have no source window.
+func (a *application) showSettings(services bool, source *mygo.Window) {
 	if a.isQuitting() {
 		return
+	}
+	a.clearTrayAutoDismiss()
+	var work mygo.Rectangle
+	if source != nil {
+		work = mygo.Screen.DisplayMatching(source.Bounds()).WorkArea
+	} else {
+		work = mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint()).WorkArea
 	}
 	a.mu.Lock()
 	win := a.settingsWin
@@ -444,8 +564,7 @@ func (a *application) showSettings(services bool) {
 			}
 			sv.RefreshOpenAtLogin()
 		}
-		win.Show()
-		win.Focus()
+		presentSettingsWindow(win, work)
 		return
 	}
 	tab := settings.TabGeneral
@@ -464,8 +583,9 @@ func (a *application) showSettings(services bool) {
 		Content:         ui.View(sv.Render),
 		Width:           780,
 		Height:          600,
-		MinWidth:        660,
-		MinHeight:       500,
+		MinWidth:        settingsMinWidth,
+		MinHeight:       settingsMinHeight,
+		Hidden:          true,
 		StateKey:        "settings",
 		BackgroundColor: "light-dark(#ffffff, #222325)",
 	}))
@@ -482,7 +602,64 @@ func (a *application) showSettings(services bool) {
 		}
 		a.mu.Unlock()
 	})
+	presentSettingsWindow(w, work)
+}
+
+type workAreaWindow interface {
+	IsMinimized() bool
+	IsMaximized() bool
+	IsFullScreen() bool
+	Bounds() mygo.Rectangle
+	SetMinimumSize(width, height int)
+	SetBounds(mygo.Rectangle)
+}
+
+func presentSettingsWindow(w interface {
+	workAreaWindow
+	Restore()
+	Show()
+	Focus()
+}, work mygo.Rectangle) {
+	// Read the restored frame, not the iconic bounds, on the first reopen.
+	if w.IsMinimized() {
+		w.Restore()
+	}
+	fitWindowToWorkArea(w, work, settingsMinWidth, settingsMinHeight)
 	w.Show()
+	w.Focus()
+}
+
+func fitWindowToWorkArea(w workAreaWindow, work mygo.Rectangle, minWidth, minHeight int) {
+	if work.Width <= 0 || work.Height <= 0 {
+		return
+	}
+	// Preserve Windows iconic (-32000), maximized (+frame border), and fullscreen bounds.
+	if w.IsMinimized() || w.IsMaximized() || w.IsFullScreen() {
+		return
+	}
+	bounds := w.Bounds()
+	w.SetMinimumSize(min(minWidth, work.Width), min(minHeight, work.Height))
+	if next := windowBoundsForWorkArea(bounds, work, minWidth, minHeight); next != bounds {
+		w.SetBounds(next)
+	}
+}
+
+func windowBoundsForWorkArea(bounds, work mygo.Rectangle, minWidth, minHeight int) mygo.Rectangle {
+	if work.Width <= 0 || work.Height <= 0 {
+		return bounds
+	}
+	width := min(max(bounds.Width, minWidth), work.Width)
+	height := min(max(bounds.Height, minHeight), work.Height)
+	// Keep a dragged position when the saved window fits the invocation display.
+	if width == bounds.Width && height == bounds.Height &&
+		bounds.X >= work.X && bounds.X+bounds.Width <= work.X+work.Width &&
+		bounds.Y >= work.Y && bounds.Y+bounds.Height <= work.Y+work.Height {
+		return bounds
+	}
+	return mygo.Rectangle{
+		X: work.X + (work.Width-width)/2, Y: work.Y + (work.Height-height)/2,
+		Width: width, Height: height,
+	}
 }
 
 func (a *application) createSettingsView(tab settings.Tab) *settings.View {

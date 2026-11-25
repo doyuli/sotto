@@ -188,6 +188,7 @@ func (a *application) showHistory() {
 	if a.isQuitting() || a.history == nil {
 		return
 	}
+	a.clearTrayAutoDismiss()
 	work := mygo.Screen.DisplayNearestPoint(mygo.Screen.CursorScreenPoint()).WorkArea
 	if a.historyWin != nil {
 		a.focusHistory(work)
@@ -205,7 +206,7 @@ func (a *application) showHistory() {
 			})
 		},
 		Close:        func() { w.Close() },
-		OpenServices: func() { a.showSettings(true) },
+		OpenServices: func() { a.showSettings(true, w) },
 		Options: func() ([]string, []string) {
 			cfg := a.settings()
 			return enabledHistoryProviders(cfg.Services), cfg.CopyFormats
@@ -232,13 +233,7 @@ func (a *application) showHistory() {
 		if !w.IsFocused() {
 			returnFocus = platform.HistoryFocusReturn()
 		}
-		if work.Width > 0 && work.Height > 0 {
-			bounds := w.Bounds()
-			w.SetMinimumSize(min(historyMinWidth, work.Width), min(historyMinHeight, work.Height))
-			if next := historyBoundsForWorkArea(bounds, work); next != bounds {
-				w.SetBounds(next)
-			}
-		}
+		fitWindowToWorkArea(w, work, historyMinWidth, historyMinHeight)
 		view.Open()
 		w.Invalidate()
 		w.Show()
@@ -248,7 +243,7 @@ func (a *application) showHistory() {
 		w.Invalidate()
 	}
 	a.dismissHistory = view.Dismiss
-	dismissOnLeave := func(outsideNonactivatingPanel bool) {
+	dismissOnLeave := func(outsideNonactivatingPanel, primaryPress bool) {
 		// Blur can arrive during a native focus transition. Check the current
 		// window and any popup it owns when the transition has settled.
 		w.Update(func() {
@@ -256,11 +251,14 @@ func (a *application) showHistory() {
 				return
 			}
 			if outsideNonactivatingPanel || (!w.IsFocused() && !selection.WindowOwnsForeground(w.NativeHandle())) {
+				if primaryPress {
+					a.recordTrayAutoDismiss(config.TrayActionHistory)
+				}
 				view.Dismiss()
 			}
 		})
 	}
-	w.OnBlur(func() { dismissOnLeave(false) })
+	w.OnBlur(func() { dismissOnLeave(false, selection.PrimaryMousePressed()) })
 	var stopWatching func()
 	w.OnShow(func() {
 		w.Update(func() {
@@ -268,10 +266,10 @@ func (a *application) showHistory() {
 				return
 			}
 			var err error
-			stopWatching, err = selection.WatchWindowLeave(w.NativeHandle(), func() {
+			stopWatching, err = selection.WatchWindowLeave(w.NativeHandle(), func(primaryPress bool) {
 				// AppKit can leave a nonactivating panel key after an outside click.
 				// The monitor has already excluded clicks inside the panel and its menus.
-				dismissOnLeave(runtime.GOOS == "darwin")
+				dismissOnLeave(runtime.GOOS == "darwin", primaryPress)
 			})
 			if err != nil && !errors.Is(err, selection.ErrUnsupported) {
 				log.Printf("watch translation history window: %v", err)
@@ -291,24 +289,6 @@ func (a *application) showHistory() {
 		}
 	})
 	a.focusHistory(work)
-}
-
-func historyBoundsForWorkArea(bounds, work mygo.Rectangle) mygo.Rectangle {
-	if work.Width <= 0 || work.Height <= 0 {
-		return bounds
-	}
-	width := min(max(bounds.Width, historyMinWidth), work.Width)
-	height := min(max(bounds.Height, historyMinHeight), work.Height)
-	// Keep a dragged position when the saved window fits the invocation display.
-	if width == bounds.Width && height == bounds.Height &&
-		bounds.X >= work.X && bounds.X+bounds.Width <= work.X+work.Width &&
-		bounds.Y >= work.Y && bounds.Y+bounds.Height <= work.Y+work.Height {
-		return bounds
-	}
-	return mygo.Rectangle{
-		X: work.X + (work.Width-width)/2, Y: work.Y + (work.Height-height)/2,
-		Width: width, Height: height,
-	}
 }
 
 var knownHistoryProviders = config.Default().Services.Order

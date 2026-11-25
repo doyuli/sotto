@@ -37,6 +37,16 @@ On Windows, verify the architecture-specific package includes `Sqlitecore.dll` b
 - Dismiss a normal input bubble immediately after a completed translation appears. Reopen history and verify the completed result is saved; closing before completion must not record partial text.
 - Restart the packaged app to verify persistence, provider order, pagination counts, turning off recording without losing existing rows, retention-shortening confirmation, single/full deletion, and quitting from tray/menu bar while open. On macOS, confirm no Dock icon or Space jump; on Windows, confirm foreground focus returns to the editor.
 
+## Tray Click Actions
+
+- Set **点击托盘图标** to the input panel and then to history. For each, verify that the first left-click opens the window, the second closes it, and the third reopens it. The corresponding shortcut should still toggle the window.
+- With the pointer over the icon, switch away from the window via keyboard, then immediately left-click the icon. It should reopen on the first click. Repeat after opening and dismissing the tray context menu (right-click on Windows; right-click or Control-click on macOS).
+
+## Settings Window on Multiple Displays
+
+- Minimize Settings on one display, then open it from the tray/menu bar on another. A normally sized window should fit the second display on the first click. A window that was maximized before minimizing should stay maximized; opening a full-screen Settings window should not resize it.
+- Leave the pointer on another display and use the keyboard to open **启用翻译源** in history or **配置翻译服务** in a translation bubble. A normally sized Settings window should open on the source window's display, even when reusing a window already open elsewhere. Maximized and full-screen Settings windows should stay on their current display.
+
 ## Minimal Translation Mode
 
 On each desktop platform, verify the following for **简约翻译模式**.

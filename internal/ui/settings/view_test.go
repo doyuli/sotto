@@ -1801,3 +1801,53 @@ func TestSettingsTargetLanguageSelectAlignmentAndToggle(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsTrayClickActionSelect(t *testing.T) {
+	var mu sync.Mutex
+	current := testSettingsConfig()
+	var saved []string
+
+	v := NewView(TabGeneral, current, Actions{
+		GetSettings: func() config.Settings {
+			mu.Lock()
+			defer mu.Unlock()
+			return current
+		},
+		SaveSettings: func(s config.Settings) error {
+			mu.Lock()
+			defer mu.Unlock()
+			current = s
+			saved = append(saved, s.TrayClickAction)
+			return nil
+		},
+	})
+	defer v.Dispose()
+
+	tt := ui.NewTester(v.Render, 780, 600)
+	if _, ok := tt.Find("选择点击托盘图标动作"); !ok {
+		t.Fatal("missing tray click action selector")
+	}
+	settingsClick(t, tt, "选择点击托盘图标动作")
+	if _, ok := tt.Find("点击托盘图标选项"); !ok {
+		t.Fatal("tray click action popup did not open")
+	}
+	for _, label := range []string{"翻译面板", "截图翻译", "翻译历史", "设置", "托盘菜单"} {
+		if !tt.HasText(label) {
+			t.Fatalf("missing tray click action option %q", label)
+		}
+	}
+	settingsClick(t, tt, "截图翻译")
+	waitSettingsIdle(t, v)
+
+	settingsClick(t, tt, "选择点击托盘图标动作")
+	settingsClick(t, tt, "托盘菜单")
+	waitSettingsIdle(t, v)
+
+	mu.Lock()
+	gotSaved := slices.Clone(saved)
+	gotAction := current.TrayClickAction
+	mu.Unlock()
+	if !slices.Equal(gotSaved, []string{config.TrayActionOcr, config.TrayActionMenu}) || gotAction != config.TrayActionMenu {
+		t.Fatalf("saved tray click actions = %v (current=%q), want [ocr menu]", gotSaved, gotAction)
+	}
+}

@@ -21,11 +21,12 @@ import (
 )
 
 type Actions struct {
-	Speak        func(text, lang string, onError func(error))
-	Run          func(win *mygo.Window, req RunReq)
-	Settings     func() config.Settings
-	StartOCR     func()
-	OpenSettings func()
+	Speak           func(text, lang string, onError func(error))
+	Run             func(win *mygo.Window, req RunReq)
+	Settings        func() config.Settings
+	StartOCR        func()
+	OpenSettings    func(source *mygo.Window)
+	OnInputAutoHide func()
 }
 
 // Manager keeps one reusable window for all entries. Pinning detaches
@@ -322,15 +323,16 @@ func (m *Manager) blurHandler(b *bubble) func() {
 		m.mu.Lock()
 		showID := b.showID
 		m.mu.Unlock()
+		primaryPress := selection.PrimaryMousePressed()
 		go mygo.RunOnMain(func() {
-			m.hideAfterBlur(b, showID)
+			m.hideAfterBlur(b, showID, primaryPress)
 		})
 	}
 }
 
 // hideAfterBlur runs on the main thread, including for foreground notifications
 // from an owned popup that does not deliver another blur to the bubble itself.
-func (m *Manager) hideAfterBlur(b *bubble, showID int64) {
+func (m *Manager) hideAfterBlur(b *bubble, showID int64, primaryPress bool) {
 	visible, focused := b.win.IsVisible(), b.win.IsFocused()
 	if (runtime.GOOS == "windows" || runtime.GOOS == "darwin") && !focused {
 		focused = selection.WindowOwnsForeground(b.win.NativeHandle())
@@ -340,7 +342,7 @@ func (m *Manager) hideAfterBlur(b *bubble, showID int64) {
 	m.mu.Unlock()
 	if hide {
 		log.Printf("bubble: blur hide id=%d show=%d", b.id, showID)
-		m.hideTransientBubble(b)
+		m.hideTransientBubble(b, primaryPress)
 	}
 }
 
@@ -455,7 +457,7 @@ func (m *Manager) refreshWindowLeave(b *bubble) {
 			return
 		}
 		active := true // accessed only on the main thread
-		notify := func() {
+		notify := func(primaryPress bool) {
 			mygo.RunOnMain(func() {
 				m.mu.Lock()
 				dismiss := active && b.sessionID == sessionID && b.showID == showID && b.offBlur != nil
@@ -464,10 +466,10 @@ func (m *Manager) refreshWindowLeave(b *bubble) {
 					if runtime.GOOS == "darwin" {
 						// A click in the menu bar may leave a nonactivating panel
 						// key. The native monitor already excluded owned menus.
-						m.hideTransientBubble(b)
+						m.hideTransientBubble(b, primaryPress)
 					} else {
 						// A select popup may have closed since the hook hit test.
-						m.hideAfterBlur(b, showID)
+						m.hideAfterBlur(b, showID, primaryPress)
 					}
 				}
 			})
@@ -524,7 +526,7 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 		},
 		openSettings: func() {
 			if m.actions.OpenSettings != nil {
-				m.actions.OpenSettings()
+				m.actions.OpenSettings(b.win)
 			}
 		},
 		restoreClipboard: func(id string, done func(error)) {
@@ -679,23 +681,32 @@ func (m *Manager) HideTransient() {
 	b := m.transient
 	m.mu.Unlock()
 	if b != nil {
-		m.hideTransientBubble(b)
+		m.hideTransientBubble(b, false)
 	}
 }
 
 // Semantic dismissal, unlike ShowTask's internal layout Hide, revokes all work
 // before native events can deliver late requests or results for this session.
-func (m *Manager) hideTransientBubble(b *bubble) {
+func (m *Manager) hideTransientBubble(b *bubble, primaryPress bool) {
 	mygo.RunOnMain(func() {
-		m.mu.Lock()
-		dismissed := m.byID[b.id] == b && b.dismiss()
-		stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
-		view := b.view
-		m.mu.Unlock()
-		if dismissed {
-			b.hideStopped(view, stopped)
-		}
+		m.commitTransientBubbleHide(b, primaryPress, b.hideStopped)
 	})
+}
+
+func (m *Manager) commitTransientBubbleHide(b *bubble, primaryPress bool, hide func(*bubbleView, RunStoppedMsg)) {
+	m.mu.Lock()
+	trigger := b.trigger
+	dismissed := m.byID[b.id] == b && b.dismiss()
+	stopped := RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
+	view := b.view
+	onAutoHide := m.actions.OnInputAutoHide
+	m.mu.Unlock()
+	if dismissed {
+		if primaryPress && trigger == "input" && onAutoHide != nil {
+			onAutoHide()
+		}
+		hide(view, stopped)
+	}
 }
 
 // Called after releasing the manager lock, on the UI thread.

@@ -80,7 +80,7 @@ type windowHooks struct {
 
 type windowLeaveWatch struct {
 	hwnd    uintptr
-	changed func()
+	changed func(primaryPress bool)
 }
 
 var watch windowHooks
@@ -92,7 +92,7 @@ var startMu sync.Mutex
 // WatchWindowLeave calls changed on a goroutine after outside presses and
 // foreground changes. The caller rechecks current focus, including owned popups,
 // and guards any in-flight callback after unregistering.
-func WatchWindowLeave(hwnd uintptr, changed func()) (stop func(), err error) {
+func WatchWindowLeave(hwnd uintptr, changed func(primaryPress bool)) (stop func(), err error) {
 	startMu.Lock()
 	defer startMu.Unlock()
 	if err := ensureWindowHooks(); err != nil {
@@ -110,6 +110,11 @@ func WatchWindowLeave(hwnd uintptr, changed func()) (stop func(), err error) {
 		}))
 		stopWindowHooksIfIdle()
 	}, nil
+}
+
+func PrimaryMousePressed() bool {
+	const vkLButton = 0x01
+	return keyDown(vkLButton)
 }
 
 // ensureWindowHooks and stopWindowHooksIfIdle run under startMu.
@@ -204,7 +209,7 @@ func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uint
 		// Avoid dispatching internal activation changes. The caller still
 		// rechecks live focus because this event may already be stale.
 		if !windowContains(w.hwnd, hwnd) {
-			go w.changed()
+			go w.changed(false)
 		}
 	}
 	return 0
@@ -218,7 +223,7 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 		case wmLButtonDown, wmRButtonDown, wmMButtonDown, wmXButtonDown:
 			h := (*msllHookStruct)(native(lparam))
 			if outside, _ := watch.outside.Load().([]*windowLeaveWatch); len(outside) != 0 {
-				go notifyOutside(outside, h.X, h.Y)
+				go notifyOutside(outside, h.X, h.Y, wparam == wmLButtonDown)
 			}
 		}
 	}
@@ -226,14 +231,14 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 	return r
 }
 
-func notifyOutside(watches []*windowLeaveWatch, x, y int32) {
+func notifyOutside(watches []*windowLeaveWatch, x, y int32, primaryPress bool) {
 	// The hook reports physical screen pixels. Resolve the child surface
 	// to its top-level window before deciding whether the click is outside.
 	point := uint64(uint32(x)) | uint64(uint32(y))<<32
 	hit, _, _ := procWindowFromPhysicalPoint.Call(uintptr(point))
 	for _, w := range watches {
 		if !windowContains(w.hwnd, hit) {
-			w.changed()
+			w.changed(primaryPress)
 		}
 	}
 }

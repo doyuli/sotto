@@ -48,13 +48,13 @@ func (a *application) readyPlatform() {
 	mygo.App.OnQuit(stop)
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
 		if slices.Contains(args, "--settings") {
-			a.showSettings(false)
+			a.showSettings(false, nil)
 		} else {
 			a.startEntry("panel")
 		}
 	})
 	if slices.Contains(os.Args[1:], "--settings") {
-		a.showSettings(false)
+		a.showSettings(false, nil)
 	} else if slices.Contains(os.Args[1:], "--panel") {
 		a.startEntry("panel")
 	}

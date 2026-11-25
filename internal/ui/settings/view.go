@@ -291,6 +291,30 @@ func (v *View) renderSidebar(c *ui.Context, p settingsPalette, active Tab) {
 	})
 }
 
+var targetLanguageOptions = append([]string{"auto"}, languages.List...)
+
+func targetLanguageLabel(code string) string {
+	if code == "auto" {
+		return "自动（中文↔英文）"
+	}
+	return shared.LanguageName(code)
+}
+
+var trayClickActionLabels = map[string]string{
+	config.TrayActionPanel:    "翻译面板",
+	config.TrayActionOcr:      "截图翻译",
+	config.TrayActionHistory:  "翻译历史",
+	config.TrayActionMenu:     "托盘菜单",
+	config.TrayActionSettings: "设置",
+}
+
+func trayClickActionLabel(action string) string {
+	if label, ok := trayClickActionLabels[action]; ok {
+		return label
+	}
+	return trayClickActionLabels[config.TrayActionPanel]
+}
+
 func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	v.mu.Lock()
 	cfg := cloneSettings(v.settings)
@@ -306,54 +330,12 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
 		// Target language
 		v.renderSettingRow(c, p, "默认翻译到", "未指定目标时气泡首选的翻译语言", true, func() {
-			selected := cfg.TargetLanguage
-			parts := ui.SelectBase(c, &selected)
-			trigger := parts.Trigger.Label("选择默认翻译语言").
-				Cursor(ui.CursorPointer).MinWidth(176).
-				Padding(6, 10).Radius(8).Background(p.field).Border(1, p.border)
-			trigger.OnChange(func() {
+			renderGeneralSelect(c.Key("target-language"), p, cfg.TargetLanguage, targetLanguageOptions, targetLanguageLabel, "选择默认翻译语言", "默认翻译语言选项", func(code string) {
 				v.mu.Lock()
 				next := cloneSettings(v.settings)
-				next.TargetLanguage = selected
+				next.TargetLanguage = code
 				v.enqueueSaveLocked(next)
 				v.mu.Unlock()
-			})
-			if trigger.Hovered() {
-				trigger.Background(p.hover)
-			}
-			languageLabel := func(code string) string {
-				if code == "auto" {
-					return "自动（中文↔英文）"
-				}
-				return shared.LanguageName(code)
-			}
-			trigger.Children(func() {
-				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Text(c, languageLabel(selected)).Grow(1).FontSize(12).TextColor(p.fg).SingleLine()
-					ui.Icon(c, shared.ChevronDown).Size(12, 12).TextColor(p.muted)
-				})
-			})
-			parts.Popup(func(panel ui.Element) {
-				// Use the same anchored select as the bubble, including toggle-close
-				// behavior and a popup whose width follows the committed trigger.
-				bounds := trigger.Bounds()
-				panel.Label("默认翻译语言选项").Width(bounds.W).Padding(4).
-					Margin(4, 0, 0, 0).Radius(10).Background(p.panel).
-					Border(1, p.border).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
-				codes := append([]string{"auto"}, languages.List...)
-				_, windowH := c.Size()
-				room := max(bounds.Y-8, windowH-bounds.Y-bounds.H-8)
-				ui.Scroll(c).Height(min(float32(len(codes))*30, max(30, room-10))).Children(func() {
-					for _, code := range codes {
-						item := parts.Item(code).Height(30).Padding(0, 8).Radius(6).Cursor(ui.CursorPointer)
-						if item.Highlighted() {
-							item.Background(p.hover)
-						} else if code == selected {
-							item.Background(p.control)
-						}
-						item.Children(func() { ui.Text(c, languageLabel(code)).FontSize(12).TextColor(p.fg).SingleLine() })
-					}
-				})
 			})
 		})
 
@@ -373,6 +355,16 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 				v.mu.Lock()
 				defer v.mu.Unlock()
 				v.enqueueOpenAtLoginLocked(openAtLogin)
+			})
+		})
+
+		v.renderSettingRow(c, p, "点击托盘图标", "左键点击托盘图标时执行，右键打开菜单", true, func() {
+			renderGeneralSelect(c.Key("tray-click-action"), p, cfg.TrayClickAction, config.TrayClickActions, trayClickActionLabel, "选择点击托盘图标动作", "点击托盘图标选项", func(action string) {
+				v.mu.Lock()
+				next := cloneSettings(v.settings)
+				next.TrayClickAction = action
+				v.enqueueSaveLocked(next)
+				v.mu.Unlock()
 			})
 		})
 
@@ -404,6 +396,45 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	if version := mygo.App.Version(); version != "" {
 		ui.Text(c, "Sotto v"+version).FillWidth().TextAlign(ui.Center).FontSize(12).TextColor(p.muted)
 	}
+}
+
+func renderGeneralSelect(c *ui.Context, p settingsPalette, current string, options []string, labelOf func(string) string, triggerLabel, popupLabel string, onChange func(string)) {
+	selected := current
+	parts := ui.SelectBase(c, &selected)
+	trigger := parts.Trigger.Label(triggerLabel).
+		Cursor(ui.CursorPointer).MinWidth(176).
+		Padding(6, 10).Radius(8).Background(p.field).Border(1, p.border)
+	trigger.OnChange(func() { onChange(selected) })
+	if trigger.Hovered() {
+		trigger.Background(p.hover)
+	}
+	trigger.Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(6).Children(func() {
+			ui.Text(c, labelOf(selected)).Grow(1).FontSize(12).TextColor(p.fg).SingleLine()
+			ui.Icon(c, shared.ChevronDown).Size(12, 12).TextColor(p.muted)
+		})
+	})
+	parts.Popup(func(panel ui.Element) {
+		// Use the same anchored select as the bubble, including toggle-close
+		// behavior and a popup whose width follows the committed trigger.
+		bounds := trigger.Bounds()
+		panel.Label(popupLabel).Width(bounds.W).Padding(4).
+			Margin(4, 0, 0, 0).Radius(10).Background(p.panel).
+			Border(1, p.border).Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.14))
+		_, windowH := c.Size()
+		room := max(bounds.Y-8, windowH-bounds.Y-bounds.H-8)
+		ui.Scroll(c).Height(min(float32(len(options))*30, max(30, room-10))).Children(func() {
+			for _, opt := range options {
+				item := parts.Item(opt).Height(30).Padding(0, 8).Radius(6).Cursor(ui.CursorPointer)
+				if item.Highlighted() {
+					item.Background(p.hover)
+				} else if opt == selected {
+					item.Background(p.control)
+				}
+				item.Children(func() { ui.Text(c, labelOf(opt)).FontSize(12).TextColor(p.fg).SingleLine() })
+			}
+		})
+	})
 }
 
 func (v *View) renderSettingRow(c *ui.Context, p settingsPalette, title, sub string, divider bool, control func()) {

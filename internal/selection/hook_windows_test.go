@@ -106,8 +106,8 @@ func TestForegroundHookFiltersWindows(t *testing.T) {
 				defer watch.outside.Store(previous)
 				var got [2]int
 				watch.outside.Store([]*windowLeaveWatch{
-					{hwnd: bubble, changed: func() { got[0]++ }},
-					{hwnd: other, changed: func() { got[1]++ }},
+					{hwnd: bubble, changed: func(bool) { got[0]++ }},
+					{hwnd: other, changed: func(bool) { got[1]++ }},
 				})
 				foregroundHookProc(0, tt.event, tt.hwnd, 0, 0, 0, 0)
 				// Wait for dispatched goroutines without sleeps, including when
@@ -128,7 +128,7 @@ func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
 	other := window(0, wsPopup)
 	notify := modUser32.NewProc("NotifyWinEvent")
 	changes := make(chan struct{}, 1)
-	stop, err := WatchWindowLeave(bubble, func() {
+	stop, err := WatchWindowLeave(bubble, func(bool) {
 		select {
 		case changes <- struct{}{}:
 		default:
@@ -150,7 +150,7 @@ func TestWatchWindowLeaveForegroundNotifications(t *testing.T) {
 
 	// Removing one bubble must not stop another bubble's foreground hook.
 	second := make(chan struct{}, 1)
-	stopSecond, err := WatchWindowLeave(other, func() {
+	stopSecond, err := WatchWindowLeave(other, func(bool) {
 		select {
 		case second <- struct{}{}:
 		default:

@@ -392,3 +392,28 @@ func TestPinnedRestoreRejectsObsoleteMenuActions(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitTransientBubbleHideOnlyNotifiesInputAutoHide(t *testing.T) {
+	// Keyboard blur must not mark the next tray click as a mouse dismissal.
+	for _, tc := range []struct {
+		name         string
+		trigger      string
+		primaryPress bool
+		wantCalls    int
+	}{
+		{"input left-click dismissal", "input", true, 1},
+		{"input keyboard or right-click dismissal", "input", false, 0},
+		{"selection left-click dismissal", "selection", true, 0},
+		{"ocr left-click dismissal", "ocr", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, b := newDismissTestBubble(t, tc.trigger, "")
+			calls, hidden := 0, 0
+			m.actions.OnInputAutoHide = func() { calls++ }
+			m.commitTransientBubbleHide(b, tc.primaryPress, func(*bubbleView, RunStoppedMsg) { hidden++ })
+			if hidden != 1 || calls != tc.wantCalls {
+				t.Fatalf("hidden=%d OnInputAutoHide calls=%d, want hidden=1 calls=%d", hidden, calls, tc.wantCalls)
+			}
+		})
+	}
+}

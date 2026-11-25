@@ -148,7 +148,7 @@ func TestHistoryBoundsFollowInvocationDisplay(t *testing.T) {
 		{"retain bounds if no display is available", saved, mygo.Rectangle{}, saved},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := historyBoundsForWorkArea(tc.bounds, tc.work); got != tc.want {
+			if got := windowBoundsForWorkArea(tc.bounds, tc.work, historyMinWidth, historyMinHeight); got != tc.want {
 				t.Fatalf("history bounds = %+v, want %+v", got, tc.want)
 			}
 		})
