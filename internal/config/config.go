@@ -75,6 +75,13 @@ type HotkeySettings struct {
 	Ocr                string `json:"ocr"`
 	Selection          string `json:"selection"`
 	MinimalTranslation string `json:"minimalTranslation"`
+	History            string `json:"history"`
+}
+
+// HistorySettings controls local recording and retention. Zero days is unlimited.
+type HistorySettings struct {
+	Enabled       bool `json:"enabled"`
+	RetentionDays int  `json:"retentionDays"`
 }
 
 // BubbleSettings control bubble behavior.
@@ -90,6 +97,7 @@ type Settings struct {
 	Identifier         IdentifierSettings `json:"identifier"`
 	CopyFormats        []string           `json:"copyFormats"`
 	Hotkeys            HotkeySettings     `json:"hotkeys"`
+	History            HistorySettings    `json:"history"`
 	Bubble             BubbleSettings     `json:"bubble"`
 	MinimalTranslation bool               `json:"minimalTranslation"`
 	OpenAtLogin        bool               `json:"openAtLogin"`
@@ -110,6 +118,7 @@ func Default() Settings {
 		Identifier:     IdentifierSettings{AutoSplit: true},
 		CopyFormats:    slices.Clone(naming.Styles),
 		Hotkeys:        defaultHotkeys(runtime.GOOS),
+		History:        HistorySettings{Enabled: true, RetentionDays: 30},
 		Bubble:         BubbleSettings{AutoHide: true},
 	}
 }
@@ -165,6 +174,11 @@ func Save(path string, s Settings) error {
 // unknown copy formats dropped, duplicate service entries removed, every
 // enabled service given a position in the card order.
 func Normalize(s Settings) Settings {
+	switch s.History.RetentionDays {
+	case 0, 7, 14, 30:
+	default:
+		s.History.RetentionDays = 30
+	}
 	d := Default()
 	s.Services.Enabled = dedupe(s.Services.Enabled)
 	s.Services.Order = dedupe(s.Services.Order)
@@ -213,14 +227,17 @@ func Normalize(s Settings) Settings {
 	if s.Hotkeys.MinimalTranslation == "" {
 		s.Hotkeys.MinimalTranslation = d.Hotkeys.MinimalTranslation
 	}
+	if s.Hotkeys.History == "" {
+		s.Hotkeys.History = d.Hotkeys.History
+	}
 	return s
 }
 
 func defaultHotkeys(goos string) HotkeySettings {
 	if goos == "darwin" {
-		return HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F"}
+		return HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F", History: "Option+H"}
 	}
-	return HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"}
+	return HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F", History: "Ctrl+Alt+H"}
 }
 
 func validFormats(formats []string) []string {

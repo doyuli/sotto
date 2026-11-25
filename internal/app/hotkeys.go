@@ -14,14 +14,19 @@ import (
 	"sotto/internal/usermessage"
 )
 
-var hotkeyActions = []string{"panel", "selection", "ocr", "minimalTranslation"}
+var hotkeyActions = []string{"panel", "selection", "ocr", "minimalTranslation", "history"}
 var hotkeyLabels = map[string]string{
-	"panel": "翻译面板", "selection": "划词翻译", "ocr": "截图翻译", "minimalTranslation": "简约翻译模式",
+	"panel":              "翻译面板",
+	"selection":          "划词翻译",
+	"ocr":                "截图翻译",
+	"minimalTranslation": "简约翻译模式",
+	"history":            "翻译历史",
 }
 
 func hotkeyValues(h config.HotkeySettings) map[string]string {
 	return map[string]string{
 		"panel": h.Panel, "selection": h.Selection, "ocr": h.Ocr, "minimalTranslation": h.MinimalTranslation,
+		"history": h.History,
 	}
 }
 func canonicalHotkeys(h config.HotkeySettings) config.HotkeySettings {
@@ -30,6 +35,7 @@ func canonicalHotkeys(h config.HotkeySettings) config.HotkeySettings {
 		Selection:          hotkey.Canonical(h.Selection, runtime.GOOS),
 		Ocr:                hotkey.Canonical(h.Ocr, runtime.GOOS),
 		MinimalTranslation: hotkey.Canonical(h.MinimalTranslation, runtime.GOOS),
+		History:            hotkey.Canonical(h.History, runtime.GOOS),
 	}
 }
 
@@ -53,6 +59,8 @@ func (a *application) onShortcut(accel string) func() {
 		switch action {
 		case "minimalTranslation":
 			go a.toggleMinimalTranslation()
+		case "history":
+			a.toggleHistory()
 		case "panel", "selection", "ocr":
 			a.startEntry(action)
 		}
@@ -83,9 +91,16 @@ func (a *application) applyHotkeys(cfg config.HotkeySettings) error {
 	failures := map[string]string{}
 	var errs []error
 	values := hotkeyValues(canonicalHotkeys(cfg))
+	owners := map[string]string{}
 	for _, action := range hotkeyActions {
 		accel := values[action]
-		err := a.shortcutBackend.Register(accel, a.onShortcut(accel))
+		var err error
+		if owner := owners[accel]; owner != "" {
+			err = fmt.Errorf("该组合键已用于%s，请更换组合键", hotkeyLabels[owner])
+		} else {
+			owners[accel] = action
+			err = a.shortcutBackend.Register(accel, a.onShortcut(accel))
+		}
 		if err != nil {
 			log.Printf("register hotkey %s (%s): %v", action, accel, err)
 			message := usermessage.Text(hotkey.UserError(err))
@@ -127,6 +142,8 @@ func (a *application) updateHotkey(action, value string) error {
 		s.Hotkeys.Ocr = value
 	case "minimalTranslation":
 		s.Hotkeys.MinimalTranslation = value
+	case "history":
+		s.Hotkeys.History = value
 	default:
 		return fmt.Errorf("未知快捷键操作")
 	}

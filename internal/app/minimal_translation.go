@@ -10,6 +10,7 @@ import (
 
 	"sotto/internal/capture"
 	"sotto/internal/config"
+	"sotto/internal/history"
 	"sotto/internal/keys"
 	"sotto/internal/platform"
 	"sotto/internal/translate"
@@ -148,13 +149,16 @@ func (a *application) minimalScreenshot(ctx context.Context, shot *snip.Capture,
 
 func (a *application) minimalTranslation(ctx context.Context, text string, progress func(string)) translate.Result {
 	prepared, err := a.prepareMinimalRequest(ctx, text)
+	record := prepared.history
 	if ctx.Err() != nil {
+		record.Done()
 		return translate.Result{}
 	}
 	if err != nil {
 		return translate.Result{Err: translate.UserMessage(err)}
 	}
 	if len(prepared.settings.Services.Enabled) == 0 {
+		record.Done()
 		return translate.Result{Err: "请在设置中启用一个翻译服务。"}
 	}
 	var final translate.Result
@@ -170,6 +174,7 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 		final = result
 	})
 	if ctx.Err() != nil {
+		record.Done()
 		return translate.Result{}
 	}
 	final.Text = strings.TrimSpace(final.Text)
@@ -179,6 +184,14 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 			final.Err = "翻译服务未返回完整译文，请重试。"
 		}
 	}
+	if record != nil {
+		// Completing the visual job cancels its context after accepting the result.
+		// That must not cancel the independent write of an already complete result.
+		go func() {
+			defer record.Done()
+			a.recordTranslation(context.WithoutCancel(ctx), record, final)
+		}()
+	}
 	return final
 }
 
@@ -186,21 +199,11 @@ type minimalRequest struct {
 	request     translate.Request
 	settings    config.Settings
 	credentials keys.Snapshot
+	history     *history.Request
 }
 
-func (a *application) prepareMinimalRequest(ctx context.Context, text string) (minimalRequest, error) {
+func (a *application) prepareMinimalRequest(ctx context.Context, text string) (_ minimalRequest, err error) {
 	cfg := a.settings()
-	services := translate.EnabledProviders(cfg.Services)
-	if len(services) > 0 {
-		first := services[0]
-		if len(keys.ForServices(first.Name())) != 0 || !first.Available(nil, cfg) {
-			// Read provider options and credentials in the same settings transaction.
-			a.configWriteMu.Lock()
-			defer a.configWriteMu.Unlock()
-			cfg = a.settings()
-			services = translate.EnabledProviders(cfg.Services)
-		}
-	}
 	if err := ctx.Err(); err != nil {
 		return minimalRequest{}, err
 	}
@@ -209,6 +212,28 @@ func (a *application) prepareMinimalRequest(ctx context.Context, text string) (m
 		return minimalRequest{}, err
 	}
 	request.TranslationOnly = true
+	// Snapshot recording before a keyring read can delay the dispatch past a
+	// clear or recording toggle. The direction belongs to this original input.
+	record := a.beginHistory(text, request, cfg.Services.Order)
+	defer func() {
+		if err != nil {
+			record.Done()
+		}
+	}()
+	services := translate.EnabledProviders(cfg.Services)
+	if len(services) > 0 {
+		first := services[0]
+		if len(keys.ForServices(first.Name())) != 0 || !first.Available(nil, cfg) {
+			// Read provider options and credentials in the same settings transaction.
+			a.configWriteMu.Lock()
+			defer a.configWriteMu.Unlock()
+			cfg.Services = a.settings().Services
+			services = translate.EnabledProviders(cfg.Services)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return minimalRequest{}, err
+	}
 	for _, service := range services {
 		if err := ctx.Err(); err != nil {
 			return minimalRequest{}, err
@@ -223,9 +248,9 @@ func (a *application) prepareMinimalRequest(ctx context.Context, text string) (m
 		// A provider with missing credentials is not enabled in Settings.
 		if service.Available(credentials, cfg) {
 			cfg.Services.Enabled = []string{service.Name()}
-			return minimalRequest{request: request, settings: cfg, credentials: credentials}, nil
+			return minimalRequest{request: request, settings: cfg, credentials: credentials, history: record}, nil
 		}
 	}
 	cfg.Services.Enabled = nil
-	return minimalRequest{request: request, settings: cfg}, nil
+	return minimalRequest{request: request, settings: cfg, history: record}, nil
 }

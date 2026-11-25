@@ -10,6 +10,32 @@ For subsystem architectures and platform integration details, see [Windows Archi
 
 Tester does not create native windows; symbol loading does not prove actual selection capture or screen capture. Cross-compilation is not platform test execution. Default tests do not synthesize input, modify the general pasteboard, or capture the actual screen.
 
+## Translation History
+
+Run the SQLite acceptance cases and the native UI Tester on the host. The tests use temporary history databases and a fake clipboard.
+
+```bash
+CGO_ENABLED=0 go test ./internal/history ./internal/ui/history ./internal/ui/settings ./internal/app -run '^TestHistory' -count=5
+```
+
+Set `GOFLAGS=-tags=mygo_nowebview` on Windows. On macOS, use the SQLite library from a production bundle to verify its actual load and database operations separately from window behavior.
+
+```bash
+CGO_ENABLED=0 bun run build:mac -skip-dmg -skip-notarize
+MYGO_NATIVE_SQLITECORE="$PWD/build/darwin-arm64/Sotto.app/Contents/Resources/libSqlitecore.dylib" \
+  CGO_ENABLED=0 go test ./internal/history -count=1 -v
+```
+
+On Windows, verify the architecture-specific package includes `Sqlitecore.dll` beside `Sotto.exe`. With that package on an interactive Windows desktop, check history creation and readback after restart.
+
+- In an external editor, translate at least two entries. Open **翻译历史** from the tray/menu bar and a global shortcut; press the shortcut again while open to confirm it closes and returns focus.
+- Test browsing and search: search for a phrase found only in a later provider's translation, clear search via its `×` button, use Up/Down to select an original, and press Enter. Verify history closes, focus returns to the editor, and pasting yields the first stored provider's complete translation (including newlines).
+- Look up a word for which **有道查词与翻译** returns both pronunciations, and verify both appear and copy from history. Play source, translation, and dictionary headword audio via the speaker buttons, and confirm switching or dismissing mid-speech behaves cleanly.
+- Open history across multiple displays (including displays left/above primary and mixed scales) to confirm placement and saved-bounds preservation. Check the borderless search bar at the top: drag blank space around search to move, resize from edges, and close via the `×` button without changing the clipboard.
+- Verify outside click and app-switching dismiss history without copying, while clicking search, **换源翻译**, or the clear-history confirmation keeps it open. With a Chinese IME, confirm Up/Down/Enter during composition do not copy or close, while Escape after composition closes without copying. Double-click an original, copy the original (`复制原文`), copy per-provider results, copy English naming chips (`aB`/`AB`/`a_b`/`A_B`/`a-b`), and collapse/expand result titles; confirm the window stays open and shows toast/checkmark feedback.
+- Verify **换源翻译** lists enabled untranslated services in order, omits **词典** for non-English/multi-word entries (and hides the menu when only ineligible **词典** remains), and hides once all eligible services have results. Verify **重译** updates only that service, disabled services remain copyable, switching entries keeps retry feedback scoped, offline retry stays layout-stable without button/icon flicker, and closing mid-request still saves when recording is on.
+- Restart the packaged app to verify persistence, provider order, pagination counts, turning off recording without losing existing rows, retention-shortening confirmation, single/full deletion, and quitting from tray/menu bar while open. On macOS, confirm no Dock icon or Space jump; on Windows, confirm foreground focus returns to the editor.
+
 ## Minimal Translation Mode
 
 On each desktop platform, verify the following for **简约翻译模式**.

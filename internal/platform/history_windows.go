@@ -1,0 +1,37 @@
+//go:build windows
+
+package platform
+
+import (
+	"os"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+var (
+	historyUser32           = windows.NewLazySystemDLL("user32.dll")
+	historyWindowProcess    = historyUser32.NewProc("GetWindowThreadProcessId")
+	historyReturnForeground = historyUser32.NewProc("SetForegroundWindow")
+)
+
+// HistoryFocusReturn captures the source while it is still the foreground
+// window. The caller restores it only while the history window owns focus.
+func HistoryFocusReturn() func() {
+	hwnd := ScreenshotSource()
+	pid := historyWindowPID(hwnd)
+	if pid == 0 || pid == uint32(os.Getpid()) {
+		return nil
+	}
+	return func() {
+		if historyWindowPID(hwnd) == pid {
+			historyReturnForeground.Call(hwnd)
+		}
+	}
+}
+
+func historyWindowPID(hwnd uintptr) uint32 {
+	var pid uint32
+	historyWindowProcess.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	return pid
+}

@@ -33,6 +33,8 @@ type Actions struct {
 	GetSettings            func() config.Settings
 	SaveSettings           func(config.Settings) error
 	SaveMinimalTranslation func(bool) error
+	SaveHistory            func(config.HistorySettings, int64) error
+	ClearHistory           func() error
 	ReadOpenAtLogin        func() bool
 	SaveOpenAtLogin        func(bool) error
 	Credentials            func(service string) (CredentialStatus, error)
@@ -102,6 +104,8 @@ type View struct {
 
 	openAtLogin       *bool // Last observed system state, independent of the saved preference.
 	savingOpenAtLogin bool
+	historyBusy       bool
+	historyPrompt     *historyConfirmation
 
 	credentialsLoaded bool
 	credentials       CredentialStatus
@@ -360,6 +364,7 @@ func (v *View) runTaskLoop() {
 func (v *View) DetachWindow() {
 	v.mu.Lock()
 	v.windowGeneration++
+	v.historyPrompt = nil
 	clear(v.serviceDrafts)
 	v.resetUsageLocked()
 	for name, cancel := range v.probeCancels {

@@ -37,6 +37,11 @@ type DictionaryEntry struct {
 	USPhonetic string `json:"usPhonetic,omitempty"`
 }
 
+// CopyText is the same complete plain text used by the dictionary card.
+func (e *DictionaryEntry) CopyText(text string) string {
+	return e.Word + "\n" + text
+}
+
 func (e DictionaryEntry) text() string {
 	// Plain text retains a single pronunciation and prefers US when available.
 	ipa := cmp.Or(e.USPhonetic, e.UKPhonetic, e.Phonetic)
@@ -44,6 +49,12 @@ func (e DictionaryEntry) text() string {
 		return e.Meanings
 	}
 	return "/" + ipa + "/\n" + e.Meanings
+}
+
+// AllowsEnglishLookup reports whether text and sourceLang qualify for a
+// single-word English dictionary lookup.
+func AllowsEnglishLookup(text, sourceLang string) bool {
+	return Request{Text: text, SourceLang: sourceLang}.allowsEnglishLookup()
 }
 
 func (r Request) allowsEnglishLookup() bool {

@@ -28,6 +28,7 @@ func Run() error {
 	}
 	platform.InitUpdates(resources.AppIcon)
 	a := newApplication()
+	defer a.closeHistory()
 	mygo.App.WhenReady(a.ready)
 	return mygo.App.Run()
 }

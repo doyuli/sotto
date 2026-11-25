@@ -14,7 +14,11 @@ import (
 type hotkeyItem struct{ id, label string }
 
 var settingsHotkeys = []hotkeyItem{
-	{"panel", "翻译面板"}, {"ocr", "截图翻译"}, {"selection", "划词翻译"}, {"minimalTranslation", "简约翻译模式"},
+	{"panel", "翻译面板"},
+	{"ocr", "截图翻译"},
+	{"selection", "划词翻译"},
+	{"minimalTranslation", "简约翻译模式"},
+	{"history", "翻译历史"},
 }
 
 func displayHotkey(value string) string { return hotkeyDisplayForPlatform(value, runtime.GOOS) }
@@ -216,6 +220,8 @@ func hotkeyValue(h config.HotkeySettings, id string) string {
 		return h.Ocr
 	case "minimalTranslation":
 		return h.MinimalTranslation
+	case "history":
+		return h.History
 	}
 	return ""
 }
@@ -229,6 +235,8 @@ func setHotkeyValue(h *config.HotkeySettings, id, value string) {
 		h.Ocr = value
 	case "minimalTranslation":
 		h.MinimalTranslation = value
+	case "history":
+		h.History = value
 	}
 }
 func formatHotkeyKey(key ui.Key) string {

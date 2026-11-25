@@ -249,6 +249,7 @@ func (v *View) Render(c *ui.Context) {
 				})
 			})
 		})
+		v.renderHistoryConfirmation(c)
 	})
 }
 
@@ -399,6 +400,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			}
 		})
 	})
+	v.renderHistorySettings(c, p, cfg.History)
 	if version := mygo.App.Version(); version != "" {
 		ui.Text(c, "Sotto v"+version).FillWidth().TextAlign(ui.Center).FontSize(12).TextColor(p.muted)
 	}

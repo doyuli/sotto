@@ -20,10 +20,7 @@ var (
 	brandLetterSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M15 8.2C14.3 7 12.4 6.8 11.25 7.5C9.84 8.34 9.6 9.73 10.9 10.6C12.07 11.39 13.6 11.39 14.3 12.2C15.23 13.24 14.65 15.23 13 15.8C11.72 16.3 10.31 15.8 9.49 14.88" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	pinOutlineSVG  = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	pinFilledSVG   = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	closeSVG       = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	swapSVG        = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m16 3 4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	copySVG        = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
-	speakSVG       = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`))
 	chevronLeftSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 )
 
@@ -785,7 +782,7 @@ func (v *bubbleView) renderSpeakButton(c *ui.Context, p bubblePalette, label, ti
 		} else if btn.Hovered() {
 			color = p.iconStrong
 		}
-		ui.Icon(c, speakSVG).Size(size, size).TextColor(color)
+		ui.Icon(c, shared.SpeakIcon).Size(size, size).TextColor(color)
 	})
 }
 
@@ -805,7 +802,7 @@ func (v *bubbleView) renderResultCopyButton(c *ui.Context, p bubblePalette, labe
 		} else if btn.Hovered() {
 			color = p.iconStrong
 		}
-		ui.Icon(c, copySVG).Size(14, 14).TextColor(color)
+		ui.Icon(c, shared.CopyIcon).Size(14, 14).TextColor(color)
 	})
 }
 
@@ -997,7 +994,7 @@ func (v *bubbleView) renderHeader(c *ui.Context, p bubblePalette) {
 				if closeBtn.Hovered() {
 					color = p.iconStrong
 				}
-				ui.Icon(c, closeSVG).Size(15, 15).TextColor(color)
+				ui.Icon(c, shared.CloseIcon).Size(15, 15).TextColor(color)
 			})
 		})
 	})
@@ -1142,7 +1139,7 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 						if copyBtn.Hovered() {
 							color = p.iconStrong
 						}
-						ui.Icon(c, copySVG).Size(15, 15).TextColor(color)
+						ui.Icon(c, shared.CopyIcon).Size(15, 15).TextColor(color)
 					})
 				}
 				if detected != "" {
@@ -1174,7 +1171,7 @@ func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
 						if clearBtn.Hovered() && !p.dark {
 							fg = p.panel
 						}
-						ui.Icon(c, closeSVG).Size(11, 11).TextColor(fg)
+						ui.Icon(c, shared.CloseIcon).Size(11, 11).TextColor(fg)
 					})
 				}
 			})
@@ -1391,7 +1388,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 				ui.Row(c).Padding(4, 0, 0, 0).AlignItems(ui.Center).Wrap().Gap(2).Children(func() {
 					if entry := card.Dictionary; entry != nil {
 						v.renderSpeakButton(c.Key("speak"), p, "朗读单词", "朗读单词", entry.Word, "en", ready, 14)
-						v.renderResultCopyButton(c.Key("copy"), p, "复制词条", "复制词条", entry.Word+"\n"+card.Text, ready)
+						v.renderResultCopyButton(c.Key("copy"), p, "复制词条", "复制词条", entry.CopyText(card.Text), ready)
 						return
 					}
 

@@ -25,6 +25,8 @@ The window probe uses `TestMacPanelFocus` above: compile a temporary binary firs
 
 All items below require acceptance on actual hardware. Check each after a clean start and during warm operation. Do not report unit-test results as desktop passes.
 
+Run the [Translation History checklist](README.md#translation-history) with a built app, a Chinese input method, and an external editor, including a full-screen Space.
+
 | Preconditions | Action | Expected Result |
 | --- | --- | --- |
 | Settings is recording a hotkey | Press another Sotto action's combination, then an available one; try arrow-key, punctuation, and Tab combinations | In-app conflicts appear on the current row without triggering translation; recording can continue, and a successful combination takes effect |

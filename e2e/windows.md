@@ -30,6 +30,10 @@ Hotkey combinations are parsed from the app startup log's "hotkeys in force" lin
 - Hotkeys are synthesized with `SendInput`. The test process first grants the app foreground permission with `AllowSetForegroundWindow`, modeling the foreground rights of real keyboard hotkeys.
 - This smoke test covers screenshot-window opening, cancellation, and reopening after drag cancellation. Native Tester separately covers drag geometry and cancel input. The complete Windows drag-to-capture-to-OCR path is covered by the manual acceptance checklist below. `sotto --ocr <png>` can independently check image recognition.
 
+## Translation History
+
+Run the [Translation History checklist](README.md#translation-history) with a built app, a Chinese input method, and an external editor. Check that focus returns to the editor before pasting.
+
 ## Manual Selection and Clipboard Acceptance
 
 Requires a Windows desktop session. Host unit tests and Windows cross-compilation cannot replace native clipboard acceptance.

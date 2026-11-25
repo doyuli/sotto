@@ -36,8 +36,8 @@ func TestDefault(t *testing.T) {
 }
 
 func TestPlatformHotkeyDefaults(t *testing.T) {
-	mac := HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F"}
-	windows := HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"}
+	mac := HotkeySettings{Panel: "Option+A", Ocr: "Option+S", Selection: "Option+D", MinimalTranslation: "Option+F", History: "Option+H"}
+	windows := HotkeySettings{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F", History: "Ctrl+Alt+H"}
 	for _, tc := range []struct {
 		platform string
 		want     HotkeySettings
@@ -64,7 +64,9 @@ func TestLoadPreservesHotkeysWithoutRewritingFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := Load(path)
-			if err != nil || got.Hotkeys != tc.want {
+			want := tc.want
+			want.History = defaultHotkeys(runtime.GOOS).History
+			if err != nil || got.Hotkeys != want {
 				t.Fatalf("loaded %+v: %v", got.Hotkeys, err)
 			}
 			data, err := os.ReadFile(path)
@@ -211,9 +213,9 @@ func TestNormalizeFillsAndDrops(t *testing.T) {
 
 func TestNormalizePreservesExplicitHotkeys(t *testing.T) {
 	for _, h := range []HotkeySettings{
-		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F"},
-		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"},
-		{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D", MinimalTranslation: "Ctrl+Shift+F"},
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F", History: "Alt+J"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F", History: "Ctrl+Alt+J"},
+		{Panel: "Ctrl+Shift+A", Ocr: "Ctrl+Shift+S", Selection: "Ctrl+Shift+D", MinimalTranslation: "Ctrl+Shift+F", History: "Ctrl+Shift+J"},
 	} {
 		s := Default()
 		s.Hotkeys = h
@@ -228,8 +230,8 @@ func TestNormalizePreservesExplicitHotkeys(t *testing.T) {
 
 func TestSavePreservesExplicitHotkeysAcrossReloads(t *testing.T) {
 	for _, h := range []HotkeySettings{
-		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F"},
-		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F"},
+		{Panel: "Alt+A", Ocr: "Alt+S", Selection: "Alt+D", MinimalTranslation: "Alt+F", History: "Alt+J"},
+		{Panel: "Ctrl+Alt+A", Ocr: "Ctrl+Alt+S", Selection: "Ctrl+Alt+D", MinimalTranslation: "Ctrl+Alt+F", History: "Ctrl+Alt+J"},
 	} {
 		path := filepath.Join(t.TempDir(), "settings.json")
 		cfg := Default()
@@ -352,5 +354,37 @@ func TestOpenAIOptionsNormalizeWhitespace(t *testing.T) {
 	got = Normalize(cfg)
 	if got.Services.OpenAI != Default().Services.OpenAI {
 		t.Errorf("blank OpenAI options = %+v, want defaults", got.Services.OpenAI)
+	}
+}
+
+func TestHistorySettingsMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"hotkeys":{"panel":"Alt+Q"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil || !cfg.History.Enabled || cfg.History.RetentionDays != 30 ||
+		cfg.Hotkeys.History != defaultHotkeys(runtime.GOOS).History || cfg.Hotkeys.Panel != "Alt+Q" {
+		t.Fatalf("legacy settings: %+v, %v", cfg, err)
+	}
+	cfg.History = HistorySettings{Enabled: false, RetentionDays: 0}
+	cfg.Hotkeys.History = "Alt+J"
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || loaded.History != cfg.History || loaded.Hotkeys != cfg.Hotkeys {
+		t.Fatalf("saved settings: %+v, %v", loaded, err)
+	}
+}
+
+func TestHistoryShortcutLoadsDefaultFromUnboundSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"hotkeys":{"panel":"Alt+Q","history":""}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil || cfg.Hotkeys.History != defaultHotkeys(runtime.GOOS).History || cfg.Hotkeys.Panel != "Alt+Q" {
+		t.Fatalf("previously unbound settings: %+v, %v", cfg.Hotkeys, err)
 	}
 }
