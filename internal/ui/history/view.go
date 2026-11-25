@@ -15,7 +15,7 @@ import (
 )
 
 const searchLabel = "搜索原文或译文"
-const DefaultWidth, DefaultHeight = 720, 460
+const DefaultWidth, DefaultHeight = 800, 520
 const (
 	railDividerWidth  float32 = 1
 	detailPaddingX    float32 = 20
