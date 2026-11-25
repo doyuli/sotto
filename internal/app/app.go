@@ -387,11 +387,7 @@ func (a *application) onTrayClick() {
 const trayAutoDismissWindow = 800 * time.Millisecond
 
 func (a *application) recordTrayAutoDismiss(kind string) {
-	a.recordTrayAutoDismissAt(kind, time.Now(), mygo.Screen.CursorScreenPoint())
-}
-
-func (a *application) recordTrayAutoDismissAt(kind string, at time.Time, point mygo.Point) {
-	a.lastTrayDismiss = trayAutoDismiss{kind: kind, at: at, point: point}
+	a.lastTrayDismiss = trayAutoDismiss{kind: kind, at: time.Now(), point: mygo.Screen.CursorScreenPoint()}
 }
 
 func (a *application) clearTrayAutoDismiss() {
@@ -402,35 +398,18 @@ func (a *application) clearTrayAutoDismiss() {
 // just dismissed on mouse-down over the tray icon, preventing mouse-up from
 // flashing it back open instead of toggling it closed.
 func (a *application) consumeTrayAutoDismiss(kind string) bool {
-	if a.tray == nil {
-		a.clearTrayAutoDismiss()
-		return false
-	}
 	return a.consumeTrayAutoDismissAt(kind, time.Now(), a.tray.Bounds)
 }
 
 func (a *application) consumeTrayAutoDismissAt(kind string, now time.Time, trayBounds func() mygo.Rectangle) bool {
 	d := a.lastTrayDismiss
-	a.lastTrayDismiss = trayAutoDismiss{}
-	if d.kind != kind || d.at.IsZero() {
+	a.clearTrayAutoDismiss()
+	if d.kind != kind || now.Sub(d.at) > trayAutoDismissWindow {
 		return false
 	}
-	elapsed := now.Sub(d.at)
-	if elapsed < 0 || elapsed > trayAutoDismissWindow {
-		return false
-	}
-	if trayBounds == nil {
-		return false
-	}
-	return pointInRectWithSlack(d.point, trayBounds(), 2)
-}
-
-func pointInRectWithSlack(pt mygo.Point, r mygo.Rectangle, slack int) bool {
-	if r.Width <= 0 || r.Height <= 0 {
-		return false
-	}
-	return pt.X >= r.X-slack && pt.X <= r.X+r.Width+slack &&
-		pt.Y >= r.Y-slack && pt.Y <= r.Y+r.Height+slack
+	bounds := trayBounds()
+	return d.point.X >= bounds.X && d.point.X < bounds.X+bounds.Width &&
+		d.point.Y >= bounds.Y && d.point.Y < bounds.Y+bounds.Height
 }
 
 func (a *application) popUpTrayMenu() {

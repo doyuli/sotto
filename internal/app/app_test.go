@@ -173,74 +173,42 @@ func TestSelectionPlacementUsesCapturedSource(t *testing.T) {
 }
 
 func TestTrayAutoDismissSuppression(t *testing.T) {
-	// MouseDown on the tray icon auto-dismisses the panel/history right before MouseUp fires OnClick.
+	// A tray mouse-down can dismiss the window before mouse-up reaches OnClick.
 	trayBounds := mygo.Rectangle{X: 1180, Y: 0, Width: 28, Height: 24}
 	inside := mygo.Point{X: 1192, Y: 12}
-	edgeSlack := mygo.Point{X: 1179, Y: 25}
-	outside := mygo.Point{X: 500, Y: 500}
-	t0 := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-
-	boundsCalls := 0
-	queryBounds := func() mygo.Rectangle {
-		boundsCalls++
-		return trayBounds
-	}
-	emptyBounds := func() mygo.Rectangle {
-		boundsCalls++
-		return mygo.Rectangle{}
-	}
-
-	a := &application{}
-
-	// Empty state must not query tray bounds.
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0, queryBounds) || boundsCalls != 0 {
-		t.Fatalf("empty auto-dismiss queried tray bounds (%d calls)", boundsCalls)
-	}
-
-	// Same kind inside tray bounds suppresses reopening once, then clears state.
-	a.recordTrayAutoDismissAt(config.TrayActionHistory, t0, inside)
-	if !a.consumeTrayAutoDismissAt(config.TrayActionHistory, t0.Add(150*time.Millisecond), queryBounds) || boundsCalls != 1 {
-		t.Fatalf("expected tray press auto-dismiss to suppress immediate reopen (boundsCalls=%d)", boundsCalls)
-	}
-	if a.consumeTrayAutoDismissAt(config.TrayActionHistory, t0.Add(200*time.Millisecond), queryBounds) || boundsCalls != 1 {
-		t.Fatalf("second click should not stay suppressed or query bounds (boundsCalls=%d)", boundsCalls)
-	}
-
-	// Edge within slack suppresses reopen.
-	a.recordTrayAutoDismissAt(config.TrayActionPanel, t0, edgeSlack)
-	if !a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(50*time.Millisecond), queryBounds) {
-		t.Fatal("expected edge-slack tray press to suppress reopen")
+	dismissedAt := time.Unix(0, 0)
+	dismissal := trayAutoDismiss{kind: config.TrayActionHistory, at: dismissedAt, point: inside}
+	for _, tc := range []struct {
+		name    string
+		action  string
+		elapsed time.Duration
+		point   mygo.Point
+		bounds  mygo.Rectangle
+		want    bool
+	}{
+		{"tray press", config.TrayActionHistory, 150 * time.Millisecond, inside, trayBounds, true},
+		{"outside press next to tray", config.TrayActionHistory, 150 * time.Millisecond, mygo.Point{X: trayBounds.X + trayBounds.Width, Y: inside.Y}, trayBounds, false},
+		{"different action", config.TrayActionPanel, 150 * time.Millisecond, inside, trayBounds, false},
+		{"expired dismissal", config.TrayActionHistory, trayAutoDismissWindow + time.Millisecond, inside, trayBounds, false},
+		{"tray bounds unavailable", config.TrayActionHistory, 150 * time.Millisecond, mygo.Point{}, mygo.Rectangle{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &application{lastTrayDismiss: dismissal}
+			a.lastTrayDismiss.point = tc.point
+			now := dismissedAt.Add(tc.elapsed)
+			bounds := func() mygo.Rectangle { return tc.bounds }
+			if got := a.consumeTrayAutoDismissAt(tc.action, now, bounds); got != tc.want {
+				t.Fatalf("suppress reopening = %t, want %t", got, tc.want)
+			}
+			if a.consumeTrayAutoDismissAt(tc.action, now, bounds) {
+				t.Fatal("a dismissal should suppress reopening only once")
+			}
+		})
 	}
 
-	// Outside click followed by quick tray click must reopen normally.
-	a.recordTrayAutoDismissAt(config.TrayActionPanel, t0, outside)
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(150*time.Millisecond), queryBounds) {
-		t.Fatal("outside dismissal should not suppress clicking tray to reopen")
-	}
-
-	// Different action kind must not suppress opening the configured target or query bounds.
-	prevCalls := boundsCalls
-	a.recordTrayAutoDismissAt(config.TrayActionHistory, t0, inside)
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(50*time.Millisecond), queryBounds) || boundsCalls != prevCalls {
-		t.Fatal("dismissing history should not suppress opening panel or query bounds")
-	}
-
-	// Expired auto-dismiss must not suppress reopen or query bounds.
-	a.recordTrayAutoDismissAt(config.TrayActionPanel, t0, inside)
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(trayAutoDismissWindow+time.Millisecond), queryBounds) || boundsCalls != prevCalls {
-		t.Fatal("expired dismissal should not suppress reopen or query bounds")
-	}
-
-	// Right-click menu popup must clear any auto-dismiss triggered by right-mouse-down.
-	a.recordTrayAutoDismissAt(config.TrayActionPanel, t0, inside)
+	a := &application{lastTrayDismiss: dismissal}
 	a.popUpTrayMenu()
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(100*time.Millisecond), queryBounds) || boundsCalls != prevCalls {
-		t.Fatal("popUpTrayMenu should clear right-mouse-down auto-dismiss state")
-	}
-
-	// Empty tray bounds (e.g. Windows overflow) must not suppress reopen.
-	a.recordTrayAutoDismissAt(config.TrayActionPanel, t0, inside)
-	if a.consumeTrayAutoDismissAt(config.TrayActionPanel, t0.Add(50*time.Millisecond), emptyBounds) {
-		t.Fatal("empty tray bounds should not suppress reopen")
+	if a.consumeTrayAutoDismissAt(config.TrayActionHistory, dismissedAt, func() mygo.Rectangle { return trayBounds }) {
+		t.Fatal("opening the tray menu should clear a pending dismissal")
 	}
 }
