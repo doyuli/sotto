@@ -71,78 +71,23 @@ type palette struct {
 	theme      *ui.Theme
 }
 
-var lightHistoryPalette = func() palette {
-	p := palette{
-		dark:       false,
-		panel:      ui.Hex("#ffffff"),
-		rail:       ui.Hex("#f7f8fa"),
-		field:      ui.Hex("#f3f4f6"),
-		control:    ui.Hex("#f1f2f4"),
-		pill:       ui.Hex("#e7e9ed"),
-		hover:      ui.Hex("#eceef2"),
-		selected:   ui.Hex("#e8ebf1"),
-		line:       ui.Hex("#eceef2"),
-		resultLine: ui.Hex("#f2f3f6"),
-		border:     ui.Hex("#e2e5ea"),
-		ink:        ui.Hex("#202020"),
-		muted:      ui.Hex("#5f5f5f"),
-		icon:       ui.Hex("#4b4b4b"),
-		iconStrong: ui.Hex("#202020"),
-		clearBg:    ui.Hex("#c9c9c9"),
-		clearFg:    ui.Hex("#4b4b4b"),
-		accent:     ui.Hex("#2f7fe8"),
-		accentText: ui.Hex("#1a5fae"),
-		mark:       ui.RGBA(47, 127, 232, 0.16),
-		selection:  ui.RGBA(31, 111, 208, 0.18),
-		success:    ui.Hex("#15803d"),
-		error:      ui.Hex("#c62828"),
+// grayscaleSurface nudges opaque window/region backgrounds 1/255 below full
+// alpha so MyGo disables ClearType subpixel antialiasing in favor of grayscale
+// glyphs, avoiding RGB color fringes on thin 100%-DPI Windows CJK text.
+func grayscaleSurface(c ui.Color) ui.Color {
+	if c.A == 255 {
+		c.A = 254
 	}
-	t := ui.LightTheme()
-	t.DisableAutoDimming = true
-	t.Background = p.panel
-	t.Surface = p.control
-	t.SurfaceHover = p.hover
-	t.SurfacePressed = p.pill
-	t.Border = p.border
-	t.Text = p.ink
-	t.TextMuted = p.muted
-	t.Accent = p.accent
-	t.AccentText = ui.Hex("#ffffff")
-	t.Selection = p.selection
-	t.Scrollbar = ui.Hex("#c9c9c9")
-	t.ScrollbarWidth = 6
-	t.Danger = p.error
-	p.theme = t
-	return p
-}()
+	return c
+}
 
-var darkHistoryPalette = func() palette {
-	p := palette{
-		dark:       true,
-		panel:      ui.Hex("#222325"),
-		rail:       ui.Hex("#1b1c1e"),
-		field:      ui.Hex("#28292c"),
-		control:    ui.Hex("#2c2d2f"),
-		pill:       ui.Hex("#3a3b3d"),
-		hover:      ui.Hex("#26282b"),
-		selected:   ui.Hex("#2f3136"),
-		line:       ui.Hex("#2e3035"),
-		resultLine: ui.Hex("#2e3035"),
-		border:     ui.Hex("#36383e"),
-		ink:        ui.Hex("#f3f4f5"),
-		muted:      ui.Hex("#a0a3a7"),
-		icon:       ui.Hex("#b9bcc0"),
-		iconStrong: ui.Hex("#f3f4f5"),
-		clearBg:    ui.Hex("#55575b"),
-		clearFg:    ui.Hex("#f3f4f5"),
-		accent:     ui.Hex("#7db4ff"),
-		accentText: ui.Hex("#7db4ff"),
-		mark:       ui.RGBA(125, 180, 255, 0.25),
-		selection:  ui.RGBA(125, 180, 255, 0.28),
-		success:    ui.Hex("#4ade80"),
-		error:      ui.Hex("#ff8a8a"),
-	}
-	t := ui.DarkTheme()
+func buildHistoryPalette(p palette, t *ui.Theme, accentText, scrollbar ui.Color) palette {
+	p.panel = grayscaleSurface(p.panel)
+	p.rail = grayscaleSurface(p.rail)
+	p.field = grayscaleSurface(p.field)
+	p.control = grayscaleSurface(p.control)
+	p.hover = grayscaleSurface(p.hover)
+	p.selected = grayscaleSurface(p.selected)
 	t.DisableAutoDimming = true
 	t.Background = p.panel
 	t.Surface = p.control
@@ -152,14 +97,66 @@ var darkHistoryPalette = func() palette {
 	t.Text = p.ink
 	t.TextMuted = p.muted
 	t.Accent = p.accent
-	t.AccentText = ui.Hex("#0d1b2b")
+	t.AccentText = accentText
 	t.Selection = p.selection
-	t.Scrollbar = ui.Hex("#4a4c50")
+	t.Scrollbar = scrollbar
 	t.ScrollbarWidth = 6
 	t.Danger = p.error
 	p.theme = t
 	return p
-}()
+}
+
+var lightHistoryPalette = buildHistoryPalette(palette{
+	dark:       false,
+	panel:      ui.Hex("#ffffff"),
+	rail:       ui.Hex("#f7f8fa"),
+	field:      ui.Hex("#f3f4f6"),
+	control:    ui.Hex("#f1f2f4"),
+	pill:       ui.Hex("#e7e9ed"),
+	hover:      ui.Hex("#eceef2"),
+	selected:   ui.Hex("#e8ebf1"),
+	line:       ui.Hex("#eceef2"),
+	resultLine: ui.Hex("#f2f3f6"),
+	border:     ui.Hex("#e2e5ea"),
+	ink:        ui.Hex("#202020"),
+	muted:      ui.Hex("#5f5f5f"),
+	icon:       ui.Hex("#4b4b4b"),
+	iconStrong: ui.Hex("#202020"),
+	clearBg:    ui.Hex("#c9c9c9"),
+	clearFg:    ui.Hex("#4b4b4b"),
+	accent:     ui.Hex("#2f7fe8"),
+	accentText: ui.Hex("#1a5fae"),
+	mark:       ui.RGBA(47, 127, 232, 0.16),
+	selection:  ui.RGBA(31, 111, 208, 0.18),
+	success:    ui.Hex("#15803d"),
+	error:      ui.Hex("#c62828"),
+}, ui.LightTheme(), ui.Hex("#ffffff"), ui.Hex("#c9c9c9"))
+
+var darkHistoryPalette = buildHistoryPalette(palette{
+	dark:       true,
+	panel:      ui.Hex("#222325"),
+	rail:       ui.Hex("#1b1c1e"),
+	field:      ui.Hex("#28292c"),
+	control:    ui.Hex("#2c2d2f"),
+	pill:       ui.Hex("#3a3b3d"),
+	hover:      ui.Hex("#26282b"),
+	selected:   ui.Hex("#2f3136"),
+	line:       ui.Hex("#2e3035"),
+	resultLine: ui.Hex("#2e3035"),
+	border:     ui.Hex("#36383e"),
+	ink:        ui.Hex("#f3f4f5"),
+	muted:      ui.Hex("#a0a3a7"),
+	icon:       ui.Hex("#b9bcc0"),
+	iconStrong: ui.Hex("#f3f4f5"),
+	clearBg:    ui.Hex("#55575b"),
+	clearFg:    ui.Hex("#f3f4f5"),
+	accent:     ui.Hex("#7db4ff"),
+	accentText: ui.Hex("#7db4ff"),
+	mark:       ui.RGBA(125, 180, 255, 0.25),
+	selection:  ui.RGBA(125, 180, 255, 0.28),
+	success:    ui.Hex("#4ade80"),
+	error:      ui.Hex("#ff8a8a"),
+}, ui.DarkTheme(), ui.Hex("#0d1b2b"), ui.Hex("#4a4c50"))
 
 func colors(c *ui.Context) palette {
 	if c.Theme().Dark {
