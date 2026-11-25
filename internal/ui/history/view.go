@@ -776,7 +776,7 @@ func providerName(id string) string { return shared.ServiceName(id) }
 func (v *View) renderProviders(c *ui.Context, p palette, entry history.Entry, providers []string, pending bool) {
 	if len(providers) == 0 {
 		v.providerOpen = false
-		quietButton(c, p, "启用翻译源", "启用翻译源", v.actions.OpenServices == nil, false, v.actions.OpenServices)
+		quietButton(c, p, "启用翻译源", "启用翻译源", v.actions.OpenServices == nil, v.actions.OpenServices)
 		return
 	}
 	available := make([]string, 0, len(providers))
@@ -850,7 +850,7 @@ func (v *View) renderRetryStatus(c *ui.Context, p palette, entry history.Entry, 
 				ui.Text(c, err.Error()).FillWidth().FontSize(12).TextColor(p.muted)
 			})
 			if enabled {
-				quietButton(c, p, "重试", "重试 "+name+" 翻译", retry.pending, false, func() { v.retry(entry, retry.provider) })
+				quietButton(c, p, "重试", "重试 "+name+" 翻译", retry.pending, func() { v.retry(entry, retry.provider) })
 			}
 		})
 	case retry.pending:
@@ -870,7 +870,7 @@ func (v *View) renderFooter(c *ui.Context, p palette) {
 		case message != "":
 		case v.loadError && len(v.entries) != 0:
 			message = "无法继续读取历史"
-			quietButton(c, p, "重试", "重试加载历史", false, false, func() { v.reset(false) })
+			quietButton(c, p, "重试", "重试加载历史", false, func() { v.reset(false) })
 		case v.loading && len(v.entries) != 0:
 			message = "正在加载更多…"
 		case v.more && len(v.entries) != 0:
@@ -892,14 +892,14 @@ func (v *View) renderFooter(c *ui.Context, p palette) {
 		})
 		hasEntry := v.entry.ID != 0
 		if hasEntry {
-			quietButton(c, p, "删除此条", "删除此条历史", v.deleting, false, func() { v.delete(v.entry.ID) })
+			quietButton(c, p, "删除此条", "删除此条历史", v.deleting, func() { v.delete(v.entry.ID) })
 		}
 		showClear := v.loadError || !v.ready || len(v.entries) != 0 || v.query != ""
 		if showClear {
 			if hasEntry {
 				ui.Box(c).Size(1, 12).Background(p.line)
 			}
-			quietButton(c, p, "清空历史", "清空历史", v.deleting || v.loadError || !v.ready || len(v.entries) == 0, true, func() {
+			quietButton(c, p, "清空历史", "清空历史", v.deleting || v.loadError || !v.ready || len(v.entries) == 0, func() {
 				v.clearOpen = true
 			})
 		}
@@ -917,7 +917,7 @@ func linkButton(c *ui.Context, p palette, label string, expanded bool, fn func()
 	})
 }
 
-func quietButton(c *ui.Context, p palette, text, label string, disabled, danger bool, fn func()) {
+func quietButton(c *ui.Context, p palette, text, label string, disabled bool, fn func()) {
 	button := ui.ButtonBase(c.Key(label)).Label(label).Disabled(disabled).Radius(5).Padding(4, 7).
 		Cursor(ui.CursorPointer).OnClick(fn)
 	color := p.muted
@@ -927,11 +927,7 @@ func quietButton(c *ui.Context, p palette, text, label string, disabled, danger 
 		button.Cursor(ui.CursorDefault)
 	case button.Hovered():
 		button.Background(p.hover)
-		if danger {
-			color = p.error
-		} else {
-			color = p.ink
-		}
+		color = p.ink
 	}
 	button.Children(func() { ui.Text(c, text).FontSize(12).TextColor(color).SingleLine() })
 }
