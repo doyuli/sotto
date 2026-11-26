@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 func TestCopyDoesNotInvalidateItsOwnInjectedEvents(t *testing.T) {
@@ -74,4 +75,55 @@ func TestCopyReleaseStopsOnTimeoutOrCancellation(t *testing.T) {
 			t.Fatalf("canceled wait returned %v", err)
 		}
 	})
+}
+
+func TestCopyWaitsForLastFormatBatch(t *testing.T) {
+	// A second sequence change used to reject an otherwise readable ownerless copy.
+	synctest.Test(t, func(t *testing.T) {
+		started := time.Now()
+		seq, err := waitForStableCopy(t.Context(), 100, func() (uint32, error) {
+			switch elapsed := time.Since(started); {
+			case elapsed < 10*time.Millisecond:
+				return 100, nil
+			case elapsed < 40*time.Millisecond:
+				return 101, nil
+			default:
+				return 102, nil
+			}
+		})
+		if err != nil || seq != 102 || time.Since(started) != 80*time.Millisecond {
+			t.Fatalf("sequence=%d elapsed=%v err=%v", seq, time.Since(started), err)
+		}
+	})
+}
+
+func TestCopySettlingStopsOnTimeoutOrSourceChange(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		sample  func(uint32) (uint32, error)
+		wantErr error
+	}{
+		{"old clipboard", func(uint32) (uint32, error) { return 10, nil }, context.DeadlineExceeded},
+		{"continuous changes", func(i uint32) (uint32, error) { return 10 + i, nil }, context.DeadlineExceeded},
+		{"interrupted", func(i uint32) (uint32, error) {
+			if i == 3 {
+				return 0, ErrSourceChanged
+			}
+			return 11, nil
+		}, ErrSourceChanged},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls uint32
+				started := time.Now()
+				seq, err := waitForStableCopy(t.Context(), 10, func() (uint32, error) {
+					calls++
+					return test.sample(calls)
+				})
+				if seq != 0 || !errors.Is(err, test.wantErr) || time.Since(started) > time.Second {
+					t.Fatalf("sequence=%d elapsed=%v err=%v", seq, time.Since(started), err)
+				}
+			})
+		})
+	}
 }

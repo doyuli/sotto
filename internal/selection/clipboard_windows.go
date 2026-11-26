@@ -11,12 +11,6 @@ import (
 	"time"
 )
 
-const (
-	clipboardPoll    = 10 * time.Millisecond
-	clipboardSettle  = 40 * time.Millisecond
-	clipboardTimeout = time.Second
-)
-
 func grabClipboard(ctx context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
 	return grabClipboardFrom(ctx, hwnd, pid, class)
@@ -89,88 +83,61 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if !sendCopy(chord, watch.marker) {
 		return Selection{}, ErrNoSelection
 	}
-	sent := time.Now()
-	deadline := time.NewTimer(clipboardTimeout)
-	defer deadline.Stop()
-	tick := time.NewTicker(clipboardPoll)
-	defer tick.Stop()
 	stage = "wait_copy"
-	for {
+	seq, err := waitForStableCopy(ctx, before, func() (uint32, error) {
 		if err := watch.check("waiting for copy"); err != nil {
-			return Selection{}, err
+			return 0, err
 		}
 		if !sameForeground(hwnd, pid) {
-			return Selection{}, fmt.Errorf("foreground while waiting for copy: %w", ErrSourceChanged)
+			return 0, fmt.Errorf("foreground while waiting for copy: %w", ErrSourceChanged)
 		}
 		seq := clipboardSeq()
 		if seq != before {
-			log.Printf("selection: clipboard copy=changed wait=%s", time.Since(sent).Round(time.Millisecond))
-			if _, err := checkClipboardOwner(pid); err != nil {
-				return Selection{}, err
-			}
-			// Let all formats settle, including copies initially published without an owner.
-			select {
-			case <-ctx.Done():
-				return Selection{}, ctx.Err()
-			case <-time.After(clipboardSettle):
-			}
-			settled := clipboardSeq()
-			if err := watch.check("settling copy formats"); err != nil {
-				return Selection{}, err
-			}
-			if !sameForeground(hwnd, pid) {
-				return Selection{}, fmt.Errorf("foreground while settling: %w", ErrSourceChanged)
-			}
-			owned, err := checkClipboardOwner(pid)
-			if err != nil {
-				return Selection{}, err
-			}
-			if settled != seq && !owned {
-				return Selection{}, fmt.Errorf("ownerless clipboard changed while settling: %w", ErrSourceChanged)
-			}
-			seq = settled
-			text, _ := readClipboardText()
-			if err := watch.check("reading copy"); err != nil {
-				return Selection{}, err
-			}
-			if clipboardSeq() != seq || !sameForeground(hwnd, pid) {
-				return Selection{}, fmt.Errorf("clipboard or foreground while reading: %w", ErrSourceChanged)
-			}
-			stillOwned, err := checkClipboardOwner(pid)
-			if err != nil {
-				return Selection{}, err
-			}
-			if !owned || !stillOwned || prepared == nil {
-				stage = "read_without_restore"
-				return finishClipboardCopy(text, ctx.Err())
-			}
-			stage = "restore"
-			owner, cleanup, err := clipboardOwner()
-			if err != nil {
-				retainClipboardRecovery(saved, seq)
-				return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
-			}
-			defer cleanup()
-			outcome, restoredSeq, err := prepared.restore(owner, seq, func() bool {
-				owned, _ := checkClipboardOwner(pid)
-				return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
-			})
-			switch outcome {
-			case restoreFailed:
-				retainClipboardRecovery(saved, restoredSeq)
-				return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
-			case restoreSkipped:
-				return Selection{}, ErrSourceChanged
-			}
-			return finishClipboardCopy(text, ctx.Err())
+			_, err := checkClipboardOwner(pid)
+			return seq, err
 		}
-		select {
-		case <-ctx.Done():
-			return Selection{}, ctx.Err()
-		case <-deadline.C:
-			log.Printf("selection: clipboard copy=timeout wait=%s", time.Since(sent).Round(time.Millisecond))
-			return Selection{}, context.DeadlineExceeded
-		case <-tick.C:
-		}
+		return seq, nil
+	})
+	if err != nil {
+		return Selection{}, err
 	}
+	stage = "read_copy"
+	owned, err := checkClipboardOwner(pid)
+	if err != nil {
+		return Selection{}, err
+	}
+	text, _ := readClipboardText()
+	if err := watch.check("reading copy"); err != nil {
+		return Selection{}, err
+	}
+	if clipboardSeq() != seq || !sameForeground(hwnd, pid) {
+		return Selection{}, fmt.Errorf("clipboard or foreground while reading: %w", ErrSourceChanged)
+	}
+	stillOwned, err := checkClipboardOwner(pid)
+	if err != nil {
+		return Selection{}, err
+	}
+	if !owned || !stillOwned || prepared == nil {
+		stage = "read_without_restore"
+		return finishClipboardCopy(text, ctx.Err())
+	}
+	stage = "restore"
+	owner, cleanup, err := clipboardOwner()
+	if err != nil {
+		retainClipboardRecovery(saved, seq)
+		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
+	}
+	defer cleanup()
+	outcome, restoredSeq, err := prepared.restore(owner, seq, func() bool {
+		owned, _ := checkClipboardOwner(pid)
+		return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
+	})
+	switch outcome {
+	case restoreFailed:
+		retainClipboardRecovery(saved, restoredSeq)
+		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
+	case restoreSkipped:
+		return Selection{}, ErrSourceChanged
+	}
+	return finishClipboardCopy(text, ctx.Err())
 }

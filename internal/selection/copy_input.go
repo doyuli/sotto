@@ -3,6 +3,7 @@ package selection
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync/atomic"
 	"time"
 )
@@ -78,4 +79,37 @@ func waitCopyRelease(ctx context.Context, held func() bool) error {
 		}
 	}
 	return ctx.Err()
+}
+
+// Windows sources can publish a single copy in several batches, even with no
+// owner window. Wait for the last observed sequence to stay quiet before reading.
+func waitForStableCopy(ctx context.Context, before uint32, sample func() (uint32, error)) (uint32, error) {
+	const settle = 40 * time.Millisecond
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	started := time.Now()
+	last, changedAt := before, started
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		seq, err := sample()
+		if err != nil {
+			return 0, err
+		}
+		if seq != last {
+			last, changedAt = seq, time.Now()
+			log.Printf("selection: clipboard copy=changed seq=%d wait=%s", seq, changedAt.Sub(started).Round(time.Millisecond))
+		} else if seq != before && time.Since(changedAt) >= settle {
+			return seq, ctx.Err()
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-tick.C:
+		}
+	}
 }
