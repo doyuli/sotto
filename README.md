@@ -35,7 +35,7 @@ When reading documentation, researching foreign language resources, or coding, c
 - **Flexible Modes**: Enable **Minimal Translation Mode** in Settings to keep selection and snip results text-only, while the panel shortcut remains ready to summon the full Bubble view.
 - **Concurrent Multi-Engine Comparison**: Query multiple translation sources at once with progressive streaming results; fold, copy, or retry cards independently.
 - **Local Translation History**: Search saved originals and translations, copy results or identifier formats, and re-translate with other services.
-- **Selection Translation**: Translate selected text in your current app. Sotto preserves your clipboard when possible. If it needs to copy the selection, your next paste may contain that text.
+- **Selection Translation**: Translate selected text without switching apps, keeping your clipboard intact when possible. If copying is needed, your next paste may contain the selected text.
 - **Offline Screen OCR**: Snip any screen region for instant local recognition and translation; Windows embeds PP-OCR and WinRT OCR, macOS uses native Vision, and images are never uploaded to the cloud.
 - **Identifier Naming Styles**: One-click copy for English translations into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
 - **Credential Protection & Zero Telemetry**: Zero tracking, with API keys protected by the system credential manager or keychain.
