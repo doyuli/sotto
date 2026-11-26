@@ -27,39 +27,3 @@ func clipboardOwner() (uintptr, func(), error) {
 	}
 	return owner, func() { procDestroyWindow.Call(owner); runtime.UnlockOSThread() }, nil
 }
-
-// RecoverClipboard only retries by explicit user action and only while the
-// failed restore's clipboard sequence still matches. A newer copy always wins.
-func RecoverClipboard(id string) error {
-	<-clipboardMu
-	defer func() { clipboardMu <- struct{}{} }()
-	clipboardRecovery.Lock()
-	if id == "" || id != clipboardRecovery.id {
-		clipboardRecovery.Unlock()
-		return ErrClipboardRecoveryGone
-	}
-	snapshot, sequence := clipboardRecovery.snapshot, clipboardRecovery.sequence
-	clipboardRecovery.Unlock()
-	owner, cleanup, err := clipboardOwner()
-	if err != nil {
-		return fmt.Errorf("retry clipboard restore: %w", err)
-	}
-	defer cleanup()
-	prepared, err := prepareClipboardRestore(snapshot)
-	if err != nil {
-		return fmt.Errorf("prepare clipboard recovery: %w", err)
-	}
-	defer prepared.free()
-	outcome, seq, err := prepared.restore(owner, sequence, func() bool { return clipboardSeq() == sequence })
-	if outcome == restoreSkipped {
-		return ErrSourceChanged
-	}
-	clipboardRecovery.Lock()
-	defer clipboardRecovery.Unlock()
-	clipboardRecovery.sequence = seq
-	if err != nil {
-		return fmt.Errorf("retry clipboard restore: %w", err)
-	}
-	clipboardRecovery.id, clipboardRecovery.snapshot = "", nil
-	return nil
-}

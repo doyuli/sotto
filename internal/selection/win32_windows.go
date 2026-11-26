@@ -280,15 +280,15 @@ func (p *preparedClipboard) free() {
 
 // Caller pins the OS thread through Open/CloseClipboard and owns a real HWND.
 // A changed clipboard is deliberately untouched; all other failures are surfaced.
-func (p *preparedClipboard) restore(owner uintptr, sequence uint32, unchanged func() bool) (restoreOutcome, uint32, error) {
+func (p *preparedClipboard) restore(owner uintptr, unchanged func() bool) (restoreOutcome, error) {
 	if owner == 0 {
-		return restoreFailed, sequence, fmt.Errorf("clipboard owner missing: %w", ErrClipboardRestore)
+		return restoreFailed, fmt.Errorf("clipboard owner missing: %w", ErrClipboardRestore)
 	}
 	if !openClipboardFor(owner) {
-		return restoreFailed, sequence, fmt.Errorf("open clipboard: %w", ErrClipboardRestore)
+		return restoreFailed, fmt.Errorf("open clipboard: %w", ErrClipboardRestore)
 	}
 	defer closeClipboard()
-	outcome, err := restoreClipboardFormats(len(p.formats), 3, unchanged, func() error {
+	return restoreClipboardFormats(len(p.formats), 3, unchanged, func() error {
 		if ok, _, err := procEmptyClipboard.Call(); ok == 0 {
 			return fmt.Errorf("empty clipboard: %w", err)
 		}
@@ -300,7 +300,6 @@ func (p *preparedClipboard) restore(owner uintptr, sequence uint32, unchanged fu
 		p.handles[i] = 0
 		return nil
 	})
-	return outcome, clipboardSeq(), err
 }
 
 // clipboardHasText reports whether the clipboard holds text.

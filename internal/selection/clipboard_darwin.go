@@ -55,14 +55,14 @@ func pasteboardChange() (n int64) {
 	return
 }
 
-func savePasteboard(ctx context.Context) (*clipboardSnapshot, error) {
+func savePasteboard(ctx context.Context) ([]pasteboardItem, error) {
 	return snapshotMacPasteboard(ctx, pasteboard, pasteboardOnMain)
 }
 
 // Yield the main thread between representations and copy immutable NSData on
 // the caller's background goroutine. A promised dataForType call is still
 // synchronous; cancellation is checked before and after each AppKit turn.
-func snapshotMacPasteboard(ctx context.Context, getBoard func() objc.ID, onMain func(func())) (*clipboardSnapshot, error) {
+func snapshotMacPasteboard(ctx context.Context, getBoard func() objc.ID, onMain func(func())) ([]pasteboardItem, error) {
 	var board, array objc.ID
 	var items []objc.ID
 	var types [][]string
@@ -145,21 +145,20 @@ func snapshotMacPasteboard(ctx context.Context, getBoard func() objc.ID, onMain 
 	if err != nil {
 		return nil, err
 	}
-	return &clipboardSnapshot{mac: &macClipboardSnapshot{items: data}}, nil
+	return data, nil
 }
 
-// Materialize the native replacement before clearing anything. There is no
-// pasteboard lock/CAS on macOS: recheck after clear too, and retain failures.
-func restorePasteboard(saved *clipboardSnapshot, expected int64, guard func() bool) (restored bool, retryChange int64, err error) {
-	// RunOnMain drops work after shutdown; that must not create a retry target.
-	retryChange, err = -1, ErrSourceChanged
+// Materialize the native replacement before clearing and recheck the version
+// after the clear, since macOS has no pasteboard lock.
+func restorePasteboard(saved []pasteboardItem, expected int64, guard func() bool) error {
+	err := ErrSourceChanged // RunOnMain may drop work during shutdown.
 	pasteboardOnMain(func() {
 		board := pasteboard()
 		var objects objc.ID
-		restored, retryChange, err = restorePasteboardContents(expected, pasteboardRestoreOps{
+		err = restorePasteboardContents(expected, pasteboardRestoreOps{
 			prepare: func() error {
 				objects = macnative.Array()
-				for _, formats := range saved.mac.items {
+				for _, formats := range saved {
 					item := macnative.Class("NSPasteboardItem").Send(macnative.Sel("alloc")).Send(macnative.Sel("init"))
 					item.Send(macnative.Sel("autorelease"))
 					for _, f := range formats {
@@ -171,46 +170,23 @@ func restorePasteboard(saved *clipboardSnapshot, expected int64, guard func() bo
 				}
 				return nil
 			},
-			allowed: func() bool { return guard == nil || guard() },
+			allowed: guard,
 			change:  func() int64 { return objc.Send[int64](board, macnative.Sel("changeCount")) },
 			clear:   func() int64 { return objc.Send[int64](board, macnative.Sel("clearContents")) },
 			write: func() error {
-				if len(saved.mac.items) != 0 && !objc.Send[bool](board, macnative.Sel("writeObjects:"), objects) {
+				if len(saved) != 0 && !objc.Send[bool](board, macnative.Sel("writeObjects:"), objects) {
 					return fmt.Errorf("restore pasteboard items")
 				}
 				return nil
 			},
 		})
 	})
-	return
+	return err
 }
 
-func retainPasteboard(saved *clipboardSnapshot, expected int64) {
-	// -1 means that a concurrent input/source change made ownership unknown.
-	// Keep the backup, but require discarding it rather than overwriting newer data.
-	saved.mac.restoreChange = expected
-	retainClipboardRecovery(saved, 0)
-}
-
-func RecoverClipboard(id string) error {
-	<-clipboardMu
-	defer func() { clipboardMu <- struct{}{} }()
-	clipboardRecovery.Lock()
-	saved, activeID := clipboardRecovery.snapshot, clipboardRecovery.id
-	clipboardRecovery.Unlock()
-	if id == "" || id != activeID || saved == nil || saved.mac == nil {
-		return ErrClipboardRecoveryGone
-	}
-	ok, retryChange, err := restorePasteboard(saved, saved.mac.restoreChange, nil)
-	if !ok {
-		saved.mac.restoreChange = retryChange
-		return err
-	}
-	clipboardRecovery.Lock()
-	clipboardRecovery.id, clipboardRecovery.snapshot = "", nil
-	clipboardRecovery.Unlock()
-	return nil
-}
+// Keep at most the last backup with uncertain ownership until the next copy.
+// Access is serialized by clipboardMu. This backup is never written back later.
+var uncertainPasteboardBackup []pasteboardItem
 
 func copyControlsHeld() bool {
 	// A shortcut's main key can come up after its modifiers. Its release
@@ -317,12 +293,13 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 	}
 	defer cfRelease(down)
 	defer cfRelease(up)
-	backupHandled := false
+	uncertainPasteboardBackup = nil
+	restoreAttempted := false
 	defer func() {
 		// Cancellation or timeout can win the select after the source already
 		// copied. Preserve the original even on those early return paths.
-		if saved != nil && !backupHandled && pasteboardChange() != before {
-			retainPasteboard(saved, -1)
+		if saved != nil && !restoreAttempted && pasteboardChange() != before {
+			uncertainPasteboardBackup = saved
 		}
 	}()
 	for _, event := range []uintptr{down, up} {
@@ -364,15 +341,12 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 			if saved == nil {
 				return finishClipboardCopy(text, nil)
 			}
-			ok, expected, err := restorePasteboard(saved, n, func() bool { return watch.unchanged() && source.check(ctx) == nil && !secureInput() })
-			backupHandled = true
-			if !ok {
-				if !watch.unchanged() || source.check(ctx) != nil || secureInput() {
-					expected, err = -1, ErrSourceChanged
-				}
-				retainPasteboard(saved, expected)
-				if errors.Is(err, ErrSourceChanged) {
-					return Selection{}, err
+			restoreAttempted = true
+			err := restorePasteboard(saved, n, func() bool { return watch.unchanged() && source.check(ctx) == nil && !secureInput() })
+			if err != nil {
+				if errors.Is(err, ErrSourceChanged) || !watch.unchanged() || source.check(ctx) != nil || secureInput() {
+					uncertainPasteboardBackup = saved
+					return Selection{}, ErrSourceChanged
 				}
 				return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
 			}

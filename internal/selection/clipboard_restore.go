@@ -3,8 +3,6 @@ package selection
 import (
 	"errors"
 	"log"
-	"strconv"
-	"sync"
 )
 
 var clipboardMu = make(chan struct{}, 1)
@@ -20,7 +18,6 @@ type clipboardFormat struct {
 
 type clipboardSnapshot struct {
 	formats []clipboardFormat
-	mac     *macClipboardSnapshot
 }
 
 type restoreOutcome uint8
@@ -79,38 +76,4 @@ func finishClipboardCopy(text string, restoreErr error) (Selection, error) {
 		return Selection{}, ErrNoSelection
 	}
 	return Selection{Text: text, Via: "clipboard"}, nil
-}
-
-// At most one failed snapshot stays in memory; never write it in the background.
-// An explicit retry is bound to the saved version, even after later grabs.
-var clipboardRecovery struct {
-	sync.Mutex
-	next     uint64
-	id       string
-	snapshot *clipboardSnapshot
-	sequence uint32
-}
-
-func retainClipboardRecovery(snapshot *clipboardSnapshot, sequence uint32) {
-	clipboardRecovery.Lock()
-	defer clipboardRecovery.Unlock()
-	clipboardRecovery.next++
-	clipboardRecovery.id = strconv.FormatUint(clipboardRecovery.next, 10)
-	clipboardRecovery.snapshot, clipboardRecovery.sequence = snapshot, sequence
-}
-
-func PendingClipboardRecovery() string {
-	clipboardRecovery.Lock()
-	defer clipboardRecovery.Unlock()
-	return clipboardRecovery.id
-}
-
-func DiscardClipboardRecovery(id string) {
-	<-clipboardMu
-	defer func() { clipboardMu <- struct{}{} }()
-	clipboardRecovery.Lock()
-	defer clipboardRecovery.Unlock()
-	if id == clipboardRecovery.id {
-		clipboardRecovery.id, clipboardRecovery.snapshot = "", nil
-	}
 }

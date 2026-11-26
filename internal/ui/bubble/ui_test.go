@@ -330,20 +330,16 @@ func TestBubbleViewLanguageMenuAndSwap(t *testing.T) {
 	}
 }
 
-func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
+func TestBubbleViewOCRPin(t *testing.T) {
 	var pinnedCalls []bool
 	var startOCRCalled int
-	var discarded []string
 	var closed bool
-	restoreErr := errors.New("busy")
 
 	cfg := testBubbleConfig()
 	v := newBubbleView(1, cfg, bubbleViewActions{
-		setPinned:        func(_ string, _ int64, pinned bool) bool { pinnedCalls = append(pinnedCalls, pinned); return true },
-		startOCR:         func() { startOCRCalled++ },
-		discardClipboard: func(id string, done func()) { discarded = append(discarded, id); done() },
-		restoreClipboard: func(_ string, done func(error)) { done(restoreErr) },
-		close:            func(_ string, _, _ int64) bool { closed = true; return true },
+		setPinned: func(_ string, _ int64, pinned bool) bool { pinnedCalls = append(pinnedCalls, pinned); return true },
+		startOCR:  func() { startOCRCalled++ },
+		close:     func(_ string, _, _ int64) bool { closed = true; return true },
 	})
 	v.applyState(BubbleState{
 		ID:         1,
@@ -385,15 +381,14 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 		Settings:   cfg,
 	}, false)
 	v.applyState(BubbleState{
-		ID:                  1,
-		Generation:          2,
-		SessionID:           "sess-ocr-2",
-		ShowID:              2,
-		Revision:            -1,
-		Trigger:             "ocr",
-		Text:                "recognized",
-		ClipboardRecoveryID: "rec-1",
-		Settings:            cfg,
+		ID:         1,
+		Generation: 2,
+		SessionID:  "sess-ocr-2",
+		ShowID:     2,
+		Revision:   -1,
+		Trigger:    "ocr",
+		Text:       "recognized",
+		Settings:   cfg,
 	}, false)
 	tt.Frame()
 	if !tt.HasText("识别文字可直接修改，按 Enter 重新翻译") {
@@ -404,30 +399,6 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 	}
 	if startOCRCalled != 1 {
 		t.Fatalf("startOCRCalled = %d, want 1", startOCRCalled)
-	}
-
-	if err := tt.Click("重试恢复剪贴板"); err != nil {
-		t.Fatalf("Click 重试恢复剪贴板: %v", err)
-	}
-	if !tt.HasText("之前的剪贴板内容尚未恢复。") {
-		t.Fatal("recovery banner dismissed on restore error")
-	}
-	restoreErr = nil
-	if err := tt.Click("重试恢复剪贴板"); err != nil {
-		t.Fatalf("Click 重试恢复剪贴板 (success): %v", err)
-	}
-	if tt.HasText("之前的剪贴板内容尚未恢复。") {
-		t.Fatal("recovery banner remained after restore success")
-	}
-
-	v.clipboardRecoveryID = "rec-2"
-	v.bumpContent()
-	tt.Frame()
-	if err := tt.Click("放弃恢复"); err != nil {
-		t.Fatalf("Click 放弃恢复: %v", err)
-	}
-	if len(discarded) != 1 || discarded[0] != "rec-2" {
-		t.Fatalf("discarded = %v, want [rec-2]", discarded)
 	}
 
 	if err := tt.Click("钉住"); err != nil {

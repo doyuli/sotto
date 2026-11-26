@@ -124,17 +124,15 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	stage = "restore"
 	owner, cleanup, err := clipboardOwner()
 	if err != nil {
-		retainClipboardRecovery(saved, seq)
 		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
 	}
 	defer cleanup()
-	outcome, restoredSeq, err := prepared.restore(owner, seq, func() bool {
+	outcome, err := prepared.restore(owner, func() bool {
 		owned, _ := checkClipboardOwner(pid)
 		return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
 	})
 	switch outcome {
 	case restoreFailed:
-		retainClipboardRecovery(saved, restoredSeq)
 		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
 	case restoreSkipped:
 		return Selection{}, ErrSourceChanged

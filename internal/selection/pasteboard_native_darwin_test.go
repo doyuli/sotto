@@ -40,11 +40,11 @@ func TestMacIsolatedPasteboardItems(t *testing.T) {
 		turns := 0
 		dispatch := func(fn func()) { turns++; macnative.Pool(fn) }
 		saved, err := snapshotMacPasteboard(context.Background(), func() objc.ID { return board }, dispatch)
-		if err != nil || saved == nil || len(saved.mac.items) != len(expected) {
+		if err != nil || saved == nil || len(saved) != len(expected) {
 			t.Fatalf("snapshot: %v, %v", saved, err)
 		}
 		for i, payload := range expected {
-			if len(saved.mac.items[i]) != 1 || !bytes.Equal(saved.mac.items[i][0].data, payload) {
+			if len(saved[i]) != 1 || !bytes.Equal(saved[i][0].data, payload) {
 				t.Fatalf("snapshot item %d lost data", i)
 			}
 		}

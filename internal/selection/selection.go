@@ -36,12 +36,11 @@ type Selection struct {
 var (
 	// ErrNoSelection: nothing was selected, or the foreground app
 	// ignored the simulated copy.
-	ErrNoSelection           = errors.New("no text selected")
-	ErrSourceChanged         = errors.New("selection source changed")
-	ErrShortcutHeld          = errors.New("keys or mouse buttons still held")
-	ErrClipboardUnsafe       = errors.New("clipboard cannot be safely preserved")
-	ErrClipboardRestore      = errors.New("clipboard restore incomplete")
-	ErrClipboardRecoveryGone = errors.New("clipboard recovery no longer available")
+	ErrNoSelection      = errors.New("no text selected")
+	ErrSourceChanged    = errors.New("selection source changed")
+	ErrShortcutHeld     = errors.New("keys or mouse buttons still held")
+	ErrClipboardUnsafe  = errors.New("clipboard cannot be safely preserved")
+	ErrClipboardRestore = errors.New("clipboard restore incomplete")
 	// ErrSelfWindow: the foreground window is the app's own, whose
 	// selection is not what a hotkey means to grab.
 	ErrSelfWindow = errors.New("the foreground window is the app's own")

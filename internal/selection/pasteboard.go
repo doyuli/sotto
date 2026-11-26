@@ -7,11 +7,6 @@ type pasteboardFormat struct {
 	data []byte
 }
 type pasteboardItem []pasteboardFormat
-type macClipboardSnapshot struct {
-	items         []pasteboardItem
-	restoreChange int64
-}
-
 type pasteboardRestoreOps struct {
 	prepare func() error
 	allowed func() bool
@@ -20,27 +15,21 @@ type pasteboardRestoreOps struct {
 	write   func() error
 }
 
-// Return only a version already verified by the caller or produced by our own
-// clear. A later read may belong to another writer, even when a write failed.
-func restorePasteboardContents(expected int64, ops pasteboardRestoreOps) (restored bool, retryChange int64, err error) {
-	retryChange = expected
+func restorePasteboardContents(expected int64, ops pasteboardRestoreOps) error {
 	if expected < 0 {
-		return false, -1, ErrSourceChanged
+		return ErrSourceChanged
 	}
-	if err = ops.prepare(); err != nil {
-		return
+	if err := ops.prepare(); err != nil {
+		return err
 	}
 	if !ops.allowed() || ops.change() != expected {
-		return false, -1, ErrSourceChanged
+		return ErrSourceChanged
 	}
-	retryChange = ops.clear()
-	if ops.change() != retryChange {
-		return false, -1, ErrSourceChanged
+	cleared := ops.clear()
+	if ops.change() != cleared {
+		return ErrSourceChanged
 	}
-	if err = ops.write(); err != nil {
-		return
-	}
-	return true, retryChange, nil
+	return ops.write()
 }
 
 // Eagerly materialize every representation before copying; a file promise or

@@ -25,5 +25,3 @@ func CapturePrimaryPress() PrimaryPress { return PrimaryPress{} }
 func WindowOwnsForeground(hwnd uintptr) bool { return false }
 
 func Prepare() func(context.Context) (Selection, error) { return grab }
-
-func RecoverClipboard(id string) error { return ErrUnsupported }

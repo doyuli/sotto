@@ -114,7 +114,7 @@ When UIA returns empty or unsupported, Sotto falls back to simulating `Ctrl+C`:
    - Total snapshot budget: 128 MiB (up to 128 MiB for `CF_DIB` and `CF_DIBV5`; non-DIB formats limited to 32 MiB combined).
    - Palettes (`CF_PALETTE`) are backed up via `LOGPALETTE` (`GetObjectW`, `GetPaletteEntries`) and restored with `CreatePalette`.
    - Synthesizable `CF_BITMAP` is omitted during backup only after DIB data is securely captured.
-   - If a full backup is unavailable, Sotto still sends the copy shortcut once. After a sequence change, an ownerless copy can supply stable text while the source remains foreground and input is undisturbed. Automatic restoration requires a matching owner process and sequence. A failed write preserves the backup for manual recovery from the input panel.
+   - If a full backup is unavailable, Sotto still sends the copy shortcut once. After a sequence change, an ownerless copy can supply stable text while the source remains foreground and input is undisturbed. Automatic restoration requires a matching owner process and sequence. A failed write is logged and the captured selection can still be translated.
 
 ---
 

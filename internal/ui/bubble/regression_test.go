@@ -1,7 +1,6 @@
 package bubble
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -94,127 +93,6 @@ func TestBubbleComposerRespectsWorkAreaBudget(t *testing.T) {
 			tt.Frame()
 			if r := bubbleScrollInputRect(t, tt); r.H > 54.1 {
 				t.Errorf("changed work area did not constrain composer: %+v", r)
-			}
-		})
-	}
-}
-
-func TestBubbleClipboardCompletionOwnership(t *testing.T) {
-	for _, discard := range []bool{false, true} {
-		t.Run(fmt.Sprintf("discard=%t", discard), func(t *testing.T) {
-			cfg := testBubbleConfig()
-			var done func(error)
-			calls := 0
-			v := newBubbleView(1, cfg, bubbleViewActions{
-				restoreClipboard: func(_ string, complete func(error)) { calls++; done = complete },
-				discardClipboard: func(_ string, complete func()) { calls++; done = func(error) { complete() } },
-			})
-			state := BubbleState{ID: 1, Generation: 1, SessionID: "clipboard", ShowID: 1,
-				ClipboardRecoveryID: "recovery", Settings: cfg}
-			v.applyState(state, false)
-			tt := ui.NewTester(v.render, 480, 420)
-			label := "重试恢复剪贴板"
-			if discard {
-				label = "放弃恢复"
-			}
-			if err := tt.Click(label); err != nil {
-				t.Fatal(err)
-			}
-			if !v.clipboardBusy || !tt.HasText("正在处理剪贴板…") {
-				t.Fatal("pending operation not shown")
-			}
-			v.resolveClipboard(discard)
-			if calls != 1 {
-				t.Fatal("duplicate operation dispatched")
-			}
-			// UI remains editable while OS work is pending.
-			if err := tt.Click("要翻译的原文"); err != nil {
-				t.Fatal(err)
-			}
-			tt.Type("editable")
-			if v.composerText != "editable" {
-				t.Fatal("pending operation blocked editing")
-			}
-			if !discard {
-				done(errors.New("暂时无法恢复"))
-				tt.Frame()
-				if v.clipboardBusy || v.clipboardRecoveryID == "" || !tt.HasText("暂时无法恢复") {
-					t.Fatal("failure did not allow retry")
-				}
-				v.resolveClipboard(false)
-			}
-			oldDone := done
-			state.Generation++
-			state.SessionID, state.ClipboardRecoveryID = "next", "new-recovery"
-			state.ShowID++
-			v.applyState(state, false)
-			v.resolveClipboard(discard)
-			oldDone(nil)
-			if !v.clipboardBusy || v.clipboardRecoveryID != "new-recovery" || v.clipboardToast != "" {
-				t.Fatal("old callback changed new presentation")
-			}
-			done(nil)
-			tt.Frame()
-			if v.clipboardBusy || v.clipboardRecoveryID != "" {
-				t.Fatal("current operation did not finish")
-			}
-			// A hidden presentation cannot surface a late error toast.
-			state.Generation++
-			state.SessionID, state.ClipboardRecoveryID = "hidden", "hidden-recovery"
-			v.applyState(state, false)
-			v.resolveClipboard(discard)
-			v.onStopped(RunStoppedMsg{SessionID: "hidden", ShowID: state.ShowID, Revision: 1})
-			done(errors.New("late error"))
-			if v.clipboardToast != "" {
-				t.Fatal("hidden presentation showed late toast")
-			}
-		})
-	}
-}
-
-func TestBubbleClipboardRefocusPreservesPendingOperation(t *testing.T) {
-	for _, outcome := range []string{"restore", "discard", "failure", "completed-before-notice"} {
-		t.Run(outcome, func(t *testing.T) {
-			cfg := testBubbleConfig()
-			var done func(error)
-			calls := 0
-			v := newBubbleView(1, cfg, bubbleViewActions{
-				restoreClipboard: func(_ string, complete func(error)) { calls++; done = complete },
-				discardClipboard: func(_ string, complete func()) { calls++; done = func(error) { complete() } },
-			})
-			v.applyState(BubbleState{ID: 1, Generation: 1, SessionID: "refocus", ShowID: 1,
-				ClipboardRecoveryID: "recovery", Settings: cfg}, false)
-			tt := ui.NewTester(v.render, 480, 420)
-			discard := outcome == "discard"
-			v.resolveClipboard(discard)
-			// Global recovery may already be gone while Window.Update is queued.
-			id := "recovery"
-			if outcome == "completed-before-notice" {
-				id = ""
-			}
-			for show := int64(2); show <= 4; show++ {
-				v.onPresented(BubblePresentedMsg{SessionID: "refocus", ShowID: show, ClipboardRecoveryID: id, Focus: true})
-				tt.Frame()
-				v.resolveClipboard(discard)
-				if !v.clipboardBusy || v.clipboardRecoveryID != "recovery" || calls != 1 || !tt.HasText("正在处理剪贴板…") {
-					t.Fatal("refocus revoked or duplicated the pending operation")
-				}
-			}
-			var err error
-			if outcome == "failure" {
-				err = errors.New("恢复失败，请重试")
-			}
-			done(err)
-			tt.Frame()
-			if v.clipboardBusy {
-				t.Fatal("completion after refocus left operation busy")
-			}
-			if err != nil {
-				if v.clipboardRecoveryID != "recovery" || !tt.HasText(err.Error()) {
-					t.Fatal("refocus lost recovery error or retry identity")
-				}
-			} else if v.clipboardRecoveryID != "" || tt.HasText("之前的剪贴板内容尚未恢复。") {
-				t.Fatal("successful completion after refocus retained recovery banner")
 			}
 		})
 	}

@@ -10,22 +10,21 @@ import (
 // BubbleState initializes source content for a new session or completes OCR
 // before translation starts. Results live only in the native view, not here.
 type BubbleState struct {
-	MaxHeight           float64         `json:"maxHeight"`
-	ClipboardRecoveryID string          `json:"clipboardRecoveryID"`
-	ShowID              int64           `json:"showID"`
-	ID                  int64           `json:"id"`
-	ReqID               string          `json:"reqID"`
-	Generation          int64           `json:"generation"`
-	SessionID           string          `json:"sessionID"`
-	Revision            int64           `json:"revision"`
-	Phase               string          `json:"phase"`
-	Message             string          `json:"message"`
-	Trigger             string          `json:"trigger"`
-	Text                string          `json:"text"`
-	SourceLang          string          `json:"sourceLang"`
-	TargetLang          string          `json:"targetLang"`
-	Pinned              bool            `json:"pinned"`
-	Settings            config.Settings `json:"settings"`
+	MaxHeight  float64         `json:"maxHeight"`
+	ShowID     int64           `json:"showID"`
+	ID         int64           `json:"id"`
+	ReqID      string          `json:"reqID"`
+	Generation int64           `json:"generation"`
+	SessionID  string          `json:"sessionID"`
+	Revision   int64           `json:"revision"`
+	Phase      string          `json:"phase"`
+	Message    string          `json:"message"`
+	Trigger    string          `json:"trigger"`
+	Text       string          `json:"text"`
+	SourceLang string          `json:"sourceLang"`
+	TargetLang string          `json:"targetLang"`
+	Pinned     bool            `json:"pinned"`
+	Settings   config.Settings `json:"settings"`
 }
 
 // TranslationUpdateMsg carries cumulative text for one service and request.
@@ -53,11 +52,10 @@ type RunMetaMsg struct {
 }
 
 type BubblePresentedMsg struct {
-	ClipboardRecoveryID string `json:"clipboardRecoveryID"`
-	SessionID           string `json:"sessionID"`
-	ShowID              int64  `json:"showID"`
-	Revision            int64  `json:"revision"`
-	Focus               bool   `json:"focus"`
+	SessionID string `json:"sessionID"`
+	ShowID    int64  `json:"showID"`
+	Revision  int64  `json:"revision"`
+	Focus     bool   `json:"focus"`
 }
 
 type RunStoppedMsg struct {

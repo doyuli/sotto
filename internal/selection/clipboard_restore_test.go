@@ -72,7 +72,7 @@ func TestProtectionFailureNeverWritesPayload(t *testing.T) {
 	}
 }
 
-func TestPayloadFailurePreservesOtherFormatsAndRecovery(t *testing.T) {
+func TestPayloadFailurePreservesOtherFormats(t *testing.T) {
 	calls := make([]int, 6)
 	clears := 0
 	outcome, err := restoreClipboardFormats(6, 3, func() bool { return true }, func() error { clears++; return nil }, func(i int) error {
@@ -84,24 +84,6 @@ func TestPayloadFailurePreservesOtherFormatsAndRecovery(t *testing.T) {
 	})
 	if outcome != restoreFailed || clears != 1 || err == nil || calls[4] != 3 || calls[5] != 1 {
 		t.Fatal("partial failure was hidden or lost remaining formats")
-	}
-	snap := &clipboardSnapshot{formats: []clipboardFormat{{id: 13, data: []byte("original")}}}
-	retainClipboardRecovery(snap, 42)
-	id := PendingClipboardRecovery()
-	defer DiscardClipboardRecovery(id)
-	DiscardClipboardRecovery("stale")
-	if PendingClipboardRecovery() != id {
-		t.Fatal("stale discard removed recovery")
-	}
-	clipboardRecovery.Lock()
-	kept := clipboardRecovery.snapshot == snap && clipboardRecovery.sequence == 42
-	clipboardRecovery.Unlock()
-	if !kept {
-		t.Fatal("lost original snapshot")
-	}
-	DiscardClipboardRecovery(id)
-	if PendingClipboardRecovery() != "" {
-		t.Fatal("explicit discard retained snapshot")
 	}
 }
 

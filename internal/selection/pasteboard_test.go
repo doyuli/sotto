@@ -29,86 +29,43 @@ func TestPasteboardAbortsForUnreadableRepresentations(t *testing.T) {
 	}
 }
 
-// A preparation failure has not touched the pasteboard. Even if another app
-// writes during preparation, a retry must keep the original expected version.
-func TestPasteboardFailedPreparationDoesNotClaimNewContents(t *testing.T) {
-	version, text := int64(10), "original copy"
+func TestPasteboardRestorePreservesContentsOnPreparationFailure(t *testing.T) {
 	failure := errors.New("cannot prepare item")
 	ops := pasteboardRestoreOps{
-		prepare: func() error { version, text = 11, "new user copy"; return failure },
+		prepare: func() error { return failure },
+		clear:   func() int64 { t.Fatal("cleared clipboard after preparation failed"); return 0 },
+		write:   func() error { t.Fatal("wrote after preparation failed"); return nil },
+	}
+	if err := restorePasteboardContents(10, ops); !errors.Is(err, failure) {
+		t.Fatalf("preparation failure: %v", err)
+	}
+}
+
+func TestPasteboardRestoreRejectsChangeDuringPreparation(t *testing.T) {
+	version := int64(10)
+	ops := pasteboardRestoreOps{
+		prepare: func() error { version++; return nil },
 		allowed: func() bool { return true },
 		change:  func() int64 { return version },
 		clear:   func() int64 { t.Fatal("cleared newer contents"); return 0 },
-		write:   func() error { t.Fatal("overwrote newer contents"); return nil },
 	}
-	ok, retry, err := restorePasteboardContents(10, ops)
-	if ok || retry != 10 || !errors.Is(err, failure) {
-		t.Fatalf("preparation failure: restored=%t retry=%d err=%v", ok, retry, err)
-	}
-	ops.prepare = func() error { return nil }
-	ok, retry, err = restorePasteboardContents(retry, ops)
-	if ok || retry != -1 || !errors.Is(err, ErrSourceChanged) || text != "new user copy" {
-		t.Fatalf("retry: restored=%t retry=%d text=%q err=%v", ok, retry, text, err)
+	if err := restorePasteboardContents(10, ops); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("concurrent write: %v", err)
 	}
 }
 
-func TestPasteboardFailedWriteDoesNotClaimNewContents(t *testing.T) {
-	for _, duringWrite := range []bool{false, true} {
-		t.Run(map[bool]string{false: "between attempts", true: "during failed write"}[duringWrite], func(t *testing.T) {
-			version, text := int64(20), "temporary selection"
-			failure := errors.New("cannot write items")
-			clears := 0
-			ops := pasteboardRestoreOps{
-				prepare: func() error { return nil },
-				allowed: func() bool { return true },
-				change:  func() int64 { return version },
-				clear: func() int64 {
-					clears++
-					version++
-					text = ""
-					return version
-				},
-				write: func() error {
-					if duringWrite {
-						version, text = 22, "new user copy"
-					}
-					return failure
-				},
-			}
-			ok, retry, err := restorePasteboardContents(20, ops)
-			if ok || retry != 21 || !errors.Is(err, failure) {
-				t.Fatalf("write failure: restored=%t retry=%d err=%v", ok, retry, err)
-			}
-			if !duringWrite {
-				version, text = 22, "new user copy"
-			}
-			ops.write = func() error { t.Fatal("overwrote newer contents"); return nil }
-			ok, retry, err = restorePasteboardContents(retry, ops)
-			if ok || retry != -1 || !errors.Is(err, ErrSourceChanged) || clears != 1 || text != "new user copy" {
-				t.Fatalf("retry: restored=%t retry=%d clears=%d text=%q err=%v", ok, retry, clears, text, err)
-			}
-		})
-	}
-}
-
-func TestPasteboardFailedWriteCanRetryOwnClear(t *testing.T) {
-	version, text := int64(30), "temporary selection"
+func TestPasteboardRestoreReportsWriteFailure(t *testing.T) {
 	failure := errors.New("cannot write items")
+	version := int64(30)
 	ops := pasteboardRestoreOps{
 		prepare: func() error { return nil },
 		allowed: func() bool { return true },
 		change:  func() int64 { return version },
-		clear:   func() int64 { version++; text = ""; return version },
+		clear:   func() int64 { version++; return version },
 		write:   func() error { return failure },
 	}
-	ok, retry, err := restorePasteboardContents(30, ops)
-	if ok || !errors.Is(err, failure) {
-		t.Fatalf("expected write failure: restored=%t err=%v", ok, err)
-	}
-	ops.write = func() error { version++; text = "original backup"; return nil }
-	ok, _, err = restorePasteboardContents(retry, ops)
-	if !ok || err != nil || text != "original backup" {
-		t.Fatalf("retry on own clear: restored=%t text=%q err=%v", ok, text, err)
+	if err := restorePasteboardContents(30, ops); !errors.Is(err, failure) {
+		t.Fatalf("write failure: %v", err)
 	}
 }
 
@@ -124,16 +81,16 @@ func TestPasteboardRestoreRejectsChangeAfterClear(t *testing.T) {
 		},
 		write: func() error { t.Fatal("overwrote concurrent copy"); return nil },
 	}
-	ok, retry, err := restorePasteboardContents(40, ops)
-	if ok || retry != -1 || !errors.Is(err, ErrSourceChanged) {
-		t.Fatalf("ownership change: restored=%t retry=%d err=%v", ok, retry, err)
+	err := restorePasteboardContents(40, ops)
+	if !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("ownership change: %v", err)
 	}
 }
 
 func TestPasteboardRestoreRejectsUnknownOwnershipAndCanceledGuard(t *testing.T) {
 	// Unknown ownership must not even materialize native replacement objects.
-	if ok, retry, err := restorePasteboardContents(-1, pasteboardRestoreOps{}); ok || retry != -1 || !errors.Is(err, ErrSourceChanged) {
-		t.Fatalf("unknown ownership: restored=%t retry=%d err=%v", ok, retry, err)
+	if err := restorePasteboardContents(-1, pasteboardRestoreOps{}); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("unknown ownership: %v", err)
 	}
 	ops := pasteboardRestoreOps{
 		prepare: func() error { return nil },
@@ -141,7 +98,7 @@ func TestPasteboardRestoreRejectsUnknownOwnershipAndCanceledGuard(t *testing.T) 
 		clear:   func() int64 { t.Fatal("cleared after cancellation"); return 0 },
 		write:   func() error { t.Fatal("wrote after cancellation"); return nil },
 	}
-	if ok, retry, err := restorePasteboardContents(50, ops); ok || retry != -1 || !errors.Is(err, ErrSourceChanged) {
-		t.Fatalf("canceled guard: restored=%t retry=%d err=%v", ok, retry, err)
+	if err := restorePasteboardContents(50, ops); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("canceled guard: %v", err)
 	}
 }

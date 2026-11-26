@@ -152,8 +152,6 @@ type bubbleViewActions struct {
 	startOCR     func()
 	openSettings func()
 	// Completion callbacks run on the UI thread after background clipboard work.
-	restoreClipboard func(id string, done func(error))
-	discardClipboard func(id string, done func())
 	copyText         func(c *ui.Context, text string) error
 	speakText        func(text, lang string, onError func()) // onError runs on the UI thread
 	onHeightMeasured func(bubbleHeightMeasurement)
@@ -175,19 +173,18 @@ type bubbleCard struct {
 
 // bubbleView owns the native UI state for one bubble window on the UI thread.
 type bubbleView struct {
-	id                  int64
-	generation          int64
-	sessionID           string
-	showID              int64
-	stateRevision       int64
-	revision            int64
-	reqID               string
-	trigger             string
-	phase               string
-	message             string
-	clipboardRecoveryID string
-	pinned              bool
-	maxHeight           float64
+	id            int64
+	generation    int64
+	sessionID     string
+	showID        int64
+	stateRevision int64
+	revision      int64
+	reqID         string
+	trigger       string
+	phase         string
+	message       string
+	pinned        bool
+	maxHeight     float64
 
 	settings       config.Settings
 	sourceLang     string
@@ -223,11 +220,8 @@ type bubbleView struct {
 	lastMeasuredLimit float64
 	reduceMotion      bool
 
-	speechAttempt    uint64
-	speechError      bool
-	clipboardAttempt uint64
-	clipboardBusy    bool
-	clipboardToast   string
+	speechAttempt uint64
+	speechError   bool
 
 	actions bubbleViewActions
 }
@@ -254,9 +248,6 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	if st.SessionID != v.sessionID || st.ShowID != v.showID {
 		v.collapsed = make(map[string]bool)
 	}
-	v.clipboardBusy = false
-	v.clipboardToast = ""
-	v.clipboardAttempt++
 	v.generation = st.Generation
 	v.sessionID = st.SessionID
 	v.showID = st.ShowID
@@ -267,7 +258,6 @@ func (v *bubbleView) applyState(st BubbleState, focus bool) {
 	v.trigger = st.Trigger
 	v.phase = st.Phase
 	v.message = st.Message
-	v.clipboardRecoveryID = st.ClipboardRecoveryID
 	v.pinned = st.Pinned
 	v.settings = st.Settings
 
@@ -320,11 +310,6 @@ func (v *bubbleView) onPresented(msg BubblePresentedMsg) {
 		v.collapsed = make(map[string]bool)
 		v.animateHeight = false
 	}
-	// Refocusing preserves the current session's operation, including when the
-	// worker cleared global recovery before its completion reached the UI.
-	if !v.clipboardBusy {
-		v.clipboardRecoveryID = msg.ClipboardRecoveryID
-	}
 	v.showID = msg.ShowID
 	if msg.Revision > v.revision {
 		v.stopRenderedRun(msg.Revision)
@@ -339,9 +324,6 @@ func (v *bubbleView) onStopped(msg RunStoppedMsg) {
 	if msg.SessionID != v.sessionID {
 		return
 	}
-	v.clipboardAttempt++
-	v.clipboardBusy = false
-	v.clipboardToast = ""
 	if msg.ShowID > v.showID {
 		v.showID = msg.ShowID
 	}
@@ -789,45 +771,8 @@ func (v *bubbleView) renderResultCopyButton(c *ui.Context, p bubblePalette, labe
 	})
 }
 
-// resolveClipboard starts OS work through the adapter; completion is marshaled
-// back to the UI thread. Refocusing keeps ownership; resets and closure revoke it.
-func (v *bubbleView) resolveClipboard(discard bool) {
-	if v.clipboardBusy || v.clipboardRecoveryID == "" ||
-		(discard && v.actions.discardClipboard == nil) || (!discard && v.actions.restoreClipboard == nil) {
-		return
-	}
-	v.clipboardBusy = true
-	v.clipboardAttempt++
-	attempt, session, id := v.clipboardAttempt, v.sessionID, v.clipboardRecoveryID
-	done := func(err error) {
-		if v.clipboardAttempt != attempt || v.sessionID != session || v.clipboardRecoveryID != id {
-			return
-		}
-		v.clipboardBusy = false
-		if err != nil {
-			v.clipboardToast = err.Error()
-		} else {
-			v.clipboardRecoveryID = ""
-			if !discard {
-				v.clipboardToast = "已恢复剪贴板内容"
-			}
-		}
-		v.bumpContent()
-	}
-	if discard {
-		v.actions.discardClipboard(id, func() { done(nil) })
-	} else {
-		v.actions.restoreClipboard(id, done)
-	}
-	v.bumpContent()
-}
-
 func (v *bubbleView) render(c *ui.Context) {
 	v.reduceMotion = c.Preferences().ReduceMotion
-	if v.clipboardToast != "" {
-		c.Toast(v.clipboardToast)
-		v.clipboardToast = ""
-	}
 	if v.speechError {
 		v.speechError = false
 		c.Toast("朗读不可用")
@@ -998,54 +943,39 @@ func (v *bubbleView) renderLinkButton(c *ui.Context, p bubblePalette, label stri
 
 func (v *bubbleView) renderBanners(c *ui.Context, p bubblePalette) {
 	status := v.statusMessage()
-	if status != "" || v.clipboardRecoveryID != "" {
-		ui.Column(c).Padding(2, 2).Gap(4).Children(func() {
-			if status != "" {
-				isError := v.phase == "error" && !v.isDirty() && !v.isRecognizing()
-				textColor := p.muted
-				if isError {
-					textColor = p.error
-				}
-				ui.Row(c).AlignItems(ui.Center).Wrap().Gap(8).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
-						if v.isRecognizing() {
-							ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
-								for i := range 3 {
-									dot := ui.Box(c).Size(4, 4).Radius(2).Background(p.muted)
-									phase := float32(i) * 0.25
-									loop := dot.Loop("ocr-dot", 900*time.Millisecond, ui.Bounce(ui.EaseInOut))
-									alpha := 0.35 + 0.65*float32((loop+phase)-float32(int(loop+phase)))
-									dot.Opacity(alpha)
-								}
-							})
+	if status == "" {
+		return
+	}
+	ui.Column(c).Padding(2, 2).Children(func() {
+		isError := v.phase == "error" && !v.isDirty() && !v.isRecognizing()
+		textColor := p.muted
+		if isError {
+			textColor = p.error
+		}
+		ui.Row(c).AlignItems(ui.Center).Wrap().Gap(8).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Grow(1).Children(func() {
+				if v.isRecognizing() {
+					ui.Row(c).AlignItems(ui.Center).Gap(3).Children(func() {
+						for i := range 3 {
+							dot := ui.Box(c).Size(4, 4).Radius(2).Background(p.muted)
+							phase := float32(i) * 0.25
+							loop := dot.Loop("ocr-dot", 900*time.Millisecond, ui.Bounce(ui.EaseInOut))
+							alpha := 0.35 + 0.65*float32((loop+phase)-float32(int(loop+phase)))
+							dot.Opacity(alpha)
 						}
-						ui.Text(c, status).FontSize(12).TextColor(textColor)
 					})
-					if v.isRecognizing() {
-						v.renderLinkButton(c, p, "取消识别", v.closeBubble)
-					} else if v.trigger == "ocr" {
-						v.renderLinkButton(c, p, "重新框选", v.actions.startOCR)
-					} else if isError && v.trigger == "selection" {
-						v.renderLinkButton(c, p, "截图翻译", v.actions.startOCR)
-					}
-				})
-			}
-
-			if v.clipboardRecoveryID != "" {
-				ui.Column(c).Padding(8, 10).Radius(10).Background(p.control).Gap(6).Children(func() {
-					ui.Text(c, "之前的剪贴板内容尚未恢复。").FontSize(12).TextColor(p.muted)
-					if v.clipboardBusy {
-						ui.Text(c, "正在处理剪贴板…").FontSize(12).TextColor(p.muted)
-					} else {
-						ui.Row(c).Gap(12).Children(func() {
-							v.renderLinkButton(c, p, "重试恢复剪贴板", func() { v.resolveClipboard(false) })
-							v.renderLinkButton(c, p, "放弃恢复", func() { v.resolveClipboard(true) })
-						})
-					}
-				})
+				}
+				ui.Text(c, status).FontSize(12).TextColor(textColor)
+			})
+			if v.isRecognizing() {
+				v.renderLinkButton(c, p, "取消识别", v.closeBubble)
+			} else if v.trigger == "ocr" {
+				v.renderLinkButton(c, p, "重新框选", v.actions.startOCR)
+			} else if isError && v.trigger == "selection" {
+				v.renderLinkButton(c, p, "截图翻译", v.actions.startOCR)
 			}
 		})
-	}
+	})
 }
 
 func (v *bubbleView) renderComposer(c *ui.Context, p bubblePalette) {
