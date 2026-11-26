@@ -1033,13 +1033,13 @@ func (v *bubbleView) renderBanners(c *ui.Context, p bubblePalette) {
 
 			if v.clipboardRecoveryID != "" {
 				ui.Column(c).Padding(8, 10).Radius(10).Background(p.control).Gap(6).Children(func() {
-					ui.Text(c, "之前复制的内容尚未恢复，可重试或放弃后继续取词。").FontSize(12).TextColor(p.muted)
+					ui.Text(c, "之前的剪贴板内容尚未恢复。").FontSize(12).TextColor(p.muted)
 					if v.clipboardBusy {
 						ui.Text(c, "正在处理剪贴板…").FontSize(12).TextColor(p.muted)
 					} else {
 						ui.Row(c).Gap(12).Children(func() {
 							v.renderLinkButton(c, p, "重试恢复剪贴板", func() { v.resolveClipboard(false) })
-							v.renderLinkButton(c, p, "放弃恢复，继续取词", func() { v.resolveClipboard(true) })
+							v.renderLinkButton(c, p, "放弃恢复", func() { v.resolveClipboard(true) })
 						})
 					}
 				})

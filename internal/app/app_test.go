@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -245,5 +247,17 @@ func TestTrayMenuToggleHandlesNativeReentry(t *testing.T) {
 	a.toggleTrayMenu(show, closeMenu)
 	if opened != 2 || closed != 1 {
 		t.Fatalf("after three clicks: opened=%d closed=%d, want 2 and 1", opened, closed)
+	}
+}
+
+// A clipboard ownership mismatch used to finish a current shortcut with no visible feedback.
+func TestSelectionFeedbackForCurrentEntry(t *testing.T) {
+	for _, err := range []error{selection.ErrSelfWindow, selection.ErrNoSelection, fmt.Errorf("clipboard owner: %w", selection.ErrSourceChanged), context.DeadlineExceeded} {
+		if selectionFeedback(err) == "" {
+			t.Errorf("no feedback for %v", err)
+		}
+	}
+	if selectionFeedback(nil) != "" {
+		t.Error("successful capture showed an error")
 	}
 }

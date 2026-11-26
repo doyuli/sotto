@@ -47,7 +47,7 @@ func (b *clipboardBudget) add(id uint16, size uintptr) error {
 // Enumeration and reads stay interleaved under one clipboard open: delayed
 // rendering may materialize more formats. Only CF_BITMAP is replaceable, and
 // only after a DIB representation has actually been saved. All other read
-// failures abort before simulated copy, including unknown registered formats.
+// failures disable restoration, including unreadable registered formats.
 func snapshotClipboardFormats(next func(uint16) (uint16, error), read func(uint16, uintptr) ([]byte, error)) (*clipboardSnapshot, error) {
 	var snap clipboardSnapshot
 	var budget clipboardBudget

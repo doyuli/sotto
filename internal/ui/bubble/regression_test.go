@@ -115,7 +115,7 @@ func TestBubbleClipboardCompletionOwnership(t *testing.T) {
 			tt := ui.NewTester(v.render, 480, 420)
 			label := "重试恢复剪贴板"
 			if discard {
-				label = "放弃恢复，继续取词"
+				label = "放弃恢复"
 			}
 			if err := tt.Click(label); err != nil {
 				t.Fatal(err)
@@ -213,7 +213,7 @@ func TestBubbleClipboardRefocusPreservesPendingOperation(t *testing.T) {
 				if v.clipboardRecoveryID != "recovery" || !tt.HasText(err.Error()) {
 					t.Fatal("refocus lost recovery error or retry identity")
 				}
-			} else if v.clipboardRecoveryID != "" || tt.HasText("之前复制的内容尚未恢复，可重试或放弃后继续取词。") {
+			} else if v.clipboardRecoveryID != "" || tt.HasText("之前的剪贴板内容尚未恢复。") {
 				t.Fatal("successful completion after refocus retained recovery banner")
 			}
 		})

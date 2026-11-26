@@ -409,22 +409,22 @@ func TestBubbleViewOCRPinAndClipboardRecovery(t *testing.T) {
 	if err := tt.Click("重试恢复剪贴板"); err != nil {
 		t.Fatalf("Click 重试恢复剪贴板: %v", err)
 	}
-	if !tt.HasText("之前复制的内容尚未恢复，可重试或放弃后继续取词。") {
+	if !tt.HasText("之前的剪贴板内容尚未恢复。") {
 		t.Fatal("recovery banner dismissed on restore error")
 	}
 	restoreErr = nil
 	if err := tt.Click("重试恢复剪贴板"); err != nil {
 		t.Fatalf("Click 重试恢复剪贴板 (success): %v", err)
 	}
-	if tt.HasText("之前复制的内容尚未恢复，可重试或放弃后继续取词。") {
+	if tt.HasText("之前的剪贴板内容尚未恢复。") {
 		t.Fatal("recovery banner remained after restore success")
 	}
 
 	v.clipboardRecoveryID = "rec-2"
 	v.bumpContent()
 	tt.Frame()
-	if err := tt.Click("放弃恢复，继续取词"); err != nil {
-		t.Fatalf("Click 放弃恢复，继续取词: %v", err)
+	if err := tt.Click("放弃恢复"); err != nil {
+		t.Fatalf("Click 放弃恢复: %v", err)
 	}
 	if len(discarded) != 1 || discarded[0] != "rec-2" {
 		t.Fatalf("discarded = %v, want [rec-2]", discarded)

@@ -390,11 +390,15 @@ func (m *Manager) ApplySettings(s config.Settings) {
 }
 
 func (m *Manager) state(b *bubble, cfg config.Settings) BubbleState {
+	var recoveryID string
+	if b.trigger == "input" {
+		recoveryID = selection.PendingClipboardRecovery()
+	}
 	return BubbleState{
 		ID:                  b.id,
 		MaxHeight:           b.maxHeight,
 		ShowID:              b.showID,
-		ClipboardRecoveryID: selection.PendingClipboardRecovery(),
+		ClipboardRecoveryID: recoveryID,
 		ReqID:               b.reqID,
 		Generation:          b.generation,
 		SessionID:           b.sessionID,
@@ -651,7 +655,7 @@ func recoverClipboard(id string) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, selection.ErrSourceChanged):
-		return errors.New("你已复制了新内容，本次没有覆盖它。可放弃恢复之前的内容，然后继续取词。")
+		return errors.New("你已复制了新内容，本次没有覆盖它。")
 	case errors.Is(err, selection.ErrClipboardRecoveryGone):
 		return errors.New("之前的剪贴板内容已恢复或已放弃恢复，请重新打开面板。")
 	default:

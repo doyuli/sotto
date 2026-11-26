@@ -181,16 +181,24 @@ func clipboardSeq() uint32 {
 	return uint32(seq)
 }
 
-// clipboardOwnerPID is the process that last wrote the clipboard, 0 when
-// the clipboard has no owner window (as ours, opened without one).
-func clipboardOwnerPID() uint32 {
+// A missing owner window permits reading a stable copy, but cannot authorize restoration.
+func checkClipboardOwner(sourcePID uint32) (bool, error) {
 	hwnd, _, _ := procGetClipboardOwner.Call()
-	if hwnd == 0 {
-		return 0
-	}
 	var pid uint32
-	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-	return pid
+	if hwnd != 0 {
+		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	}
+	return classifyClipboardOwner(sourcePID, hwnd, pid)
+}
+
+func classifyClipboardOwner(sourcePID uint32, hwnd uintptr, pid uint32) (bool, error) {
+	if hwnd == 0 {
+		return false, nil
+	}
+	if pid == 0 || pid != sourcePID {
+		return false, fmt.Errorf("clipboard owner hwnd=%x pid=%d source_pid=%d: %w", hwnd, pid, sourcePID, ErrSourceChanged)
+	}
+	return true, nil
 }
 
 // openClipboard opens the clipboard, retrying: another process can hold

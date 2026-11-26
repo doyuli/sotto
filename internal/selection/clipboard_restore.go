@@ -2,6 +2,7 @@ package selection
 
 import (
 	"errors"
+	"log"
 	"strconv"
 	"sync"
 )
@@ -18,9 +19,8 @@ type clipboardFormat struct {
 }
 
 type clipboardSnapshot struct {
-	sequence uint32
-	formats  []clipboardFormat
-	mac      *macClipboardSnapshot
+	formats []clipboardFormat
+	mac     *macClipboardSnapshot
 }
 
 type restoreOutcome uint8
@@ -66,8 +66,23 @@ func writeClipboardFormats(count, markers int, write func(int) error) error {
 	return errors.Join(failures...)
 }
 
+// A failed write-back does not invalidate text already read from a stable copy.
+// Even an empty selection must run restoration if the copy replaced the clipboard.
+func finishClipboardCopy(text string, restoreErr error) (Selection, error) {
+	if restoreErr != nil {
+		if !errors.Is(restoreErr, ErrClipboardRestore) || text == "" {
+			return Selection{}, restoreErr
+		}
+		log.Printf("selection: clipboard restore incomplete: %v", restoreErr)
+	}
+	if text == "" {
+		return Selection{}, ErrNoSelection
+	}
+	return Selection{Text: text, Via: "clipboard"}, nil
+}
+
 // At most one failed snapshot stays in memory; never write it in the background.
-// New fallback copies are blocked until it is recovered or explicitly discarded.
+// An explicit retry is bound to the saved version, even after later grabs.
 var clipboardRecovery struct {
 	sync.Mutex
 	next     uint64

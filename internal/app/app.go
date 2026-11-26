@@ -279,33 +279,17 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	sel, err := grab(ctx)
 	valid := task.Valid()
 	log.Printf("selection: end entry=%d current=%t via=%s elapsed=%s err=%v", task.ID(), valid, sel.Via, time.Since(started).Round(time.Millisecond), err)
-	if !valid || errors.Is(err, selection.ErrSelfWindow) || errors.Is(err, selection.ErrSourceChanged) {
+	if !valid {
 		return
 	}
-	message := ""
-	switch {
-	case platform.SelectionPermissionMessage(err) != "":
-		message = platform.SelectionPermissionMessage(err)
-	case errors.Is(err, selection.ErrClipboardRestore):
-		message = "剪贴板未完整恢复，请先处理之前复制的内容。"
-	case errors.Is(err, selection.ErrClipboardUnsafe):
-		message = "当前剪贴板内容无法安全保留，请使用截图翻译或直接输入。"
-	case errors.Is(err, selection.ErrShortcutHeld):
-		message = "请松开快捷键和鼠标按键后重试，或直接输入要翻译的文字。"
-	case errors.Is(err, selection.ErrNoSelection):
-		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
-	case errors.Is(err, context.DeadlineExceeded):
-		message = "读取选中文字超时，请重试或使用截图翻译。"
-	case err != nil:
-		message = "当前应用暂时无法取词，请使用截图翻译或直接输入。"
-	}
+	message := selectionFeedback(err)
 	if err != nil {
 		log.Printf("selection: %v", err)
 	}
 	// Selection text is not OCR: preserve tabs, paragraph spacing and joiners.
 	sel.Text = strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(sel.Text, "\ufeff"), "\r\n", "\n"))
 	if sel.Text == "" && message == "" {
-		message = "未读取到选中文字，请重新选中后重试，或直接输入。"
+		message = selectionFeedback(selection.ErrNoSelection)
 	}
 	if message == "" {
 		if err := translate.ValidateInput(sel.Text); err != nil {
@@ -314,7 +298,7 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 		}
 	}
 	source := task.selectionSource(sel)
-	if task.minimal && (message == "" || selection.PendingClipboardRecovery() == "") {
+	if task.minimal {
 		if message != "" {
 			a.showMinimalEntryError(task, source, message)
 		} else {
@@ -334,6 +318,27 @@ func (a *application) grabSelection(task *entryTask, grab func(context.Context) 
 	shown := a.bubbles.ShowTask(a.settings(), "selection", sel.Text, anchor, phase, message, task.Valid, nil)
 	if shown.Win != nil && message == "" && task.Valid() {
 		a.runTranslation(shown.Win, bubble.RunReq{ReqID: shown.ReqID, SessionID: shown.ReqID, Revision: 0, Source: "selection", Text: sel.Text})
+	}
+}
+
+func selectionFeedback(err error) string {
+	if err == nil {
+		return ""
+	}
+	if message := platform.SelectionPermissionMessage(err); message != "" {
+		return message
+	}
+	switch {
+	case errors.Is(err, selection.ErrSelfWindow):
+		return "请先在其他应用中选中文字。"
+	case errors.Is(err, selection.ErrShortcutHeld):
+		return "请松开快捷键和鼠标按键后重试。"
+	case errors.Is(err, selection.ErrNoSelection):
+		return "请重新选中文字后重试。"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "读取选中文字超时，请重试。"
+	default:
+		return "这次没能读取选中的文字，可以试试截图翻译。"
 	}
 }
 

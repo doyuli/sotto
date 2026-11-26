@@ -25,7 +25,7 @@ var (
 
 // The caller pins the OS thread. Read delayed formats and record the final
 // sequence under one open, before copy can replace any original content.
-func saveClipboard() (snap *clipboardSnapshot, err error) {
+func saveClipboard() (snap *clipboardSnapshot, sequence uint32, err error) {
 	started := time.Now()
 	defer func() {
 		var formats, size int
@@ -37,10 +37,14 @@ func saveClipboard() (snap *clipboardSnapshot, err error) {
 		}
 		log.Printf("selection: clipboard stage=snapshot formats=%d bytes=%d elapsed=%s err=%v", formats, size, time.Since(started).Round(time.Millisecond), err)
 	}()
+	sequence = clipboardSeq()
 	if !openClipboard() {
-		return nil, fmt.Errorf("open clipboard for snapshot: clipboard remained unavailable")
+		return nil, sequence, fmt.Errorf("open clipboard for snapshot: clipboard remained unavailable")
 	}
 	defer closeClipboard()
+	if clipboardSeq() != sequence {
+		return nil, sequence, ErrSourceChanged
+	}
 	snap, err = snapshotClipboardFormats(func(previous uint16) (uint16, error) {
 		// Zero means either end-of-enumeration or failure. Clear the last
 		// error on this pinned thread so a stale error cannot mask the end.
@@ -54,11 +58,8 @@ func saveClipboard() (snap *clipboardSnapshot, err error) {
 		}
 		return uint16(id), nil
 	}, readClipboardFormat)
-	if err != nil {
-		return nil, err
-	}
-	snap.sequence = clipboardSeq()
-	return snap, nil
+	// Delayed rendering can advance the sequence even when a later format fails.
+	return snap, clipboardSeq(), err
 }
 
 func clipboardFormatName(id uint16) string {

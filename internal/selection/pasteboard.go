@@ -8,8 +8,8 @@ type pasteboardFormat struct {
 }
 type pasteboardItem []pasteboardFormat
 type macClipboardSnapshot struct {
-	items                 []pasteboardItem
-	change, restoreChange int64
+	items         []pasteboardItem
+	restoreChange int64
 }
 
 type pasteboardRestoreOps struct {

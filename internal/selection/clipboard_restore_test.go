@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -101,5 +102,27 @@ func TestPayloadFailurePreservesOtherFormatsAndRecovery(t *testing.T) {
 	DiscardClipboardRecovery(id)
 	if PendingClipboardRecovery() != "" {
 		t.Fatal("explicit discard retained snapshot")
+	}
+}
+
+// A stable selection used to be lost whenever writing back its backup failed.
+func TestFinishClipboardCopy(t *testing.T) {
+	for _, tc := range []struct {
+		name, text          string
+		restoreErr, wantErr error
+	}{
+		{"ordinary copy", "selected", nil, nil},
+		{"write failed after reading", "selected", ErrClipboardRestore, nil},
+		{"empty copy", "", nil, ErrNoSelection},
+		{"empty and write failed", "", ErrClipboardRestore, ErrClipboardRestore},
+		{"canceled", "stale", context.Canceled, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := finishClipboardCopy(tc.text, tc.restoreErr)
+			if !errors.Is(err, tc.wantErr) || (err != nil && got.Text != "") ||
+				(err == nil && (got.Text != tc.text || got.Via != "clipboard")) {
+				t.Errorf("selection=%+v err=%v", got, err)
+			}
+		})
 	}
 }

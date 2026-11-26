@@ -88,8 +88,8 @@ Selection translation follows a two-tier strategy in `internal/selection`:
    - Reads `kAXSelectedTextAttribute`. If text is present, it returns directly without touching the system clipboard.
 2. **Fallback Path (Guarded Simulated Copy)**:
    - When AX yields no selected text (`ErrNoSelection` or an empty successful result), Sotto may simulate `⌘C` via `CGEventPost`; other AX errors are returned. `IsSecureEventInputEnabled` blocks simulated copy in secure input contexts, returning `ErrClipboardUnsafe` before injection.
-   - **Pasteboard Preservation**: Before simulating copy, Sotto snapshots the current `NSPasteboard` content across all items, preserving all readable representations (plain text, RTF, images, file URLs) rather than downgrading to plain text.
-   - **Guards**: Pasteboard `changeCount` checks detect version changes; they do not identify the writer. The transaction also checks the source application, workspace generation, held controls, secure input, and local/global input events. If ownership becomes uncertain, retain the recovery backup, refuse to overwrite newer content, and pause further simulated copies until recovery is resolved or discarded. macOS provides no pasteboard lock or compare-and-swap operation, so these checks cannot make version validation and writing atomic.
+   - **Pasteboard Preservation**: Sotto attempts to snapshot every representation of every item before simulating copy. If a representation is unreadable or exceeds the budget, a stable copy can still supply the selection and remains on the pasteboard.
+   - **Guards**: Pasteboard `changeCount` checks detect version changes; they do not identify the writer. The transaction also checks the source application, workspace generation, held controls, secure input, and local/global input events. If ownership becomes uncertain, Sotto retains the available backup and leaves the current pasteboard alone. Future selection requests proceed normally. macOS provides no pasteboard lock or compare-and-swap operation, so these checks cannot make version validation and writing atomic.
 
 ---
 

@@ -3,6 +3,7 @@
 package selection
 
 import (
+	"errors"
 	"testing"
 	"testing/synctest"
 	"unsafe"
@@ -123,4 +124,24 @@ func TestUIAKeepsTextWhenBoundsStall(t *testing.T) {
 			t.Fatalf("got %+v, %v while bounds were pending", sel, err)
 		}
 	})
+}
+
+// Some foreground apps publish usable text without assigning an owner window.
+func TestCopyWithMissingOwnerIsReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		hwnd       uintptr
+		pid        uint32
+		canRestore bool
+		wantErr    error
+	}{
+		{0, 0, false, nil},
+		{1, 7, true, nil},
+		{1, 8, false, ErrSourceChanged},
+		{1, 0, false, ErrSourceChanged},
+	} {
+		restore, err := classifyClipboardOwner(7, tc.hwnd, tc.pid)
+		if restore != tc.canRestore || !errors.Is(err, tc.wantErr) {
+			t.Errorf("owner (%d, %d): restore=%t err=%v", tc.hwnd, tc.pid, restore, err)
+		}
+	}
 }
