@@ -34,6 +34,23 @@ func TestMacSelectionFallbackAndPermission(t *testing.T) {
 	}
 }
 
+func TestMacSelectionDropsTextWhenSourceChangesAfterAX(t *testing.T) {
+	// Stale text could reach the error bubble alongside the source-change error.
+	var sourceErr error
+	sel, err := readMacSelection(t.Context(), func(context.Context) error { return sourceErr },
+		func(bool) error { return nil },
+		func(context.Context) (Selection, error) {
+			sourceErr = ErrSourceChanged
+			return Selection{Text: "previous window", HasRect: true}, nil
+		}, func(context.Context) (Selection, error) {
+			t.Fatal("sent copy to a different window")
+			return Selection{}, nil
+		})
+	if sel != (Selection{}) || !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("selection=%+v err=%v", sel, err)
+	}
+}
+
 func TestMacCopyWaitsForLastShortcutKey(t *testing.T) {
 	// Releasing Option before D used to cancel an already injected copy.
 	originalKey, originalButton := keyState, buttonState

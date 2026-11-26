@@ -87,11 +87,7 @@ func TestPasteboardRestoreRejectsChangeAfterClear(t *testing.T) {
 	}
 }
 
-func TestPasteboardRestoreRejectsUnknownOwnershipAndCanceledGuard(t *testing.T) {
-	// Unknown ownership must not even materialize native replacement objects.
-	if err := restorePasteboardContents(-1, pasteboardRestoreOps{}); !errors.Is(err, ErrSourceChanged) {
-		t.Fatalf("unknown ownership: %v", err)
-	}
+func TestPasteboardRestoreRejectsCanceledGuard(t *testing.T) {
 	ops := pasteboardRestoreOps{
 		prepare: func() error { return nil },
 		allowed: func() bool { return false },

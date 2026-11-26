@@ -59,10 +59,11 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	}
 	var prepared *preparedClipboard
 	if err == nil {
+		stage = "prepare_restore"
 		prepared, err = prepareClipboardRestore(saved)
 	}
 	if err != nil {
-		log.Printf("selection: clipboard copy without restore: %v", err)
+		log.Printf("selection: clipboard copy without restore: stage=%s err=%v", stage, err)
 	} else {
 		defer prepared.free()
 	}
@@ -106,7 +107,7 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	if err != nil {
 		return Selection{}, err
 	}
-	text, _ := readClipboardText()
+	text := readClipboardText()
 	if err := watch.check("reading copy"); err != nil {
 		return Selection{}, err
 	}
@@ -119,23 +120,17 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	}
 	if !owned || !stillOwned || prepared == nil {
 		stage = "read_without_restore"
-		return finishClipboardCopy(text, ctx.Err())
+		return finishClipboardCopy(ctx, text, nil)
 	}
 	stage = "restore"
 	owner, cleanup, err := clipboardOwner()
 	if err != nil {
-		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
+		return finishClipboardCopy(ctx, text, err)
 	}
 	defer cleanup()
-	outcome, err := prepared.restore(owner, func() bool {
+	err = prepared.restore(owner, func() bool {
 		owned, _ := checkClipboardOwner(pid)
 		return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
 	})
-	switch outcome {
-	case restoreFailed:
-		return finishClipboardCopy(text, fmt.Errorf("%w: %w", ErrClipboardRestore, err))
-	case restoreSkipped:
-		return Selection{}, ErrSourceChanged
-	}
-	return finishClipboardCopy(text, ctx.Err())
+	return finishClipboardCopy(ctx, text, err)
 }

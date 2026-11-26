@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/ebitengine/purego/objc"
 	"os"
-	"sotto/internal/macnative"
 	"testing"
+
+	"github.com/ebitengine/purego/objc"
+
+	"sotto/internal/macnative"
 )
 
 func TestMacIsolatedPasteboardItems(t *testing.T) {
@@ -65,6 +67,15 @@ func TestMacIsolatedPasteboardItems(t *testing.T) {
 			t.Fatalf("cancellation: %v", err)
 		}
 
+		// Replace the original items before verifying the production write-back.
+		board.Send(macnative.Sel("clearContents"))
+		if !objc.Send[bool](board, macnative.Sel("setString:forType:"), macnative.String("temporary selection"), macnative.String("public.utf8-plain-text")) {
+			t.Fatal("write temporary selection")
+		}
+		seq := objc.Send[int64](board, macnative.Sel("changeCount"))
+		if err := restorePasteboard(board, saved, seq, func() bool { return true }); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
 		items := macnative.Items(board.Send(macnative.Sel("pasteboardItems")))
 		if len(items) != len(expected) {
 			t.Fatal("lost item boundary")
@@ -90,6 +101,5 @@ func TestMacIsolatedPasteboardItems(t *testing.T) {
 		if !errors.Is(err, ErrSourceChanged) {
 			t.Fatalf("shutdown: %v", err)
 		}
-
 	})
 }

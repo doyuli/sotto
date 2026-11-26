@@ -20,7 +20,7 @@ app.
 | Capability | Windows | macOS |
 | --- | --- | --- |
 | Selection | UIA, guarded simulated copy | Accessibility, guarded simulated copy |
-| Clipboard | Format snapshots and exclusion markers | All readable representations per item; uncertain ownership retains a recovery backup |
+| Clipboard | Format snapshots and exclusion markers | Per-item snapshots and version-checked automatic restoration |
 | Capture / OCR | GDI; PP-OCR with WinRT fallback | ScreenCaptureKit; Vision |
 | Speech | SAPI | AVFoundation |
 | Credentials | Credential Manager | Keychain |

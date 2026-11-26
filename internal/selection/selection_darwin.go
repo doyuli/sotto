@@ -97,7 +97,10 @@ func readMacSelection(ctx context.Context, check func(context.Context) error, pe
 	}
 	sel, err := read(ctx)
 	if err == nil && sel.Text != "" {
-		return sel, check(ctx)
+		if err := check(ctx); err != nil {
+			return Selection{}, err
+		}
+		return sel, nil
 	}
 	if err != nil && !errors.Is(err, ErrNoSelection) {
 		return Selection{}, err

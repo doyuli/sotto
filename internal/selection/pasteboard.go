@@ -16,9 +16,6 @@ type pasteboardRestoreOps struct {
 }
 
 func restorePasteboardContents(expected int64, ops pasteboardRestoreOps) error {
-	if expected < 0 {
-		return ErrSourceChanged
-	}
 	if err := ops.prepare(); err != nil {
 		return err
 	}

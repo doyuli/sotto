@@ -1,7 +1,9 @@
 package selection
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
 )
 
@@ -20,26 +22,15 @@ type clipboardSnapshot struct {
 	formats []clipboardFormat
 }
 
-type restoreOutcome uint8
-
-const (
-	restoreSkipped restoreOutcome = iota
-	restoreComplete
-	restoreFailed
-)
-
 // The caller holds the native clipboard open across the guard and all writes.
-func restoreClipboardFormats(count, markers int, unchanged func() bool, clear func() error, write func(int) error) (restoreOutcome, error) {
+func restoreClipboardFormats(count, markers int, unchanged func() bool, clear func() error, write func(int) error) error {
 	if !unchanged() {
-		return restoreSkipped, nil
+		return ErrSourceChanged
 	}
 	if err := clear(); err != nil {
-		return restoreFailed, err
+		return err
 	}
-	if err := writeClipboardFormats(count, markers, write); err != nil {
-		return restoreFailed, err
-	}
-	return restoreComplete, nil
+	return writeClipboardFormats(count, markers, write)
 }
 
 // Retry only the failing format, while still holding the clipboard open.
@@ -65,10 +56,16 @@ func writeClipboardFormats(count, markers int, write func(int) error) error {
 
 // A failed write-back does not invalidate text already read from a stable copy.
 // Even an empty selection must run restoration if the copy replaced the clipboard.
-func finishClipboardCopy(text string, restoreErr error) (Selection, error) {
+func finishClipboardCopy(ctx context.Context, text string, restoreErr error) (Selection, error) {
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
+	if errors.Is(restoreErr, ErrSourceChanged) {
+		return Selection{}, restoreErr
+	}
 	if restoreErr != nil {
-		if !errors.Is(restoreErr, ErrClipboardRestore) || text == "" {
-			return Selection{}, restoreErr
+		if text == "" {
+			return Selection{}, fmt.Errorf("restore clipboard: %w", restoreErr)
 		}
 		log.Printf("selection: clipboard restore incomplete: %v", restoreErr)
 	}
