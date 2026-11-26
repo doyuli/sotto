@@ -196,14 +196,16 @@ func copyControlsHeld() bool {
 	return false
 }
 
+// Monitor key, modifier, and mouse button events. Scrolling can continue during capture.
+const macCopyInputMask uint64 = 1<<1 | 1<<2 | 1<<3 | 1<<4 | 1<<10 | 1<<11 | 1<<12 | 1<<25 | 1<<26
+
 func watchMacCopyInput() (*copyInputState, func(), error) {
 	state := &copyInputState{marker: uintptr(0x5354544f00000000 | copyMarker.Add(1))}
 	var stops []func()
 	var err error
 	mygo.RunOnMain(func() {
-		const mask uint64 = 1<<1 | 1<<2 | 1<<3 | 1<<4 | 1<<10 | 1<<11 | 1<<12 | 1<<22 | 1<<25 | 1<<26
 		for _, local := range []bool{false, true} {
-			stop, e := macnative.Monitor(mask, local, func(event objc.ID) {
+			stop, e := macnative.Monitor(macCopyInputMask, local, func(event objc.ID) {
 				cg := event.Send(macnative.Sel("CGEvent"))
 				if cg == 0 || uintptr(getField(uintptr(cg), 42)) != state.marker {
 					state.invalidate(copyInputKey)

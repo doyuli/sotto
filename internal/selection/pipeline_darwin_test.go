@@ -75,3 +75,16 @@ func TestMacCopyWaitsForLastShortcutKey(t *testing.T) {
 		}
 	})
 }
+
+func TestMacCopyMonitorAllowsScrollAndWatchesButtons(t *testing.T) {
+	// AppKit delivers wheel and trackpad scrolling as NSEventTypeScrollWheel.
+	const scrollWheel = 22
+	if macCopyInputMask&(1<<scrollWheel) != 0 {
+		t.Fatal("scrolling would interrupt the copy")
+	}
+	for _, event := range []uint{1, 2, 3, 4, 25, 26} {
+		if macCopyInputMask&(1<<event) == 0 {
+			t.Fatalf("missing mouse button event %d", event)
+		}
+	}
+}

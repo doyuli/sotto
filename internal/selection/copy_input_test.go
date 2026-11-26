@@ -45,21 +45,20 @@ func TestCopyMarkerMustMatchCurrentTransactionAndInjectedFlag(t *testing.T) {
 	}
 }
 
-func TestPointerMovementAllowsCopyUntilButtonOrWheelInput(t *testing.T) {
-	s := &copyInputState{marker: 123}
-	s.observeMouse(true)
-	s.observeKey(true, 123)
-	s.observeMouse(true)
-	if err := s.check("settling copy formats"); err != nil {
-		t.Fatalf("pointer movement alone interrupted copy: %v", err)
+func TestWindowsScrollingAllowsCopyUntilMouseButtonInput(t *testing.T) {
+	// Scrolling a document while waiting for the clipboard used to discard the selection.
+	var s copyInputState
+	for _, msg := range []uintptr{0x0200, 0x020A, 0x020E} { // move, vertical wheel, horizontal wheel
+		s.observeWindowsMouse(msg)
 	}
-
-	s.observeMouse(false)
-	s.observeMouse(true)
+	if err := s.check("reading copy"); err != nil {
+		t.Fatalf("movement or scrolling interrupted copy: %v", err)
+	}
+	s.observeWindowsMouse(0x0207) // Pressing the wheel is a middle-button click.
+	s.observeWindowsMouse(0x020A)
 	s.invalidate(copyInputStopped)
-	err := s.check("settling copy formats")
-	if !errors.Is(err, ErrSourceChanged) || !strings.Contains(err.Error(), "mouse button or wheel event") {
-		t.Fatalf("expected the original mouse input to invalidate copy, got %v", err)
+	if err := s.check("reading copy"); !errors.Is(err, ErrSourceChanged) || !strings.Contains(err.Error(), "mouse button event") {
+		t.Fatalf("expected the original button press to invalidate copy, got %v", err)
 	}
 }
 

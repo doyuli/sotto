@@ -14,10 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const (
-	whKeyboardLL = 13
-	wmMouseMove  = 0x0200
-)
+const whKeyboardLL = 13
 
 type keyboardHookInput struct {
 	key, scan, flags, time uint32
@@ -110,7 +107,7 @@ func copyKeyboardHook(code int, wp, lp uintptr) uintptr {
 func copyMouseHook(code int, wp, lp uintptr) uintptr {
 	if code == 0 {
 		if state := activeCopyInput.Load(); state != nil {
-			state.observeMouse(wp == wmMouseMove)
+			state.observeWindowsMouse(wp)
 		}
 	}
 	r, _, _ := procCallNextHookEx.Call(0, uintptr(code), wp, lp)

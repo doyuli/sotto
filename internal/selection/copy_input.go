@@ -32,8 +32,16 @@ func (s *copyInputState) observeKey(injected bool, marker uintptr) {
 
 // All buttons must be released before injection. A drag that starts
 // during the copy will invalidate it on the button press.
-func (s *copyInputState) observeMouse(moveOnly bool) {
-	if !moveOnly {
+func (s *copyInputState) observeWindowsMouse(message uintptr) {
+	const (
+		wmMouseMove   = 0x0200
+		wmMouseWheel  = 0x020A
+		wmMouseHWheel = 0x020E
+	)
+	switch message {
+	case wmMouseMove, wmMouseWheel, wmMouseHWheel:
+		return
+	default:
 		s.invalidate(copyInputMouse)
 	}
 }
@@ -49,7 +57,7 @@ func (s *copyInputState) check(stage string) error {
 	case copyInputInjectedKey:
 		cause = "other injected key event"
 	case copyInputMouse:
-		cause = "mouse button or wheel event"
+		cause = "mouse button event"
 	case copyInputStopped:
 		cause = "input watcher stopped"
 	default:
