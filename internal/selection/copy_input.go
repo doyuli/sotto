@@ -58,6 +58,17 @@ func (s *copyInputState) check(stage string) error {
 	return fmt.Errorf("%s while %s: %w", cause, stage, ErrSourceChanged)
 }
 
+// Opening the clipboard for restoration may fail before its write guard ever runs.
+func (s *copyInputState) finishAfterRestore(ctx context.Context, text string, restoreErr error, sourceForeground bool) (Selection, error) {
+	if !sourceForeground {
+		return Selection{}, fmt.Errorf("foreground after clipboard restore attempt: %w", ErrSourceChanged)
+	}
+	if err := s.check("finishing clipboard restoration"); err != nil {
+		return Selection{}, err
+	}
+	return finishClipboardCopy(ctx, text, restoreErr)
+}
+
 const inputReleaseWait = 1200 * time.Millisecond
 
 // waitCopyRelease waits for the entire shortcut to come up on its own. A

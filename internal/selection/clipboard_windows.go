@@ -124,13 +124,12 @@ func grabClipboardFrom(ctx context.Context, hwnd uintptr, pid uint32, class stri
 	}
 	stage = "restore"
 	owner, cleanup, err := clipboardOwner()
-	if err != nil {
-		return finishClipboardCopy(ctx, text, err)
+	if err == nil {
+		err = prepared.restore(owner, func() bool {
+			owned, _ := checkClipboardOwner(pid)
+			return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
+		})
+		cleanup()
 	}
-	defer cleanup()
-	err = prepared.restore(owner, func() bool {
-		owned, _ := checkClipboardOwner(pid)
-		return owned && clipboardSeq() == seq && sameForeground(hwnd, pid) && watch.unchanged()
-	})
-	return finishClipboardCopy(ctx, text, err)
+	return watch.finishAfterRestore(ctx, text, err, sameForeground(hwnd, pid))
 }

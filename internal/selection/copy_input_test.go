@@ -63,6 +63,38 @@ func TestPointerMovementAllowsCopyUntilButtonOrWheelInput(t *testing.T) {
 	}
 }
 
+func TestCopySourceAfterRestore(t *testing.T) {
+	// A busy clipboard could bypass the write guard and publish text after a window switch.
+	busy := errors.New("clipboard remained unavailable")
+	for _, tc := range []struct {
+		name       string
+		foreground bool
+		keyPressed bool
+		restoreErr error
+		wantErr    error
+	}{
+		{"busy but still current", true, false, busy, nil},
+		{"switched windows while busy", false, false, busy, ErrSourceChanged},
+		{"typed while busy", true, true, busy, ErrSourceChanged},
+		{"switched windows during successful write", false, false, nil, ErrSourceChanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var watch copyInputState
+			if tc.keyPressed {
+				watch.observeKey(false, 0)
+			}
+			got, err := watch.finishAfterRestore(t.Context(), "selected", tc.restoreErr, tc.foreground)
+			want := Selection{}
+			if tc.wantErr == nil {
+				want = Selection{Text: "selected", Via: "clipboard"}
+			}
+			if got != want || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("selection=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
 func TestCopyReleaseStopsOnTimeoutOrCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		held := func() bool { return true }
