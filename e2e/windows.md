@@ -36,15 +36,28 @@ Run the [Translation History checklist](README.md#translation-history) with a bu
 
 ## Manual Selection and Clipboard Acceptance
 
-Requires a Windows desktop session. Host unit tests and Windows cross-compilation cannot replace native clipboard acceptance.
+Use a Windows desktop. Run `sotto.exe --grab clipboard`, switch to the target app, and select text within three seconds to exercise simulated copy. Compare with `--grab uia`: a successful UIA read leaves the clipboard untouched. The command writes captured text to stdout as JSON and diagnostic metadata to stderr.
 
-- Copy an image with Win+Shift+S, WeChat/QQ/Snipaste, or a browser, then double-click words in the VS Code editor and the chat interfaces actually used and trigger selection translation. Compare behavior with plain text, HTML/RTF, copied files, and cut files on the clipboard. Paste the original content after capture and check preservation of images, rich text, file lists, and cut semantics.
-- Test ordinary screenshots, transparent PNGs, 4K screenshots, large multi-display screenshots, and palette images separately. Preserve original PNG/other registered formats and both DIB representations. Check dimensions, pixels, transparency, and color; compare raw data for every backed-up format before and after restoration. Confirm requesting CF_BITMAP after restoration still yields a valid bitmap. Preserve CF_PALETTE colors and entry flags as well.
-- A successful UIA path bypasses the clipboard entirely. To test image fallback independently, run `sotto.exe --grab clipboard`, switch to the target window, and select text within the 3-second wait. This diagnostic command's stdout JSON includes captured text; added diagnostics go to stderr and contain only format metadata and status. Compare UIA separately with `--grab uia`; persistent slot occupancy must be observed within one long-running process.
-- The total snapshot budget is 128 MiB; non-DIB/DIBV5 data remains limited to 32 MiB combined. A 4K DIB+DIBV5 pair can be backed up together. With an oversized or unreadable format, verify a fresh selection translates and remains available to paste. Repeat with an ownerless source that publishes formats in several batches. Check that the panel translates the selected text and that pasting yields that same text. Repeat with no selection and an identifiable old clipboard value. A copy that leaves the sequence unchanged must show feedback and never translate the old value. Windows waits up to one second for the clipboard sequence to change and settle after injecting copy.
-- During selection capture, manually copy new content, switch apps, or interrupt with keys or mouse buttons. New content takes priority; late results do not overwrite the clipboard. Move the pointer or scroll vertically or horizontally during capture and verify the selected text still translates. Pressing the wheel as a middle button interrupts capture. If the clipboard stays busy during restoration, verify the stable selection still translates while the source remains current. Repeat and switch windows or press a key during the restore attempt. The old selection must be discarded. The next shortcut and manual input panel should work normally.
-- Check that Sotto's restoration writes still include all three exclusion formats: CanIncludeInClipboardHistory=DWORD(0), CanUploadToCloudClipboard=DWORD(0), and the presence of ExcludeClipboardContentFromMonitorProcessing. Inspect Windows history and the clipboard managers actually used. Temporary writes made by the target app in response to simulated copy are outside Sotto's control; restoration markers cannot guarantee they never entered history.
-- Logs must distinguish UIA `empty`/`miss`, `timeout`, `slot_busy`, `breaker_open`, and late worker returns. A permanently blocked call must not cause additional COM calls. Clipboard failures should include stage, format ID/name, size or budget, and timing, without content. For copies logged as proceeding without restoration, save that run's source → uia → clipboard → end logs, distinguishing the source of the selected text from the source of the original clipboard content.
+- Double-click a word in VS Code and in your usual chat app. Trigger selection translation with plain text, HTML/RTF, an image, a copied file, and a cut file on the clipboard. Paste after each run and check the original content, formatting, or file operation.
+- Copy images from Win+Shift+S, WeChat/QQ/Snipaste, or a browser. Include transparent PNGs, 4K and multi-display screenshots, and palette images. Compare raw bytes for each restored format, including registered formats and both DIB representations. Verify dimensions, pixels, transparency, color, synthesized `CF_BITMAP`, and `CF_PALETTE` colors and flags.
+
+| Action | Expected result |
+| --- | --- |
+| Start with a 4K DIB and DIBV5 pair within the 128 MiB total budget. | Both formats are restored. |
+| Include an unreadable format, exceed 128 MiB total, or exceed 32 MiB across non-DIB/DIBV5 formats. | The fresh selection translates and remains available to paste. |
+| Select text in an app that publishes clipboard formats in batches without an owner window. | The panel translates the final selection. Pasting yields the same text. |
+| Copy a recognizable value, then trigger capture with no selection and no clipboard sequence change. | The bubble shows feedback after the one-second copy wait. The old value stays on the clipboard. |
+| Manually copy new content during capture. | The new copy remains available to paste. |
+| Move the pointer or scroll vertically or horizontally during capture. | The selection translates. |
+| Press the wheel as a middle button, press another mouse button or key, or switch windows during capture. | The pending selection is discarded. |
+| Keep the clipboard busy during restoration and stay in the source window. | The selection already read still translates. |
+| Switch windows or press a key during that same restoration attempt. | The pending selection is discarded. |
+
+After an interrupted capture, verify that the next shortcut and the manual input panel both work.
+
+- Inspect Windows clipboard history and your usual clipboard manager. Check Sotto's restoration writes for `CanIncludeInClipboardHistory=DWORD(0)`, `CanUploadToCloudClipboard=DWORD(0)`, and `ExcludeClipboardContentFromMonitorProcessing`. The source app's temporary copy may appear in history.
+- Check UIA logs for `empty`, `miss`, `timeout`, `slot_busy`, `breaker_open`, and late worker returns. Keep one process running to verify that a blocked worker prevents further COM calls.
+- For clipboard failures, check the stage, format ID/name, size or budget, and timing. Logs should omit clipboard content. For a copy without restoration, save the source → UIA → clipboard → end trace and identify both the app supplying the selection and the app that supplied the original clipboard.
 
 ## Manual Native Screenshot Acceptance and Measurement
 

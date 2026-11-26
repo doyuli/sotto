@@ -125,19 +125,11 @@ Bubble view state belongs to the UI thread. Publish background results through `
 
 ## Clipboard Restoration
 
-After a failed restoration, translation proceeds with the text already read from the stable copy. The input panel remains available for typing and subsequent simulated copies can proceed.
+Sotto restores the previous clipboard when it has a complete backup and can verify that the simulated copy is still current. If it detects a newer copy or cannot verify ownership, it leaves the clipboard alone.
 
-Windows allocates all formats before recovery and uses a valid HWND when writing them back. Retry only failed formats. If exclusion markers fail, do not write content. Automatic restoration checks the clipboard sequence number while holding the clipboard open. Newer user copies take priority.
+Once Sotto has read a stable selection, it can translate it even if restoration fails. Discard the result if the source window changes or user input cancels capture before delivery. A later shortcut or manual translation can proceed normally.
 
-macOS preserves all readable representations per item and prepares all native replacement objects before clearing. Verify the expected version before clearing and check the version returned by `clearContents` before writing. When ownership is uncertain, leave the current pasteboard alone. The backup is scoped to the current copy transaction. macOS has no clipboard lock or CAS; version checks cannot make the check and write atomic.
-
-Snapshots retain DIB, DIBV5, and other readable formats. Omit the Windows-synthesizable CF_BITMAP only after at least one DIB/DIBV5 has actually been backed up. Preserve both DIB representations without assuming identical transparency/color metadata. Save CF_PALETTE as LOGPALETTE through GetObjectW / GetPaletteEntries, then create a recovery handle with CreatePalette; release palette handles whose ownership was not transferred with DeleteObject. Other unsupported GDI/owner/display formats and unreadable registered formats disable restoration for that copy. Enumeration failure must not be treated as an empty clipboard. [Format conversion rules](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
-
-DIB/DIBV5 may use the total 128 MiB snapshot budget; other formats remain limited to 32 MiB combined. Small images do not relax the private-format limit. Check the remaining budget before each data read. This budget does not cap process-memory growth: Go snapshots and preallocated native memory coexist, allowing roughly 256 MiB of backup payload in addition to the original clipboard, Go GC, and other runtime overhead. Reject over-budget content conservatively; do not crop original images or discard unknown formats.
-
-Diagnostic logs distinguish UIA selected, empty, miss, timeout, slot_busy, breaker_open, error, and canceled states. They also record worker return latency to identify COM calls still running after request timeout. UIA's 800 ms request timeout, 150 ms queue wait, and existing circuit-breaker rules remain unchanged; the actual COM worker still returns the slot. Clipboard logs record enumerated format IDs/names, bytes read/timing, and failure stages such as snapshot, prepare_restore, watch_input, and restore. They do not log clipboard or selected-text content. The existing `--grab` command's stdout JSON still includes captured text by design.
-
-Windows temporarily installs low-level keyboard and mouse hooks during simulated copy. Each copy's SendInput carries a distinct ExtraInfo marker; the keyboard hook ignores injected events carrying that copy's marker. Confirm mouse buttons are released before copying. Pointer movement and wheel scrolling allow selection capture to continue. Other keyboard events and mouse button presses or releases cancel the transaction; logs record only the category of the first cancellation reason. Uninstall hooks afterward; refuse simulated copy if installation fails. Changes in GetLastInputInfo must no longer be used to distinguish user actions from this copy's simulated keys.
+Platform-specific checks are documented in the [Windows clipboard fallback](windows.md#3-selection-text-capture-and-clipboard-discipline) and [macOS selection capture](macos.md#3-selection-text-capture) sections.
 
 ## State Verification Boundaries
 
