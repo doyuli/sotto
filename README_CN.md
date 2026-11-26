@@ -146,3 +146,9 @@ Windows 打包脚本通过 `mygo_nowebview` 排除 WebView2。只构建一种架
 - [Easydict](https://github.com/tisfeng/Easydict)：为 Sotto 的设计交互与多服务对比体验提供了灵感与范式。
 - [Mygo](https://mygo.egoist.dev/)：提供了轻量优雅的 Go 桌面 UI 应用框架支持。
 - [LINUX DO](https://linux.do/)：社区为 Sotto 提供了支持。
+
+---
+
+## 开源许可
+
+GPL-3.0-only。详见 [LICENSE](LICENSE)。

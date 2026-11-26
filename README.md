@@ -146,3 +146,9 @@ The Windows build scripts exclude WebView2 with `mygo_nowebview`. Use `bun run b
 - [Easydict](https://github.com/tisfeng/Easydict): For inspiring Sotto's multi-engine comparison design and user experience.
 - [Mygo](https://mygo.egoist.dev/): The lightweight, modern Go desktop UI framework powering Sotto.
 - [LINUX DO](https://linux.do/): For the community's support of Sotto.
+
+---
+
+## License
+
+GPL-3.0-only. See [LICENSE](LICENSE).
