@@ -5,7 +5,7 @@
 <h1 align="center">Sotto</h1>
 
 <p align="center">
-  <strong>Select, snip, compare side by side — a lightweight native translator for Windows &amp; macOS</strong>
+  Select, snip, compare side by side — a lightweight native translator for Windows &amp; macOS
 </p>
 
 <p align="center">
@@ -20,65 +20,51 @@
 </p>
 
 <p align="center">
-  Non-intrusive Selection · Offline Screen OCR · Streaming Multi-Engine Comparison · Minimal Overlays · Identifier Naming Styles
-</p>
-
-<p align="center">
   <img src="docs/modes-preview.png" width="100%" alt="Sotto Bubble Mode and Minimal Translation Mode preview">
 </p>
 
----
-
 ## Features
 
-### 1. Dual Modes: Deep Comparison or Quiet Reading
-- **Bubble Mode**: Query multiple translation engines concurrently with live streaming results; fold or retry individual cards, pin the window in place, and play native system TTS.
-- **Minimal Translation Mode**: Display selection and snip results as compact, text-only floating overlays right beside your target region. Multiple results coexist independently with smooth scrolling and drag-to-reposition, keeping reading and side-by-side work distraction-free—while the input shortcut still summons the full bubble anytime.
+### Dual Display Modes
+- Bubble Mode: Query multiple translation engines concurrently with live streaming results, per-card folding and retries, window pinning, and native system TTS.
+- Minimal Overlay Mode: Show selection and snip translations as text-only floating overlays right beside the target region—multiple results coexist independently with smooth scrolling and drag-to-reposition, while the input shortcut still opens the full bubble anytime.
 
-### 2. Crafted for Code & Daily Reading
-- **Identifier Naming Styles**: Copy English translations with one click into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
-- **Smart Text Preprocessing**: Optionally auto-split `camelCase`/`snake_case` identifiers, strip code comments and Markdown syntax, or flatten line breaks from PDFs and docs before translating.
-- **Searchable Local History**: Search saved originals and translations instantly, navigate with keyboard shortcuts to copy on `Enter`, play TTS, or re-translate with other engines.
+### Built for Code & Daily Reading
+- Identifier Naming Styles: Copy English translations with one click into `camelCase`, `PascalCase`, `snake_case`, `CONSTANT_CASE`, or `kebab-case`.
+- Smart Text Preprocessing: Optionally auto-split `camelCase`/`snake_case` identifiers, strip code comments and Markdown syntax, or flatten line breaks from PDFs and docs before translating.
+- Searchable Local History: Search saved originals and translations instantly, navigate with keyboard shortcuts to copy on `Enter`, play TTS, or re-translate with another engine.
 
-### 3. Native, Lightweight & Private by Default
-- **Pure-Go Native UI without WebView**: Built with `CGO_ENABLED=0` (excludes WebView2 on Windows; runs as a menu-bar accessory with no Dock icon on macOS). Non-activating result overlays stay out of your focus and dismiss automatically on blur.
-- **Clipboard-Friendly Selection**: Reads selected text via OS accessibility APIs (Windows UIA / macOS AX) first, preserving your existing clipboard whenever possible.
-- **Offline Screen OCR & Dictionary**: Windows embeds PP-OCR (with WinRT fallback) and macOS uses native Apple Vision—screenshots never leave your machine. A bundled offline dictionary gives instant phonetics and Chinese definitions for single English words.
-- **Zero Telemetry & OS Keyring**: Zero analytics or tracking; API keys live securely in Windows Credential Manager or macOS Keychain.
-
----
+### Native, Lightweight & Private
+- Pure-Go Native UI: Built with `CGO_ENABLED=0` (excludes WebView2 on Windows; runs as a menu-bar accessory with no Dock icon on macOS). Non-activating overlays never steal focus and hide automatically on blur.
+- Clipboard-Friendly Selection: Reads selected text via OS accessibility APIs (Windows UIA / macOS AX) first, keeping your existing clipboard intact whenever possible.
+- Offline OCR & Dictionary: Windows embeds PP-OCR (with WinRT fallback) and macOS uses native Apple Vision—screenshots never leave your device. A bundled offline dictionary delivers instant phonetics and Chinese definitions for single English words.
+- OS Keyring & Zero Telemetry: Zero analytics or tracking; API keys are stored securely in Windows Credential Manager or macOS Keychain.
 
 ## Translation Engines
 
 Toggle engines, drag to reorder cards, or configure custom LLM endpoints right inside Settings:
 
-| Category | Supported Services | Details |
-| :--- | :--- | :--- |
-| **Keyless · Ready Out of the Box** | Offline Dictionary, Youdao Dictionary & Translation, Bilibili (Index), Google Translate, Magpie | Offline dictionary works without network; Magpie auto-discovers local gateway models and routes |
-| **AI LLMs** | OpenAI-Compatible, SiliconFlow, Zhipu AI | Streaming responses with custom Base URLs and models (DeepSeek, Qwen, GLM, etc.) |
-| **Machine Translation APIs** | DeepL (Free / Pro), Volcengine (ByteDance), Baidu Translate, Tencent Cloud (TMT), Youdao, Microsoft Azure | Bring your own API keys for fast, reliable side-by-side comparison |
+- **Keyless**: Offline Dictionary (local phonetics & definitions), Youdao Dictionary & Translation, Bilibili (Index), Google Translate, Magpie (auto-discovers local gateway models and routes)
+- **AI LLMs**: OpenAI-Compatible (custom Base URL & model for DeepSeek, Qwen, etc.), SiliconFlow, Zhipu AI
+- **Machine Translation APIs**: DeepL (Free / Pro), Volcengine (ByteDance), Baidu Translate, Tencent Cloud (TMT), Youdao, Microsoft Azure
 
 > [!NOTE]
 > Dictionary lookups and screen OCR run entirely locally. Online translation text is sent only to the providers you explicitly enable.
 
----
-
-## Shortcuts & Usage
+## Shortcuts & Controls
 
 All global shortcuts can be customized in Settings → Shortcuts:
 
 | Action | Windows Default | macOS Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Open Translation Panel** | `Ctrl + Alt + A` | `⌥ Option + A` | Toggle the input bubble (`Enter` to translate, `Shift + Enter` for newline) |
-| **Screen Snip Translation** | `Ctrl + Alt + S` | `⌥ Option + S` | Capture any screen region for local OCR and instant translation |
-| **Selection Translation** | `Ctrl + Alt + D` | `⌥ Option + D` | Read highlighted text in the active app and pop up results beside it |
-| **Toggle Minimal Mode** | `Ctrl + Alt + F` | `⌥ Option + F` | Switch future selection/snip results between full Bubble and text-only Overlay |
-| **Open Translation History** | `Ctrl + Alt + H` | `⌥ Option + H` | Toggle Translation History to search, copy, or re-translate past entries |
+| Open Translation Panel | `Ctrl + Alt + A` | `⌥ Option + A` | Toggle the input bubble (`Enter` to translate, `Shift + Enter` for newline) |
+| Screen Snip Translation | `Ctrl + Alt + S` | `⌥ Option + S` | Capture any screen region for local OCR and instant translation |
+| Selection Translation | `Ctrl + Alt + D` | `⌥ Option + D` | Read highlighted text in the active app and pop up results beside it |
+| Toggle Minimal Mode | `Ctrl + Alt + F` | `⌥ Option + F` | Switch future selection/snip results between full Bubble and text-only Overlay |
+| Open Translation History | `Ctrl + Alt + H` | `⌥ Option + H` | Toggle Translation History to search, copy, or re-translate past entries |
 
-- **Bubble Window**: Automatically hides on blur, or click the pin icon to keep it visible; press `Esc` to close.
-- **Minimal Overlay**: Drag anywhere to move, scroll smoothly through long results, and press `Esc` or right-click to dismiss.
-
----
+- Bubble Window: Automatically hides on blur, or click the pin icon to keep it visible; press `Esc` to close.
+- Minimal Overlay: Drag anywhere to move, scroll smoothly through long results, and press `Esc` or right-click to dismiss.
 
 ## Download & Installation
 
@@ -86,19 +72,17 @@ Download the package for your platform from [GitHub Releases](https://github.com
 
 | OS | Architecture | Package |
 | :--- | :--- | :--- |
-| **Windows 10 / 11** | x64 (`x86_64`) | `sotto-setup-<version>-amd64.exe` |
-| **Windows 10 / 11** | ARM64 (`arm64`) | `sotto-setup-<version>-arm64.exe` |
-| **macOS 14+** | Apple Silicon (`arm64`) | `sotto-<version>-arm64.dmg` |
+| Windows 10 / 11 | x64 (`x86_64`) | `sotto-setup-<version>-amd64.exe` |
+| Windows 10 / 11 | ARM64 (`arm64`) | `sotto-setup-<version>-arm64.exe` |
+| macOS 14+ | Apple Silicon (`arm64`) | `sotto-<version>-arm64.dmg` |
 
 <details>
-<summary><strong>macOS First-Launch Guide (Gatekeeper & Permissions)</strong></summary>
+<summary>macOS First-Launch Guide (Gatekeeper & Permissions)</summary>
 
-1. **Gatekeeper Approval**: The macOS build uses ad-hoc signing. After dragging Sotto to `Applications`, if Gatekeeper blocks the first launch, open System Settings → Privacy & Security and click "Open Anyway" ([Apple Support](https://support.apple.com/en-us/102445)).
-2. **Permissions**: Selection translation requires Accessibility permission; screen snip OCR requires Screen Recording permission.
+1. Gatekeeper Approval: The macOS build uses ad-hoc signing. After dragging Sotto to `Applications`, if Gatekeeper blocks the first launch, open System Settings → Privacy & Security and click "Open Anyway" ([Apple Support](https://support.apple.com/en-us/102445)).
+2. Permissions: Selection translation requires Accessibility permission; screen snip OCR requires Screen Recording permission.
 
 </details>
-
----
 
 ## Development & Building
 
@@ -112,7 +96,7 @@ bunx mygo vet .             # Check MyGo UI usage and lifetimes
 ```
 
 <details>
-<summary><strong>Release Builds & E2E Testing</strong></summary>
+<summary>Release Builds & E2E Testing</summary>
 
 ```bash
 bun run build:win   # Build Windows x64/arm64 executables, OCR assets, and NSIS installers
