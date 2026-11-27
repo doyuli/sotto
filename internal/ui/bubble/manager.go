@@ -332,10 +332,7 @@ func (m *Manager) blurHandler(b *bubble) func() {
 // hideAfterBlur runs on the main thread, including for foreground notifications
 // from an owned popup that does not deliver another blur to the bubble itself.
 func (m *Manager) hideAfterBlur(b *bubble, showID int64, press selection.PrimaryPress) {
-	visible, focused := b.win.IsVisible(), b.win.IsFocused()
-	if (runtime.GOOS == "windows" || runtime.GOOS == "darwin") && !focused {
-		focused = selection.WindowOwnsForeground(b.win.NativeHandle())
-	}
+	visible, focused := b.win.IsVisible(), selection.WindowHasFocus(b.win)
 	m.mu.Lock()
 	hide := b.shouldHideAfterBlur(showID, visible, focused)
 	m.mu.Unlock()

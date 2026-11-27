@@ -39,7 +39,7 @@ func TestOpenAtLoginSurvivesQueuedSettingsSave(t *testing.T) {
 	defer view.Dispose()
 	a.settingsView = view
 	tt := ui.NewTester(view.Render, 780, 600)
-	if err := tt.Click("切换失焦自动隐藏"); err != nil {
+	if err := tt.Click("切换气泡失焦自动隐藏"); err != nil {
 		t.Fatal(err)
 	}
 	<-started

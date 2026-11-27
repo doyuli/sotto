@@ -33,17 +33,16 @@ func (v *View) renderHistorySettings(c *ui.Context, p settingsPalette, cfg confi
 	busy := v.historyBusy
 	v.mu.Unlock()
 
-	ui.Text(c, "翻译历史").FontSize(16).FontWeight(600).TextColor(p.fg)
-	ui.Column(c).FillWidth().Radius(12).Background(p.card).Border(1, p.border).Children(func() {
+	renderSettingsSection(c, p, "翻译历史", func() {
 		enabled := cfg.Enabled
-		v.renderSettingRow(c, p, "记录翻译历史", "原文和译文保存在本机。关闭后仍可查看已有记录。", true, func() {
+		v.renderSettingRow(c, p, "记录翻译历史", "原文和译文保存在本机。关闭后仍可查看已有记录", true, func() {
 			ui.Switch(c, &enabled).Label("切换记录翻译历史").Disabled(busy).OnClick(func() {
 				next := cfg
 				next.Enabled = enabled
 				v.saveHistory(next, 0)
 			})
 		})
-		v.renderSettingRow(c, p, "保留期限", "从每条原文最近一次翻译起算，过期记录自动删除。", true, func() {
+		v.renderSettingRow(c, p, "保留期限", "从每条原文最近一次翻译起算，过期记录自动删除", true, func() {
 			selected := cfg.RetentionDays
 			parts := ui.SelectBase(c, &selected)
 			trigger := parts.Trigger.Label("选择历史保留期限").Disabled(busy).MinWidth(100).
@@ -70,7 +69,7 @@ func (v *View) renderHistorySettings(c *ui.Context, p settingsPalette, cfg confi
 				}
 			})
 		})
-		v.renderSettingRow(c, p, "清空历史", "删除所有已保存的原文和译文。", false, func() {
+		v.renderSettingRow(c, p, "清空历史", "删除所有已保存的原文和译文", false, func() {
 			v.renderSecondaryButtonDisabled(c, p, "清空历史", "清空翻译历史", busy || v.actions.ClearHistory == nil, func() {
 				v.mu.Lock()
 				v.historyPrompt = &historyConfirmation{clear: true}

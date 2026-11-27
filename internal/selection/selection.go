@@ -22,6 +22,12 @@ type PrimaryPress struct {
 	Point mygo.Point
 }
 
+// WindowHasFocus includes owned popups that can hold focus after the window
+// itself blurs. Call on the UI thread when handling a queued dismissal.
+func WindowHasFocus(w *mygo.Window) bool {
+	return w.IsFocused() || WindowOwnsForeground(w.NativeHandle())
+}
+
 // Selection is what a grab found. Rect is the selection's on-screen
 // bounds, when the path could see them, for placing the bubble.
 type Selection struct {

@@ -129,6 +129,29 @@ func TestMinimalJobsSurviveModeSwitch(t *testing.T) {
 	}
 }
 
+func TestNewEntryDismissesAutoHidingMinimalResults(t *testing.T) {
+	// A slow selection used to surface after opening the panel or starting another translation.
+	for _, action := range []string{"panel", "selection", "ocr"} {
+		t.Run(action, func(t *testing.T) {
+			for _, autoHide := range []bool{true, false} {
+				a := &application{cfg: config.Settings{MinimalTranslation: true, MinimalAutoHide: autoHide}}
+				task := a.beginEntry("selection")
+				ctx, ok := a.beginMinimalJob(task)
+				if !ok {
+					t.Fatal("minimal job rejected")
+				}
+				a.beginEntry(action)
+				if canceled := ctx.Err() != nil; canceled != autoHide {
+					t.Errorf("auto-hide=%t: previous translation canceled=%t", autoHide, canceled)
+				}
+				if present := a.finishMinimalJob(task.ID()); present == autoHide {
+					t.Errorf("auto-hide=%t: previous translation accepted=%t", autoHide, present)
+				}
+			}
+		})
+	}
+}
+
 func TestStoppedMinimalJobsRejectLateResults(t *testing.T) {
 	a := &application{}
 	first := a.entry.begin(true)

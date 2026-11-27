@@ -128,6 +128,7 @@ type Settings struct {
 	Bubble             BubbleSettings     `json:"bubble"`
 	TrayClickAction    string             `json:"trayClickAction"`
 	MinimalTranslation bool               `json:"minimalTranslation"`
+	MinimalAutoHide    bool               `json:"minimalAutoHide"`
 	OpenAtLogin        bool               `json:"openAtLogin"`
 	AutoUpdate         bool               `json:"autoUpdate"`
 }

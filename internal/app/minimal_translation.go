@@ -27,12 +27,13 @@ type minimalJob struct {
 	result    *overlay.Result
 }
 
-func (a *application) startMinimalJob(task *entryTask, source mygo.Rectangle, run func(context.Context, func(string)) translate.Result) {
+func (a *application) startMinimalJob(task *entryTask, bounds mygo.Rectangle, run func(context.Context, func(string)) translate.Result) {
 	ctx, ok := a.beginMinimalJob(task)
 	if !ok {
 		return
 	}
 	id := task.id
+	source := task.overlaySource(bounds)
 	job := a.minimalJobs[id]
 	go runMinimalJob(ctx, run, func(text string) {
 		mygo.RunOnMain(func() {
@@ -40,7 +41,7 @@ func (a *application) startMinimalJob(task *entryTask, source mygo.Rectangle, ru
 				return
 			}
 			if job.result == nil {
-				job.result = a.overlays.ShowPending(text, source, job.workspace, func() { a.finishMinimalJob(id) })
+				job.result = a.overlays.ShowPending(source, text, func() { a.finishMinimalJob(id) })
 			} else if text != "" {
 				job.result.Progress(text)
 			}
@@ -55,7 +56,7 @@ func (a *application) startMinimalJob(task *entryTask, source mygo.Rectangle, ru
 			case job.result != nil:
 				job.result.Complete(result.Text, result.Err)
 			default:
-				a.overlays.Show(result.Text, result.Err, source, job.workspace)
+				a.overlays.Show(source, result.Text, result.Err)
 			}
 		})
 	})
@@ -127,12 +128,16 @@ func (a *application) cancelStaleMinimalJobs() {
 	a.overlays.CloseStale(workspace)
 }
 
-func (a *application) showMinimalEntryError(task *entryTask, source mygo.Rectangle, message string) {
+func (a *application) showMinimalEntryError(task *entryTask, bounds mygo.Rectangle, message string) {
 	mygo.RunOnMain(func() {
 		if task.Valid() && !a.isQuitting() {
-			a.overlays.Show("", message, source, task.workspace)
+			a.overlays.ShowEntryError(task.overlaySource(bounds), message)
 		}
 	})
+}
+
+func (t *entryTask) overlaySource(bounds mygo.Rectangle) overlay.Source {
+	return overlay.Source{EntryID: t.id, Bounds: bounds, Workspace: t.workspace}
 }
 
 func (a *application) minimalScreenshot(ctx context.Context, shot *snip.Capture, progress func(string)) translate.Result {

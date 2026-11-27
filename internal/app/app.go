@@ -143,6 +143,7 @@ func (a *application) ready() {
 		OnInputAutoHide: func(press selection.PrimaryPress) { a.recordTrayAutoDismiss(config.TrayActionPanel, press) },
 	})
 	mygo.Screen.OnDisplaysChanged(a.bubbles.RefreshDisplays)
+	a.overlays.SetAutoHide(cfg.MinimalAutoHide)
 	mygo.Screen.OnDisplaysChanged(a.overlays.RefreshDisplays)
 	a.snip.IsQuitting = a.isQuitting
 	a.snip.Done = a.snipDone
@@ -221,6 +222,9 @@ func (a *application) applySettings(s config.Settings) {
 	if s.Bubble.AutoHide != old.Bubble.AutoHide {
 		a.bubbles.SetAutoHide(s.Bubble.AutoHide)
 	}
+	if s.MinimalAutoHide != old.MinimalAutoHide && mygo.App.IsReady() {
+		mygo.RunOnMain(func() { a.overlays.SetAutoHide(s.MinimalAutoHide) })
+	}
 	if s.MinimalTranslation != old.MinimalTranslation && mygo.App.IsReady() {
 		mygo.RunOnMain(a.refreshTrayMode)
 	}
@@ -250,7 +254,7 @@ func (a *application) startEntry(action string) {
 		return
 	}
 	// A mode switch applies to the next entry, even while this one is acquiring input.
-	task := a.entry.begin(action != "panel" && a.settings().MinimalTranslation)
+	task := a.beginEntry(action)
 	if action == "selection" || task.minimal {
 		task.cursor = mygo.Screen.CursorScreenPoint()
 	}
@@ -270,6 +274,14 @@ func (a *application) startEntry(action string) {
 		a.bubbles.HideTransient()
 		a.startScreenshot(task)
 	}
+}
+
+func (a *application) beginEntry(action string) *entryTask {
+	cfg := a.settings()
+	if cfg.MinimalAutoHide {
+		a.stopMinimalJobs()
+	}
+	return a.entry.begin(action != "panel" && cfg.MinimalTranslation)
 }
 
 func (a *application) grabSelection(task *entryTask, grab func(context.Context) (selection.Selection, error)) {

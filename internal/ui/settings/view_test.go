@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sync"
@@ -93,8 +94,8 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	if err := tt.Click("切换简约翻译模式"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("切换失焦自动隐藏"); err != nil {
-		t.Fatalf("Click 切换失焦自动隐藏: %v", err)
+	if err := tt.Click("切换气泡失焦自动隐藏"); err != nil {
+		t.Fatalf("Click 切换气泡失焦自动隐藏: %v", err)
 	}
 	if err := tt.Click("切换自动更新"); err != nil {
 		t.Fatalf("Click 切换自动更新: %v", err)
@@ -112,6 +113,46 @@ func TestSettingsViewGeneralTab(t *testing.T) {
 	if !last.OpenAtLogin || last.Bubble.AutoHide || !last.AutoUpdate || !last.MinimalTranslation {
 		t.Fatalf("unexpected saved flags: OpenAtLogin=%v AutoHide=%v AutoUpdate=%v MinimalTranslation=%v",
 			last.OpenAtLogin, last.Bubble.AutoHide, last.AutoUpdate, last.MinimalTranslation)
+	}
+}
+
+func TestSettingsMinimalOverlayAutoHide(t *testing.T) {
+	// The overlay preference must save independently of the bubble and mode.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	persisted := make(chan error, 2)
+	cfg := testSettingsConfig()
+	v := NewView(TabGeneral, cfg, Actions{
+		SaveSettings: func(next config.Settings) error {
+			err := config.Save(path, next)
+			persisted <- err
+			return err
+		},
+	})
+	defer v.Dispose()
+
+	tt := ui.NewTester(v.Render, 660, 600)
+	tt.Frame()
+	for _, enabled := range []bool{true, false} {
+		if err := tt.Click("切换简约浮层自动隐藏"); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-persisted:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("overlay preference did not save")
+		}
+		saved, err := config.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.MinimalAutoHide != enabled || saved.Bubble.AutoHide != cfg.Bubble.AutoHide ||
+			saved.MinimalTranslation != cfg.MinimalTranslation {
+			t.Fatalf("saved overlay auto-hide=%t, bubble auto-hide=%t, minimal mode=%t, want overlay auto-hide=%t only",
+				saved.MinimalAutoHide, saved.Bubble.AutoHide, saved.MinimalTranslation, enabled)
+		}
 	}
 }
 

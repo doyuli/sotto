@@ -27,6 +27,9 @@ func TestDefault(t *testing.T) {
 	if s.Identifier.StripCodeComments || s.Identifier.FlattenNewlines || s.Identifier.StripMarkdown {
 		t.Error("source cleanup should default to off")
 	}
+	if s.MinimalAutoHide {
+		t.Error("minimal overlays should stay open by default")
+	}
 	if s.AutoUpdate {
 		t.Error("automatic updates should default to off")
 	}
@@ -277,6 +280,9 @@ func TestNormalizePartialFile(t *testing.T) {
 	}
 	if got.AutoUpdate {
 		t.Error("legacy settings should keep automatic updates off")
+	}
+	if got.MinimalAutoHide {
+		t.Error("legacy settings should keep minimal overlays open")
 	}
 	if got.MinimalTranslation {
 		t.Error("legacy settings should use the full translation bubble")

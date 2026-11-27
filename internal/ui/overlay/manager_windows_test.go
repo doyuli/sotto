@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 	mygo.App.WhenReady(func() {
 		work := mygo.Screen.PrimaryDisplay().WorkArea
 		source := mygo.Rectangle{X: work.X + work.Width/3, Y: work.Y + work.Height - 100, Width: 200, Height: 30}
-		p := manager.show("短译文", source, platform.WorkspaceGeneration(), nil)
+		p := manager.show(Source{EntryID: 1, Bounds: source, Workspace: platform.WorkspaceGeneration()}, "短译文", nil)
 		onBounds := p.view.boundsChanged
 		p.view.boundsChanged = func() {
 			onBounds()

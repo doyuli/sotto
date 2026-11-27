@@ -195,10 +195,10 @@ var serviceCredentialFields = map[string][]serviceCredentialField{
 }
 
 var serviceNotes = map[string]string{
-	"siliconflow": "需实名认证，费用及限流以平台为准。",
-	"zhipu":       "费用及限流以平台为准。",
-	"baidu":       "需开通「通用文本翻译」。",
-	"volcengine":  "需开通「机器翻译」并授权 Access Key。",
+	"siliconflow": "需实名认证，费用及限流以平台为准",
+	"zhipu":       "费用及限流以平台为准",
+	"baidu":       "需开通「通用文本翻译」",
+	"volcengine":  "需开通「机器翻译」并授权 Access Key",
 }
 
 var defaultServiceSettings = config.Default().Services
@@ -328,8 +328,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 
 	ui.Text(c, "通用").FontSize(18).FontWeight(600).TextColor(p.fg)
 
-	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
-		// Target language
+	renderSettingsSection(c, p, "翻译行为", func() {
 		v.renderSettingRow(c, p, "默认翻译到", "未指定目标时气泡首选的翻译语言", true, func() {
 			renderGeneralSelect(c.Key("target-language"), p, cfg.TargetLanguage, targetLanguageOptions, targetLanguageLabel, "选择默认翻译语言", "默认翻译语言选项", false, func(code string) {
 				v.mu.Lock()
@@ -341,7 +340,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 		})
 
 		minimalTranslation := cfg.MinimalTranslation
-		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文，使用排在首位的已启用服务。", true, func() {
+		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文，使用排在首位的已启用服务", true, func() {
 			ui.Switch(c, &minimalTranslation).Label("切换简约翻译模式").OnClick(func() {
 				v.mu.Lock()
 				defer v.mu.Unlock()
@@ -351,6 +350,31 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
+		minimalAutoHide := cfg.MinimalAutoHide
+		v.renderSettingRow(c, p, "简约浮层自动隐藏", "浮层失去焦点时隐藏", true, func() {
+			ui.Switch(c, &minimalAutoHide).Label("切换简约浮层自动隐藏").OnClick(func() {
+				v.mu.Lock()
+				defer v.mu.Unlock()
+				next := v.settings
+				next.MinimalAutoHide = minimalAutoHide
+				v.enqueueSaveLocked(next)
+			})
+		})
+
+		autoHide := cfg.Bubble.AutoHide
+		v.renderSettingRow(c, p, "气泡失焦自动隐藏", "未钉住的气泡失去焦点即隐藏", false, func() {
+			sw := ui.Switch(c, &autoHide).Label("切换气泡失焦自动隐藏")
+			if sw.Changed() {
+				v.mu.Lock()
+				next := cloneSettings(v.settings)
+				next.Bubble.AutoHide = autoHide
+				v.enqueueSaveLocked(next)
+				v.mu.Unlock()
+			}
+		})
+	})
+
+	renderSettingsSection(c, p, "应用", func() {
 		v.renderSettingRow(c, p, "开机自启", "登录后常驻托盘", true, func() {
 			ui.Switch(c, &openAtLogin).Label("切换开机自启").Disabled(!loginStateKnown || savingOpenAtLogin).OnClick(func() {
 				v.mu.Lock()
@@ -369,18 +393,6 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
-		autoHide := cfg.Bubble.AutoHide
-		v.renderSettingRow(c, p, "失焦自动隐藏", "未钉住的气泡失去焦点即隐藏", true, func() {
-			sw := ui.Switch(c, &autoHide).Label("切换失焦自动隐藏")
-			if sw.Changed() {
-				v.mu.Lock()
-				next := cloneSettings(v.settings)
-				next.Bubble.AutoHide = autoHide
-				v.enqueueSaveLocked(next)
-				v.mu.Unlock()
-			}
-		})
-
 		autoUpdate := cfg.AutoUpdate
 		v.renderSettingRow(c, p, "自动更新", platform.UpdateDescription(), false, func() {
 			sw := ui.Switch(c, &autoUpdate).Label("切换自动更新")
@@ -397,6 +409,13 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	if version := mygo.App.Version(); version != "" {
 		ui.Text(c, "Sotto v"+version).FillWidth().TextAlign(ui.Center).FontSize(12).TextColor(p.muted)
 	}
+}
+
+func renderSettingsSection(c *ui.Context, p settingsPalette, title string, rows func()) {
+	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		ui.Text(c, title).FontSize(16).FontWeight(600).TextColor(p.fg)
+		ui.Column(c).FillWidth().Radius(12).Background(p.card).Border(1, p.border).Clip().Children(rows)
+	})
 }
 
 func renderGeneralSelect(c *ui.Context, p settingsPalette, current string, options []string, labelOf func(string) string, triggerLabel, popupLabel string, disabled bool, onChange func(string)) {

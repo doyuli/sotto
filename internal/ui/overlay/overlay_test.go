@@ -10,6 +10,20 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestLateMinimalOverlayCannotReplaceNewerPresentation(t *testing.T) {
+	// A slow result can complete after the newer surface has already been dismissed.
+	var m Manager
+	m.SetAutoHide(true)
+	m.retireOlder(2)
+	if !m.superseded(1) || m.superseded(2) || m.superseded(3) {
+		t.Fatal("the newest presentation should reject only older results")
+	}
+	m.SetAutoHide(false)
+	if m.superseded(1) {
+		t.Fatal("persistent overlays should allow independent results")
+	}
+}
+
 func TestLoadingViewSettlesOnResultAndRespectsReduceMotion(t *testing.T) {
 	// A loading animation must stop after completion and with Reduce Motion.
 	v := resultView{pending: true, animate: true, limit: size{320, 150}, measure: func() {}}
