@@ -48,15 +48,6 @@ func (m *Manager) Show(source Source, text, message string) {
 	m.show(source, resultText(text, message), nil)
 }
 
-func (m *Manager) ShowEntryError(source Source, message string) {
-	if m.autoHide {
-		// Show acquisition errors as brief feedback in auto-hide mode.
-		m.ShowStatus(message)
-		return
-	}
-	m.Show(source, "", message)
-}
-
 // ShowPending creates a cancellable window with either a loading state or
 // the first cumulative snapshot from the provider.
 func (m *Manager) ShowPending(source Source, text string, onCancel func()) *Result {

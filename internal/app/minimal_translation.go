@@ -131,7 +131,7 @@ func (a *application) cancelStaleMinimalJobs() {
 func (a *application) showMinimalEntryError(task *entryTask, bounds mygo.Rectangle, message string) {
 	mygo.RunOnMain(func() {
 		if task.Valid() && !a.isQuitting() {
-			a.overlays.ShowEntryError(task.overlaySource(bounds), message)
+			a.overlays.Show(task.overlaySource(bounds), "", message)
 		}
 	})
 }
