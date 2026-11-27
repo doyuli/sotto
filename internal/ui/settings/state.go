@@ -14,6 +14,7 @@ import (
 	"sotto/internal/config"
 	"sotto/internal/hotkey"
 	"sotto/internal/keys"
+	"sotto/internal/translate"
 	"sotto/internal/ui/shared"
 	"sotto/internal/usermessage"
 )
@@ -40,6 +41,7 @@ type Actions struct {
 	Credentials            func(service string) (CredentialStatus, error)
 	SaveService            func(name string, changes ServiceChanges) (ServiceSaveResult, error)
 	TestService            func(ctx context.Context, name string) string
+	DiscoverMagpie         func(context.Context, int) (translate.MagpieGateway, error)
 	OpenKeyPage            func(service string) error
 	DeeplUsage             func(context.Context) (DeeplUsage, error)
 	SaveHotkey             func(action, accel string) error
@@ -51,6 +53,7 @@ type Actions struct {
 // empty options restore defaults, and empty credential values remove credentials.
 type ServiceChanges struct {
 	BaseURL     *string
+	Port        *string
 	Model       *string
 	Credentials map[string]string
 }
@@ -61,6 +64,7 @@ type ServiceSaveResult struct {
 
 type serviceDraft struct {
 	baseURL     *string
+	port        *string
 	model       *string
 	credentials map[string]credentialDraft
 }
@@ -111,6 +115,8 @@ type View struct {
 	credentials       CredentialStatus
 	credentialErrors  map[string]string
 	credentialReads   map[string]bool
+	magpie            magpieStatus
+	magpieCancel      context.CancelFunc
 
 	expanded       map[string]bool
 	serviceDrafts  map[string]serviceDraft
@@ -156,6 +162,7 @@ func NewView(initialTab Tab, cfg config.Settings, actions Actions) *View {
 	}
 	go v.runTaskLoop()
 	v.RefreshCredentialsAsync()
+	v.RefreshMagpieAsync()
 	return v
 }
 
@@ -176,6 +183,7 @@ func (v *View) Dispose() {
 	v.disposed = true
 	clear(v.serviceDrafts)
 	v.resetUsageLocked()
+	v.cancelMagpieLocked()
 	for _, cancel := range v.probeCancels {
 		cancel()
 	}
@@ -200,11 +208,13 @@ func (v *View) SetActiveTab(tab Tab) {
 			delete(v.testStatuses, name)
 		}
 		clear(v.serviceDrafts)
+		v.cancelMagpieLocked()
 	}
 	v.activeTab = tab
 	disposed := v.disposed
 	v.mu.Unlock()
 	if !disposed {
+		v.RefreshMagpieAsync()
 		v.invalidate()
 	}
 }
@@ -213,11 +223,20 @@ func (v *View) ApplyExternalSettings(cfg config.Settings) {
 	v.mu.Lock()
 	disposed := v.disposed
 	if v.pendingWrites == 0 && !disposed {
-		v.settings = cloneSettings(cfg)
+		v.setSettingsLocked(cfg)
 	}
 	v.mu.Unlock()
 	if !disposed {
 		v.invalidate()
+	}
+}
+
+// A readback can apply a saved port after another pending write has finished.
+func (v *View) setSettingsLocked(cfg config.Settings) {
+	portChanged := v.settings.Services.Magpie.Port != cfg.Services.Magpie.Port
+	v.settings = cloneSettings(cfg)
+	if portChanged {
+		v.refreshMagpieLocked()
 	}
 }
 
@@ -315,7 +334,7 @@ func (v *View) enqueueSettingsWriteLocked(next config.Settings, save func() erro
 	if v.disposed {
 		return
 	}
-	v.settings = cloneSettings(next)
+	v.setSettingsLocked(next)
 	v.pendingWrites++
 	v.enqueueTaskLocked(func() {
 		err := save()
@@ -325,7 +344,7 @@ func (v *View) enqueueSettingsWriteLocked(next config.Settings, save func() erro
 			v.pendingToast = usermessage.Format("保存失败", err)
 		}
 		if v.pendingWrites == 0 && !v.disposed && v.actions.GetSettings != nil {
-			v.settings = cloneSettings(v.actions.GetSettings())
+			v.setSettingsLocked(v.actions.GetSettings())
 		}
 		disposed := v.disposed
 		v.mu.Unlock()
@@ -367,6 +386,8 @@ func (v *View) DetachWindow() {
 	v.historyPrompt = nil
 	clear(v.serviceDrafts)
 	v.resetUsageLocked()
+	v.cancelMagpieLocked()
+	v.magpie = magpieStatus{}
 	for name, cancel := range v.probeCancels {
 		cancel()
 		delete(v.probeCancels, name)
@@ -536,7 +557,7 @@ func (v *View) canEditServiceLocked(name string) bool {
 }
 
 func (v *View) updateServiceDraftLocked(name string, draft serviceDraft) {
-	if draft.baseURL == nil && draft.model == nil && len(draft.credentials) == 0 {
+	if draft.baseURL == nil && draft.port == nil && draft.model == nil && len(draft.credentials) == 0 {
 		delete(v.serviceDrafts, name)
 	} else {
 		v.serviceDrafts[name] = draft
@@ -628,7 +649,7 @@ func (v *View) saveService(name string) {
 	if !v.canEditServiceLocked(name) || !dirty {
 		return
 	}
-	changes := ServiceChanges{BaseURL: draft.baseURL, Model: draft.model}
+	changes := ServiceChanges{BaseURL: draft.baseURL, Port: draft.port, Model: draft.model}
 	if len(draft.credentials) != 0 {
 		changes.Credentials = make(map[string]string, len(draft.credentials))
 		for field, edit := range draft.credentials {
@@ -694,7 +715,7 @@ func (v *View) saveService(name string) {
 				}
 			}
 			if v.pendingWrites == 0 && v.actions.GetSettings != nil {
-				v.settings = cloneSettings(v.actions.GetSettings())
+				v.setSettingsLocked(v.actions.GetSettings())
 			}
 		}
 		loadUsage := !disposed && credErr == nil && name == "deepl" && v.expanded[name] && slices.Contains(v.credentials.Stored, keys.DeeplKey)
@@ -711,7 +732,8 @@ func (v *View) saveService(name string) {
 func (v *View) testConnection(name string) {
 	v.mu.Lock()
 	_, dirty := v.serviceDrafts[name]
-	if !v.canEditServiceLocked(name) || dirty || v.credentialErrors[name] != "" {
+	if !v.canEditServiceLocked(name) || dirty || v.credentialErrors[name] != "" ||
+		name == "magpie" && !v.magpieReadyLocked() {
 		v.mu.Unlock()
 		return
 	}

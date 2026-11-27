@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -163,7 +164,7 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 	}
 	var final translate.Result
 	var partial string
-	translate.Run(ctx, prepared.settings, prepared.credentials, prepared.request, func(result translate.Result) {
+	translate.RunWith(ctx, []translate.Translator{prepared.provider}, prepared.settings, prepared.credentials, prepared.request, func(result translate.Result) {
 		if result.Streaming {
 			if result.Text != partial && strings.TrimSpace(result.Text) != "" {
 				partial = result.Text
@@ -199,6 +200,7 @@ type minimalRequest struct {
 	request     translate.Request
 	settings    config.Settings
 	credentials keys.Snapshot
+	provider    translate.Translator
 	history     *history.Request
 }
 
@@ -220,37 +222,69 @@ func (a *application) prepareMinimalRequest(ctx context.Context, text string) (_
 			record.Done()
 		}
 	}()
-	services := translate.EnabledProviders(cfg.Services)
-	if len(services) > 0 {
-		first := services[0]
-		if len(keys.ForServices(first.Name())) != 0 || !first.Available(nil, cfg) {
-			// Read provider options and credentials in the same settings transaction.
-			a.configWriteMu.Lock()
-			defer a.configWriteMu.Unlock()
-			cfg.Services = a.settings().Services
-			services = translate.EnabledProviders(cfg.Services)
-		}
-	}
-	if err := ctx.Err(); err != nil {
+	service, credentials, err := a.pickMinimalProvider(ctx, &cfg)
+	if err != nil {
 		return minimalRequest{}, err
 	}
-	for _, service := range services {
-		if err := ctx.Err(); err != nil {
-			return minimalRequest{}, err
-		}
-		var credentials keys.Snapshot
-		if names := keys.ForServices(service.Name()); len(names) != 0 {
-			credentials = a.keys.Snapshot(names)
-			if err := credentials.Err(names...); err != nil {
-				return minimalRequest{}, err
+	cfg.Services.Enabled = nil
+	if service != nil {
+		cfg.Services.Enabled = []string{service.Name()}
+	}
+	return minimalRequest{request: request, settings: cfg, credentials: credentials, provider: service, history: record}, nil
+}
+
+func (a *application) pickMinimalProvider(ctx context.Context, cfg *config.Settings) (translate.Translator, keys.Snapshot, error) {
+	tried := make(map[string]bool)
+	// Rebuild the remaining candidates after a settings write or a failed probe.
+	next := func() (translate.Translator, []string) {
+		cfg.Services = a.settings().Services
+		for _, service := range translate.EnabledProviders(cfg.Services) {
+			if !tried[service.Name()] {
+				return service, keys.ForServices(service.Name())
 			}
 		}
-		// A provider with missing credentials is not enabled in Settings.
-		if service.Available(credentials, cfg) {
-			cfg.Services.Enabled = []string{service.Name()}
-			return minimalRequest{request: request, settings: cfg, credentials: credentials, history: record}, nil
-		}
+		return nil, nil
 	}
-	cfg.Services.Enabled = nil
-	return minimalRequest{request: request, settings: cfg, history: record}, nil
+	var discoveryErr error
+	for ctx.Err() == nil {
+		service, names := next()
+		var credentials keys.Snapshot
+		if len(names) != 0 {
+			// A writer may have changed the first provider while we waited for the keyring.
+			a.configWriteMu.Lock()
+			service, names = next()
+			if len(names) != 0 && ctx.Err() == nil {
+				credentials = a.keys.Snapshot(names)
+			}
+			a.configWriteMu.Unlock()
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			if credentials != nil {
+				if err := credentials.Err(names...); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		if service == nil {
+			if slices.Contains(cfg.Services.Enabled, "magpie") {
+				return nil, nil, discoveryErr
+			}
+			return nil, nil, nil
+		}
+		tried[service.Name()] = true
+		if !service.Available(credentials, *cfg) {
+			continue
+		}
+		if magpie, ok := service.(translate.Magpie); ok {
+			resolved, err := magpie.Connect(ctx, cfg.Services.Magpie)
+			if err != nil {
+				discoveryErr = err
+				continue
+			}
+			service = resolved
+		}
+		return service, credentials, nil
+	}
+	return nil, nil, ctx.Err()
 }

@@ -184,7 +184,7 @@ func (v *View) submitHotkeyLocked(id, value string) {
 		if v.actions.GetSettings != nil {
 			current := v.actions.GetSettings()
 			if v.pendingWrites == 0 {
-				v.settings = cloneSettings(current)
+				v.setSettingsLocked(current)
 			} else {
 				v.settings.Hotkeys = current.Hotkeys
 			}

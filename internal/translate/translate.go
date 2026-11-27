@@ -84,6 +84,7 @@ func DefaultTranslators() []Translator {
 		YoudaoWeb{},
 		Azure{},
 		Dictionary{},
+		Magpie{},
 	}
 }
 
@@ -112,8 +113,7 @@ func EnabledProviders(settings config.ServiceSettings) []Translator {
 	})
 }
 
-// Test runs a fixed, non-streaming probe, including for disabled services.
-// A successful probe does not establish streaming support.
+// Test runs a fixed translation probe, including for disabled services.
 func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) error {
 	for _, t := range DefaultTranslators() {
 		if t.Name() == name {
@@ -126,6 +126,10 @@ func Test(ctx context.Context, name string, cfg config.Settings, k KeyStore) err
 			probe := Request{Text: "Hello world", SourceLang: "en", TargetLang: "zh-HANS"}
 			if name == "dictionary" {
 				probe.Text = "hello"
+			}
+			if magpie, ok := t.(Magpie); ok {
+				_, err := magpie.Stream(ctx, probe, k, cfg, nil)
+				return err
 			}
 			_, err := t.Translate(ctx, probe, k, cfg)
 			return err
@@ -247,6 +251,13 @@ func translateParts(ctx context.Context, t Translator, req Request, k KeyStore, 
 	if len(parts) > 1 {
 		// Even a one-word chunk belongs to the full translation.
 		req.TranslationOnly = true
+		if magpie, ok := t.(Magpie); ok {
+			resolved, err := magpie.Connect(ctx, cfg.Services.Magpie)
+			if err != nil {
+				return Result{Service: t.Name()}, err
+			}
+			t = resolved
+		}
 		if scoped, ok := t.(interface{ forRun() Translator }); ok {
 			t = scoped.forRun()
 		}

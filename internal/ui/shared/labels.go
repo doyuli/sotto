@@ -9,6 +9,7 @@ import (
 var serviceDisplayNames = map[string]string{
 	"deepl":           "DeepL",
 	"openai":          "OpenAI",
+	"magpie":          "Magpie",
 	"siliconflow":     "硅基流动",
 	"zhipu":           "智谱",
 	"baidu":           "百度翻译",

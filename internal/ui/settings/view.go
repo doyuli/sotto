@@ -187,6 +187,7 @@ var serviceCredentialFields = map[string][]serviceCredentialField{
 		{name: keys.AzureKey, label: "订阅密钥", placeholder: "Key 1 或 Key 2"},
 		{name: keys.AzureRegion, label: "区域", placeholder: "如 eastasia"},
 	},
+	"magpie":          nil,
 	"google":          nil,
 	"index-translate": nil,
 	"youdaoweb":       nil,
@@ -330,7 +331,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
 		// Target language
 		v.renderSettingRow(c, p, "默认翻译到", "未指定目标时气泡首选的翻译语言", true, func() {
-			renderGeneralSelect(c.Key("target-language"), p, cfg.TargetLanguage, targetLanguageOptions, targetLanguageLabel, "选择默认翻译语言", "默认翻译语言选项", func(code string) {
+			renderGeneralSelect(c.Key("target-language"), p, cfg.TargetLanguage, targetLanguageOptions, targetLanguageLabel, "选择默认翻译语言", "默认翻译语言选项", false, func(code string) {
 				v.mu.Lock()
 				next := cloneSettings(v.settings)
 				next.TargetLanguage = code
@@ -359,7 +360,7 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 		})
 
 		v.renderSettingRow(c, p, "点击托盘图标", "左键点击托盘图标时执行，右键打开菜单", true, func() {
-			renderGeneralSelect(c.Key("tray-click-action"), p, cfg.TrayClickAction, config.TrayClickActions, trayClickActionLabel, "选择点击托盘图标动作", "点击托盘图标选项", func(action string) {
+			renderGeneralSelect(c.Key("tray-click-action"), p, cfg.TrayClickAction, config.TrayClickActions, trayClickActionLabel, "选择点击托盘图标动作", "点击托盘图标选项", false, func(action string) {
 				v.mu.Lock()
 				next := cloneSettings(v.settings)
 				next.TrayClickAction = action
@@ -398,10 +399,10 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 	}
 }
 
-func renderGeneralSelect(c *ui.Context, p settingsPalette, current string, options []string, labelOf func(string) string, triggerLabel, popupLabel string, onChange func(string)) {
+func renderGeneralSelect(c *ui.Context, p settingsPalette, current string, options []string, labelOf func(string) string, triggerLabel, popupLabel string, disabled bool, onChange func(string)) {
 	selected := current
 	parts := ui.SelectBase(c, &selected)
-	trigger := parts.Trigger.Label(triggerLabel).
+	trigger := parts.Trigger.Label(triggerLabel).Disabled(disabled).
 		Cursor(ui.CursorPointer).MinWidth(176).
 		Padding(6, 10).Radius(8).Background(p.field).Border(1, p.border)
 	trigger.OnChange(func() { onChange(selected) })
@@ -464,10 +465,12 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 	for _, svc := range cfg.Services.Order {
 		fields, known := serviceCredentialFields[svc]
 		switch {
-		case !known:
+		case !known || !loaded && len(fields) != 0:
 			continue
 		case v.serviceOnLocked(svc):
 			enabledNames = append(enabledNames, svc)
+		case svc == "magpie" && !v.magpieReadyLocked():
+			pending = append(pending, svc)
 		case len(fields) == 0:
 			keyless = append(keyless, svc)
 		case v.credentialErrors[svc] == "" && slices.Contains(v.credentials.Configured, svc):
@@ -499,16 +502,44 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 				v.renderSecondaryButtonDisabled(c, p, "重试", "重试", readingCredentials, v.RefreshCredentialsAsync)
 			}
 		})
-		if !loaded {
-			return
-		}
 	}
 
+	v.renderEnabledServices(c, p, enabledNames, displayEnabled, loaded, cfg.MinimalTranslation)
+
+	for _, group := range []struct {
+		title string
+		names []string
+	}{
+		{"可启用", append(configured, keyless...)},
+		{"待配置", pending},
+	} {
+		if len(group.names) == 0 {
+			continue
+		}
+		renderServiceGroup(c.Key(group.title), p, group.title, len(group.names), "", func() {
+			for i, svc := range group.names {
+				if i > 0 {
+					ui.Box(c).FillWidth().Height(1).Background(p.border)
+				}
+				v.renderServiceCard(c.Key("svc:"+svc), p, svc, false, 0, nil)
+			}
+		})
+	}
+}
+
+func (v *View) renderEnabledServices(c *ui.Context, p settingsPalette, enabledNames, displayEnabled []string, loaded, minimal bool) {
+	title := "已启用"
+	if !loaded {
+		if len(displayEnabled) == 0 {
+			return
+		}
+		title = "已启用的免密钥服务"
+	}
 	description := "同时翻译，拖动序号调整结果顺序"
-	if cfg.MinimalTranslation {
+	if minimal {
 		description = "拖动序号排序，简约翻译使用首个可用服务"
 	}
-	renderServiceGroup(c.Key("enabled"), p, "已启用", len(displayEnabled), description, func() {
+	renderServiceGroup(c.Key("enabled"), p, title, len(displayEnabled), description, func() {
 		if len(displayEnabled) == 0 {
 			ui.Text(c, "还没有启用的服务，可在下方启用或配置。").Padding(14).FontSize(12).TextColor(p.muted)
 			return
@@ -544,26 +575,6 @@ func (v *View) renderServices(c *ui.Context, p settingsPalette) {
 		}
 		v.mu.Unlock()
 	})
-
-	for _, group := range []struct {
-		title string
-		names []string
-	}{
-		{"可启用", append(configured, keyless...)},
-		{"待配置", pending},
-	} {
-		if len(group.names) == 0 {
-			continue
-		}
-		renderServiceGroup(c.Key(group.title), p, group.title, len(group.names), "", func() {
-			for i, svc := range group.names {
-				if i > 0 {
-					ui.Box(c).FillWidth().Height(1).Background(p.border)
-				}
-				v.renderServiceCard(c.Key("svc:"+svc), p, svc, false, 0, nil)
-			}
-		})
-	}
 }
 
 func renderServiceGroup(c *ui.Context, p settingsPalette, title string, count int, hint string, rows func()) {
@@ -588,6 +599,10 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 	v.mu.Lock()
 	credentialError := v.credentialErrors[svc] != ""
 	isConfigured := keyless || slices.Contains(v.credentials.Configured, svc)
+	magpieHint := ""
+	if svc == "magpie" {
+		isConfigured, magpieHint = v.magpieReadinessLocked()
+	}
 	editable := !keyless || svc == "openai" || v.settings.Services.Model(svc) != nil
 	stored := v.credentials.Stored
 	isExpanded := v.expanded[svc]
@@ -610,6 +625,8 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 		stateHint = "有未保存的更改"
 	case credentialError:
 		stateHint, hintColor = "凭证状态待确认", p.warning
+	case svc == "magpie":
+		stateHint = magpieHint
 	case svc == "dictionary":
 		stateHint = "完整气泡可离线查音标和中文释义"
 	case svc == "youdaoweb":
@@ -735,6 +752,9 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 						if loadUsage {
 							v.loadDeeplUsageAsync()
 						}
+						if nextExpanded && svc == "magpie" {
+							v.RefreshMagpieAsync()
+						}
 					})
 					// Keep the editor and save feedback in view if its focused row
 					// moves back to setup after a required credential is removed.
@@ -766,7 +786,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 					Disabled(busy)
 				if sw.Changed() {
 					v.mu.Lock()
-					if on && v.credentialErrors[svc] != "" {
+					if on && (v.credentialErrors[svc] != "" || svc == "magpie" && !v.magpieReadyLocked()) {
 						v.mu.Unlock()
 						return
 					}
@@ -807,6 +827,7 @@ func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string,
 	stored := v.credentials.Stored
 	deeplText := v.deeplUsageText
 	deeplPct := v.deeplUsagePct
+	magpie := v.magpie
 	v.mu.Unlock()
 
 	willDisable := enabled && slices.ContainsFunc(fields, func(field serviceCredentialField) bool {
@@ -814,9 +835,9 @@ func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string,
 	})
 	ui.Box(c).FillWidth().Height(1).Background(p.border)
 	ui.Column(c).FillWidth().Background(p.card).Padding(14, 16).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "凭证保存在系统密钥环").FontSize(12).TextColor(p.muted).Grow(1)
-			if len(fields) != 0 {
+		if len(fields) != 0 {
+			ui.Row(c.Key("keyring")).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Text(c, "凭证保存在系统密钥环").FontSize(12).TextColor(p.muted).Grow(1)
 				link := ui.ButtonBase(c.Key("console")).Label("前往控制台获取凭证").Cursor(ui.CursorPointer).Padding(2, 0)
 				link.OnClick(func() { v.openKeyPageAsync(svc) })
 				link.Children(func() {
@@ -825,8 +846,8 @@ func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string,
 						txt.Underline()
 					}
 				})
-			}
-		})
+			})
+		}
 
 		if credErr != "" {
 			ui.Row(c.Key("credential-error")).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
@@ -847,7 +868,9 @@ func (v *View) renderServiceDrawer(c *ui.Context, p settingsPalette, svc string,
 				placeholder: defaultServiceSettings.OpenAI.BaseURL, value: value,
 			}, locked, func(value string) { v.editServiceBaseURL(svc, value) })
 		}
-		if model := saved.Model(svc); model != nil {
+		if svc == "magpie" {
+			v.renderMagpieOptions(c.Key("magpie"), p, saved.Magpie, draft, magpie, locked)
+		} else if model := saved.Model(svc); model != nil {
 			value := *model
 			if draft.model != nil {
 				value = *draft.model

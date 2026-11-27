@@ -266,8 +266,9 @@ func TestSettingsViewServicesTab(t *testing.T) {
 	}
 	waitForCondition(t, time.Second, func() bool {
 		tt.Frame()
-		return tt.HasText("已启用")
-	}, "expected services list after credential retry")
+		_, found := tt.Find("拖动OpenAI")
+		return found
+	}, "expected the keyed service after credential retry")
 
 	// Drag OpenAI up over Google to reorder in real time.
 	openaiGrip, ok := tt.Find("拖动OpenAI")

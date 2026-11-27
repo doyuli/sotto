@@ -567,6 +567,8 @@ func (a *application) showSettings(services bool, source *mygo.Window) {
 		if sv != nil {
 			if services {
 				sv.SetActiveTab(settings.TabServices)
+			} else {
+				sv.RefreshMagpieAsync()
 			}
 			sv.RefreshOpenAtLogin()
 		}
@@ -681,6 +683,7 @@ func (a *application) createSettingsView(tab settings.Tab) *settings.View {
 		Credentials:            svc.Credentials,
 		SaveService:            svc.SaveService,
 		TestService:            svc.TestService,
+		DiscoverMagpie:         translate.DiscoverMagpie,
 		OpenKeyPage:            svc.OpenKeyPage,
 		DeeplUsage:             svc.DeeplUsage,
 		SaveHotkey:             a.updateHotkey,

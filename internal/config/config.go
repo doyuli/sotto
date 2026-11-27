@@ -22,6 +22,7 @@ type ServiceSettings struct {
 	Enabled     []string      `json:"enabled"`
 	Order       []string      `json:"order"`
 	OpenAI      OpenAIOptions `json:"openai"`
+	Magpie      MagpieOptions `json:"magpie"`
 	SiliconFlow ModelOptions  `json:"siliconflow"`
 	Zhipu       ModelOptions  `json:"zhipu"`
 }
@@ -31,6 +32,8 @@ func (s *ServiceSettings) Model(service string) *string {
 	switch service {
 	case "openai":
 		return &s.OpenAI.Model
+	case "magpie":
+		return &s.Magpie.Model
 	case "siliconflow":
 		return &s.SiliconFlow.Model
 	case "zhipu":
@@ -55,6 +58,13 @@ type ModelOptions struct {
 type OpenAIOptions struct {
 	BaseURL string `json:"baseURL"`
 	Model   string `json:"model"`
+}
+
+// MagpieOptions use zero for automatic port discovery and an empty model for
+// automatic selection when the gateway lists a single chat model.
+type MagpieOptions struct {
+	Port  int    `json:"port,omitempty"`
+	Model string `json:"model,omitempty"`
 }
 
 // IdentifierSettings control how source text is prepared for translation.
@@ -127,7 +137,7 @@ func Default() Settings {
 	return Settings{
 		Services: ServiceSettings{
 			Enabled:     []string{"index-translate", "youdaoweb"},
-			Order:       []string{"index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "youdaoweb", "azure", "dictionary"},
+			Order:       []string{"index-translate", "google", "siliconflow", "zhipu", "baidu", "volcengine", "deepl", "openai", "tencent", "youdao", "youdaoweb", "azure", "dictionary", "magpie"},
 			OpenAI:      OpenAIOptions{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"},
 			SiliconFlow: ModelOptions{Model: DefaultSiliconFlowModel},
 			Zhipu:       ModelOptions{Model: DefaultZhipuModel},
@@ -218,6 +228,10 @@ func Normalize(s Settings) Settings {
 	s.Services.OpenAI.Model = strings.TrimSpace(s.Services.OpenAI.Model)
 	if s.Services.OpenAI.Model == "" {
 		s.Services.OpenAI.Model = d.Services.OpenAI.Model
+	}
+	s.Services.Magpie.Model = strings.TrimSpace(s.Services.Magpie.Model)
+	if s.Services.Magpie.Port < 0 || s.Services.Magpie.Port > 65535 {
+		s.Services.Magpie.Port = 0
 	}
 	s.Services.SiliconFlow.Model = strings.TrimSpace(s.Services.SiliconFlow.Model)
 	if s.Services.SiliconFlow.Model == "" {

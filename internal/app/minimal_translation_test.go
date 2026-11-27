@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -168,6 +169,75 @@ func TestMinimalTranslationOnlyReadsFirstEnabledProvider(t *testing.T) {
 	_, err = a.prepareMinimalRequest(ctx, "测试文本")
 	if len(keyring.read) != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled job: credentials=%v err=%v", keyring.read, err)
+	}
+}
+
+func TestMinimalTranslationUsesUpdatedEnabledServices(t *testing.T) {
+	// The input snapshot used to exclude a newly enabled service after a settings write.
+	original := config.Default()
+	original.Services.Enabled = []string{"openai", "google"}
+	original.Services.Order = []string{"openai", "google", "youdaoweb"}
+	current := original
+	current.Services.Enabled = []string{"youdaoweb"}
+	a := &application{cfg: current, keys: &unusedKeyring{t: t}}
+
+	provider, _, err := a.pickMinimalProvider(t.Context(), &original)
+	if err != nil || provider == nil || provider.Name() != "youdaoweb" {
+		t.Fatalf("provider = %v, err = %v", provider, err)
+	}
+}
+
+func TestMinimalTranslationSkipsUnavailableMagpie(t *testing.T) {
+	// A failed Magpie probe used to re-read credentials for providers it had
+	// already checked. The settings lock must also be free during the probe.
+	probing, release := make(chan struct{}, 2), make(chan struct{})
+	var released sync.Once
+	defer released.Do(func() { close(release) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probing <- struct{}{}
+		<-release
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	cfg := config.Default()
+	cfg.Services.Magpie.Port = server.Listener.Addr().(*net.TCPAddr).Port
+	cfg.Services.Enabled = []string{"openai", "magpie", "google"}
+	cfg.Services.Order = []string{"openai", "magpie", "azure", "google"}
+	keyring := &minimalTestKeyring{serviceTestKeyring: serviceTestKeyring{
+		values: map[string]string{keys.AzureKey: "azure"},
+	}}
+	a := &application{cfg: cfg, keys: keyring}
+	done := make(chan error, 1)
+	go func() {
+		got, err := a.prepareMinimalRequest(t.Context(), "Hello world")
+		if err == nil && (got.provider == nil || got.provider.Name() != "azure") {
+			err = errors.New("the enabled fallback was not selected")
+		}
+		done <- err
+	}()
+	select {
+	case <-probing:
+	case <-time.After(time.Second):
+		t.Fatal("Magpie was not probed")
+	}
+	if !a.configWriteMu.TryLock() {
+		t.Fatal("Magpie probe blocked settings writes")
+	}
+	// Azure was enabled while discovery was in flight and was absent from the original candidates.
+	a.mu.Lock()
+	a.cfg.Services.Enabled = []string{"openai", "magpie", "azure"}
+	a.mu.Unlock()
+	a.configWriteMu.Unlock()
+	released.Do(func() { close(release) })
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(keyring.read, []string{keys.OpenAIKey, keys.AzureKey, keys.AzureRegion}) {
+		t.Fatalf("unexpected credential reads during fallback: %v", keyring.read)
+	}
+	a.cfg.Services.Enabled = []string{"magpie"}
+	if _, err := a.prepareMinimalRequest(t.Context(), "Hello world"); !strings.Contains(translate.UserMessage(err), "未发现 Magpie") {
+		t.Fatalf("offline Magpie without a fallback: %v", err)
 	}
 }
 

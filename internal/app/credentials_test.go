@@ -167,6 +167,36 @@ func TestServiceCredentialsIgnoreUnrelatedKeyringFailure(t *testing.T) {
 	}
 }
 
+func TestSaveMagpieServiceOptionsWithoutCredentials(t *testing.T) {
+	// Saving local gateway settings must not overwrite OpenAI or open the keyring.
+	cfg := config.Default()
+	a := &application{
+		cfg: cfg, cfgPath: filepath.Join(t.TempDir(), "settings.json"),
+		keys: &unusedKeyring{t: t}, bubbles: bubble.NewManager(nil, bubble.Actions{}),
+	}
+	svc := ConfigSvc{a}
+	port, model := " 4425 ", " group/translation "
+	if _, err := svc.SaveService("magpie", settings.ServiceChanges{Port: &port, Model: &model}); err != nil {
+		t.Fatal(err)
+	}
+	badPort := "65536"
+	if _, err := svc.SaveService("magpie", settings.ServiceChanges{Port: &badPort}); err == nil {
+		t.Fatal("saved an invalid TCP port")
+	}
+	saved, err := config.Load(a.cfgPath)
+	if err != nil || saved.Services.Magpie != (config.MagpieOptions{Port: 4425, Model: "group/translation"}) ||
+		saved.Services.OpenAI != cfg.Services.OpenAI {
+		t.Fatalf("saved services: %+v, err: %v", saved.Services, err)
+	}
+	auto := ""
+	if _, err := svc.SaveService("magpie", settings.ServiceChanges{Port: &auto, Model: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.settings().Services.Magpie; got != (config.MagpieOptions{}) {
+		t.Fatalf("clearing options did not restore discovery: %+v", got)
+	}
+}
+
 func TestSaveServiceRollsBackWhenSettingsWriteFails(t *testing.T) {
 	// A succeeded keyring write cannot leave the new key paired with the old endpoint.
 	cfg := config.Default()

@@ -7,6 +7,7 @@ import (
 	"log"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,20 @@ func (s ConfigSvc) SaveService(name string, changes settings.ServiceChanges) (se
 			return settings.ServiceSaveResult{}, errors.New("该服务不支持修改 Base URL")
 		}
 		next.Services.OpenAI.BaseURL = strings.TrimSpace(*changes.BaseURL)
+	}
+	if changes.Port != nil {
+		if name != "magpie" {
+			return settings.ServiceSaveResult{}, errors.New("该服务不支持修改端口")
+		}
+		port := 0
+		if value := strings.TrimSpace(*changes.Port); value != "" {
+			parsed, err := strconv.Atoi(value)
+			if err != nil || parsed < 1 || parsed > 65535 {
+				return settings.ServiceSaveResult{}, errors.New("端口必须是 1 到 65535 之间的整数")
+			}
+			port = parsed
+		}
+		next.Services.Magpie.Port = port
 	}
 	if changes.Model != nil {
 		model := next.Services.Model(name)
@@ -102,7 +117,7 @@ func (s ConfigSvc) SaveService(name string, changes settings.ServiceChanges) (se
 		written = append(written, key)
 	}
 	disabled := !slices.Equal(next.Services.Enabled, previous.Services.Enabled)
-	if changes.BaseURL != nil || changes.Model != nil || disabled {
+	if changes.BaseURL != nil || changes.Port != nil || changes.Model != nil || disabled {
 		if err := a.saveSettings(config.Normalize(next)); err != nil {
 			return settings.ServiceSaveResult{}, rollback(err)
 		}
@@ -170,14 +185,18 @@ func (s ConfigSvc) TestService(ctx context.Context, name string) string {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	a := s.app
-	a.configWriteMu.Lock()
+	cfg := a.settings()
+	var credentials keys.Snapshot
+	if len(keys.ForServices(name)) != 0 {
+		var err error
+		credentials, err = a.translationCredentials(ctx, &cfg.Services, name)
+		if err != nil {
+			return translate.UserMessage(err)
+		}
+	}
 	if err := ctx.Err(); err != nil {
-		a.configWriteMu.Unlock()
 		return translate.UserMessage(err)
 	}
-	cfg := a.settings()
-	credentials := a.keys.Snapshot(keys.ForServices(name))
-	a.configWriteMu.Unlock()
 	return translate.UserMessage(translate.Test(ctx, name, cfg, credentials))
 }
 

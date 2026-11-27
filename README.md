@@ -78,6 +78,7 @@ Open **Settings** from the tray menu to toggle services, reorder cards via drag-
 | **Offline Dictionary** | Keyless | Phonetics and Chinese definitions for single English words |
 | **Google Translate** | Keyless | Disabled by default; toggle on in Settings |
 | **Youdao Dictionary & Translation** | Keyless | Web translation and Chinese dictionary entries for single English words in the full bubble |
+| **Magpie** | Keyless | Requires a running local Magpie gateway. Automatically discovers and lists available chat models and routing groups |
 | **DeepL** | API Key | Industry-leading translation quality; supports both DeepL Free and DeepL Pro keys |
 | **OpenAI-Compatible** | API Key | Fully custom Base URL and model names (works seamlessly with DeepSeek, Moonshot, Qwen, etc.) |
 | **SiliconFlow** | API Key | Aggregated open-source LLMs; defaults to `tencent/Hunyuan-MT-7B` |
