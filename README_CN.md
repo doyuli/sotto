@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="resources/icon.png" width="96" height="96" alt="Sotto logo">
+  <img src="resources/icon.png" width="88" height="88" alt="Sotto logo">
 </p>
 
 <h1 align="center">Sotto</h1>
 
 <p align="center">
-  <strong>专为 Windows 与 macOS 用户及开发者打造的轻量、无感、高效桌面翻译工具</strong>
+  <strong>划词、截图、多引擎同屏对比——为 Windows 与 macOS 打造的轻量桌面翻译助手</strong>
 </p>
 
 <p align="center">
@@ -14,131 +14,115 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2B%20%7C%20macOS%2014%2B-blue" alt="Platform">
-  <img src="https://img.shields.io/badge/Arch-x64%20%7C%20arm64-brightgreen" alt="Architecture">
-  <img src="https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go" alt="Go Version">
-  <img src="https://img.shields.io/badge/CGO-Disabled-orange" alt="Pure Go">
+  <img src="https://img.shields.io/badge/Pure%20Go-No%20Electron%20%2F%20WebView-00ADD8" alt="Pure Go Native">
   <img src="https://img.shields.io/badge/Privacy-Zero%20Telemetry-success" alt="Zero Telemetry">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-lightgrey" alt="License">
 </p>
-
----
-
-## 为什么选择 Sotto？
-
-在查阅多语言文档、浏览外文资料或编写代码时，频繁切换翻译网页或庞大的翻译软件不仅打断思路，还伴随着剪贴板污染、隐私泄漏和单一引擎翻译不准确的困扰。
-
-**Sotto**（意为轻声、私语）致力于成为桌面端始终就绪、不惹人注目的翻译助手。通过**无感划词**、**离线截图 OCR** 或**快捷键输入**，Sotto 会在当前工作窗口旁弹出轻量气泡，同时并发请求多个翻译源并流式呈现，译完即用，失焦即收，让你始终专注于当前任务。
-
----
-
-## 核心特性
-
-- **双模式按需切换**：可在「设置」中开启「简约翻译模式」，划词与截图仅悬浮纯译文，输入框快捷键仍随时呼出完整气泡。
-- **本地翻译历史**：支持按原文或译文检索历史记录，一键复制结果或命名格式，并支持换源重译。
-- **多引擎流式对比**：一次触发，多个翻译源并发查询，流式呈现，支持独立折叠、复制与重试。
-- **划词翻译**：无需切换应用，尽量保留原有剪贴板内容。需要复制取词时，下次粘贴可能得到选中的文字。
-- **离线截图 OCR**：框选屏幕即刻本地识别并翻译，Windows 内置 PP-OCR 与 WinRT OCR，macOS 原生 Vision 识别，图片无需上传网络。
-- **变量命名转换**：一键将英文释义转换为 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE`、`kebab-case` 代码命名格式。
-- **凭据保护与零遥测**：零埋点，API 密钥由系统凭据管理器或钥匙串保护。
-- **轻量原生体验**：纯 Go 后端（`CGO_ENABLED=0`）搭配原生窗口；无边框设计跟随系统深浅色主题，失焦自动收起，亦可钉住常驻。
-
-> **全能气泡 vs 沉浸简约**：Sotto 提供两种互补的呈现方式，兼顾多引擎深度对照与无打扰沉浸阅读。
 
 <p align="center">
-  <img src="docs/modes-preview.png" width="100%" alt="Sotto 气泡模式与简约翻译模式对比预览">
+  无感划词 · 本地离线 OCR · 多引擎流式对比 · 简约无打扰浮窗 · 开发者命名转换
+</p>
+
+<p align="center">
+  <img src="docs/modes-preview.png" width="100%" alt="Sotto 气泡模式与简约翻译模式预览">
 </p>
 
 ---
 
-## 快捷键与操作
+## 核心亮点
 
-可在「设置 → 快捷键」自定义以下全局快捷键。
+### 1. 双重形态：深度对照，或安静阅读
+- **完整气泡模式**：同时并发请求多个翻译源，流式实时输出；支持折叠/重试单个结果、图钉固定对比、以及系统原生语音朗读。
+- **简约翻译模式**：划词或截图直接在目标旁浮现纯译文浮窗，支持多个结果独立并存、自由拖拽与平滑滚动，阅读外文文档或对照数据时零干扰；输入快捷键随时仍可呼出完整气泡。
 
-| 功能 | Windows 默认 | macOS 默认 | 说明 |
-| :--- | :--- | :--- | :--- |
-| **打开翻译面板** | `Ctrl + Alt + A` | `⌥ Option + A` | 呼出输入翻译面板；已打开时再次按下关闭 |
-| **屏幕截图翻译 (OCR)** | `Ctrl + Alt + S` | `⌥ Option + S` | 框选屏幕任意区域，完全本地识别文字并即时发起翻译 |
-| **选中文本翻译 (划词)** | `Ctrl + Alt + D` | `⌥ Option + D` | 自动读取当前前台应用中选中的文本并在光标旁弹出气泡 |
-| **切换简约翻译模式** | `Ctrl + Alt + F` | `⌥ Option + F` | 切换后续划词和截图的显示模式。已有译文留在原位，进行中的翻译按原模式完成。 |
-| **打开翻译历史** | `Ctrl + Alt + H` | `⌥ Option + H` | 打开或再次按下关闭「翻译历史」，也可从托盘或菜单栏进入 |
+### 2. 为代码与高频读写打磨的细节
+- **一键生成变量名**：英文释义可直接复制为 `camelCase`、`PascalCase`、`snake_case`、`CONSTANT_CASE`、`kebab-case` 五种编程命名格式。
+- **智能文本预处理**：在「设置」中按需开启自动拆分驼峰/下划线标识符、剥离代码注释与 Markdown 符号、自动合并 PDF/文档断行，告别手动整理文本。
+- **可检索的本地历史**：按原文或译文秒搜历史记录，支持键盘上下选择回车即复制、发音与一键换源重译。
 
-### 交互与快捷控制
-- **气泡模式**：输入框内按 `Enter` 立即翻译，`Shift + Enter` 换行，`Esc` 关闭；点击图钉图标可固定窗口防止失焦收起；支持原文与译文本地语音朗读，单张卡片可独立折叠或重试。
-- **简约翻译模式**：划词或截图后在目标区域旁浮现纯译文浮窗，多个结果可独立并存；按住任意位置即可拖拽移动，长文本支持内部平滑滚动；按 `Esc` 或鼠标右键关闭，输入面板快捷键仍可随时呼出完整气泡。
-- **翻译历史**：支持搜索原文与译文，用 `↑` / `↓` 切换条目，按 `Enter` 复制首条译文并关闭，按 `Esc` 或点击窗外关闭；支持复制原文、译文与命名格式、语音朗读及换源重译，保留期限可在「设置」中配置。
+### 3. 原生轻量，隐私从不妥协
+- **无 WebView 的纯 Go 原生界面**：全栈 `CGO_ENABLED=0` 构建（Windows 排除 WebView2，macOS 无 Dock 图标菜单栏常驻），反应迅捷；译文浮窗默认不抢占当前窗口焦点，失焦即收。
+- **无感划词，守护剪贴板**：优先通过系统无障碍接口（Windows UIA / macOS AX）直接读取选中文本，尽最大可能保持原剪贴板内容完整。
+- **完全离线的截图 OCR 与词典**：Windows 内置 PP-OCR（及 WinRT 兜底），macOS 原生调用 Apple Vision，截图全程本地识别；内置离线英汉词典，单英文词秒查音标与释义。
+- **零遥测与系统级密钥托管**：无任何埋点上报，所有 API 密钥均加密存储在 Windows 凭据管理器或 macOS 钥匙串中。
 
 ---
 
-## 支持的翻译服务
+## 翻译引擎与能力
 
-可在系统托盘进入「设置」页面，自由勾选启用引擎、拖拽调整卡片展示顺序，或配置各服务 API 密钥与自定义模型：
+可在「设置」中一键开关任意引擎、拖拽排序卡片，或配置自定义大模型接口：
 
-| 引擎 / 服务 | 类型 | 说明与特性 |
+| 分类 | 支持服务 | 亮点说明 |
 | :--- | :--- | :--- |
-| **Bilibili (Index)** | 免密钥 | 实验性接口，默认开启 |
-| **离线词典** | 免密钥 | 查询单个英文词的音标和中文释义 |
-| **Google 翻译** | 免密钥 | 默认关闭，可在设置中启用 |
-| **有道查词与翻译** | 免密钥 | 网页翻译，可在完整气泡中查询单个英文词的中文释义 |
-| **Magpie** | 免密钥 | 需要启动本机 Magpie 网关，自动发现并列出可用的对话模型和路由组 |
-| **DeepL** | API 密钥 | 业界领先的翻译质量，支持 DeepL Free 与 Pro Key |
-| **OpenAI 兼容接口** | API 密钥 | 支持自定义 Base URL 与模型名（轻松接入 DeepSeek、Moonshot、通义千问等） |
-| **硅基流动 (SiliconFlow)** | API 密钥 | 聚合多款优秀开源大模型，默认搭载 `tencent/Hunyuan-MT-7B` |
-| **智谱 AI (Zhipu)** | API 密钥 | 支持智谱开放平台模型，默认搭载 `glm-4.7-flash` |
-| **火山引擎 (ByteDance)** | API 密钥 | 字节跳动机器翻译大模型与高效文本翻译 |
-| **百度翻译** | API 密钥 | 百度翻译开放平台通用文本翻译接口 |
-| **腾讯云 (TMT)** | API 密钥 | 腾讯机器翻译服务 |
-| **网易有道** | API 密钥 | 有道智云专业翻译接口 |
-| **微软 Azure** | API 密钥 | Azure 认知服务文本翻译 |
+| **免密钥 · 即装即用** | **离线词典**、有道查词与翻译、Bilibili (Index)、Google 翻译、**Magpie** | 离线词典免网秒查音标释义；Magpie 可自动发现本地网关模型与路由 |
+| **AI 大模型** | **OpenAI 兼容接口**、硅基流动 (SiliconFlow)、智谱 AI (Zhipu) | 支持流式输出与自定义 Base URL / 模型名，轻松接入 DeepSeek、Qwen、GLM 等 |
+| **专业机翻 API** | **DeepL** (Free / Pro)、火山引擎、百度翻译、腾讯云 TMT、网易有道、微软 Azure | 按需填写自有密钥，稳定高速对照 |
 
 > [!NOTE]
-> 翻译文本会发送给选中的第三方服务，词典查询在本地完成。部分免密钥接口属于实验性网络端点。服务可用性、免费额度和计费以各服务商的最新政策为准。
+> 离线词典与截图 OCR 均在本地完成；在线翻译文本仅发送至你主动启用的对应服务商。
+
+---
+
+## 快捷键与上手
+
+所有全局快捷键均可在「设置 → 快捷键」自由修改：
+
+| 功能 | Windows 默认 | macOS 默认 | 作用 |
+| :--- | :--- | :--- | :--- |
+| **打开翻译面板** | `Ctrl + Alt + A` | `⌥ Option + A` | 呼出 / 关闭输入气泡，`Enter` 翻译、`Shift + Enter` 换行 |
+| **屏幕截图翻译** | `Ctrl + Alt + S` | `⌥ Option + S` | 框选屏幕任意区域，本地 OCR 识别并即时翻译 |
+| **选中文本翻译** | `Ctrl + Alt + D` | `⌥ Option + D` | 直接读取当前选中的文本，在光标旁弹出结果 |
+| **切换简约模式** | `Ctrl + Alt + F` | `⌥ Option + F` | 在“完整气泡”与“纯译文浮窗”间切换后续划词/截图的呈现形态 |
+| **打开翻译历史** | `Ctrl + Alt + H` | `⌥ Option + H` | 打开 / 关闭「翻译历史」，支持检索、回溯与换源重译 |
+
+- **气泡窗口**：失焦自动收起，点击右上角图钉可钉住常驻；按 `Esc` 关闭。
+- **简约浮窗**：按住任意位置拖拽，长文内部滚动，按 `Esc` 或鼠标右键关闭。
 
 ---
 
 ## 下载与安装
 
-请前往 [GitHub Releases 页面](https://github.com/doyuli/sotto/releases/latest) 下载对应系统与硬件架构的安装包：
+前往 [GitHub Releases](https://github.com/doyuli/sotto/releases/latest) 下载对应安装包：
 
-| 操作系统 | 适用硬件与架构 | 安装包文件 | 说明 |
-| :--- | :--- | :--- | :--- |
-| **Windows 10 / 11** | 64 位 Intel / AMD (x86_64) | `sotto-setup-<version>-amd64.exe` | 适用于普通 Windows PC |
-| **Windows 10 / 11** | 64 位 ARM (arm64) | `sotto-setup-<version>-arm64.exe` | 适用于 Surface Pro、高通 Snapdragon X 等设备 |
-| **macOS 14+** | Apple Silicon (M 系列芯片 / arm64) | `sotto-<version>-arm64.dmg` | 常驻菜单栏无 Dock 图标，原生 Vision 识别 |
+| 系统 | 架构 | 安装包 |
+| :--- | :--- | :--- |
+| **Windows 10 / 11** | x64 (`x86_64`) | `sotto-setup-<version>-amd64.exe` |
+| **Windows 10 / 11** | ARM64 (`arm64`) | `sotto-setup-<version>-arm64.exe` |
+| **macOS 14+** | Apple Silicon (`arm64`) | `sotto-<version>-arm64.dmg` |
 
-### macOS 首次使用提示
-1. **安全性放行**：目前 macOS 软件包采用 ad-hoc 签名。将应用拖入 `Applications` 首次打开时，若系统拦截提示，请在 **系统设置 → 隐私与安全性** 中点击 **“仍要打开”**（详情参考 [Apple 官方支持说明](https://support.apple.com/zh-cn/102445)）。
-2. **系统权限**：划词翻译需授予 **辅助功能 (Accessibility)** 权限，截图识别需授予 **屏幕录制 (Screen Recording)** 权限。
+<details>
+<summary><strong>macOS 首次启动指引（权限与安全性放行）</strong></summary>
+
+1. **安全性放行**：当前 macOS 安装包采用 ad-hoc 签名。拖入 `Applications` 首次打开若被拦截，请前往 **系统设置 → 隐私与安全性** 点击 **“仍要打开”**（详见 [Apple 官方说明](https://support.apple.com/zh-cn/102445)）。
+2. **系统权限**：划词翻译需要 **辅助功能 (Accessibility)** 权限；截图 OCR 需要 **屏幕录制 (Screen Recording)** 权限。
+
+</details>
 
 ---
 
 ## 本地开发与构建
 
-### 环境准备
-- [Go](https://go.dev/) >= 1.27.3
-- [Bun](https://bun.sh/)（用于运行 MyGo CLI 工具链）
-
-### 开发命令
+需要 [Go](https://go.dev/) >= 1.27.3 与 [Bun](https://bun.sh/)：
 
 ```bash
-# 1. 安装项目工具链依赖
-bun install
-
-# 2. 启动原生桌面开发环境（支持热重载）
-bun run dev
-
-# 3. 运行项目单元测试
-CGO_ENABLED=0 go test ./...
-
-# 4. 检查 mygo/ui 原生组件用法合规性
-bunx mygo vet .
-
-# 5. 构建受支持平台的发布产物
-bun run build:win      # 构建 Windows x64 和 arm64 的可执行文件、OCR 资源及 NSIS 安装包
-bun run build:mac      # 构建 Apple 芯片版 .app 和 DMG（在 macOS 上运行）
+bun install                 # 安装 MyGo CLI 工具链
+bun run dev                 # 启动热重载桌面开发环境
+CGO_ENABLED=0 go test ./... # 运行单元测试与 UI 回归用例
+bunx mygo vet .             # 检查 MyGo 原生组件与生命周期规范
 ```
 
-Windows 打包脚本通过 `mygo_nowebview` 排除 WebView2。只构建一种架构时，运行 `bun run build:win:x64` 或 `bun run build:win:arm64`。加上 `-skip-installer` 可只生成可执行文件和运行所需的资源。在 macOS 上可用 `bun run build:mac -skip-dmg -skip-notarize` 构建并签署用于本地验证的 `.app`。
+<details>
+<summary><strong>发布构建与端到端测试</strong></summary>
 
-> 自动化测试与系统平台端到端验收指南请参阅 [e2e/README.md](e2e/README.md)。
+```bash
+bun run build:win   # 构建 Windows x64 / arm64 可执行文件、OCR 资源与 NSIS 安装包
+bun run build:mac   # 构建 Apple Silicon .app 与 DMG（需在 macOS 下运行）
+```
+
+- 单独构建 Windows 单架构可使用 `bun run build:win:x64` 或 `bun run build:win:arm64`（附加 `-skip-installer` 可跳过安装包生成）；macOS 本地验证可用 `bun run build:mac -skip-dmg -skip-notarize`。
+- 平台原生探针与桌面端到端验收请参阅 [e2e/README.md](e2e/README.md)。
+
+</details>
 
 ---
 
