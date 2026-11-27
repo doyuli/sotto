@@ -291,17 +291,18 @@ func TestSettingsViewServicesTab(t *testing.T) {
 		return len(current.Services.Order) >= 2 && current.Services.Order[0] == "openai"
 	}, "expected OpenAI dragged to first position")
 
-	// Expand DeepL drawer and check usage.
-	if err := tt.Click("配置DeepL"); err != nil {
-		t.Fatalf("Click 配置DeepL: %v", err)
-	}
+	// The service title used to ignore clicks, leaving only the configure button.
+	settingsClick(t, tt, "DeepL")
 	waitForCondition(t, time.Second, func() bool {
 		tt.Frame()
 		return tt.HasText("本月已用 1200 / 500000 字符")
 	}, "expected DeepL usage text")
 
 	// Collapsing and expanding the same card must retain its completed quota query.
-	settingsClick(t, tt, "收起DeepL")
+	settingsClick(t, tt, "DeepL")
+	if tt.HasText("本月已用 1200 / 500000 字符") {
+		t.Fatal("clicking the DeepL header did not collapse the drawer")
+	}
 	settingsClick(t, tt, "配置DeepL")
 	if !tt.HasText("本月已用 1200 / 500000 字符") {
 		t.Fatal("re-expanding DeepL discarded cached usage")
@@ -1254,7 +1255,8 @@ func TestSettingsViewDragOnlySavesCompletedDrop(t *testing.T) {
 			defer v.Dispose()
 			waitSettingsIdle(t, v)
 			tt := ui.NewTester(v.Render, 780, 900)
-			settingsClick(t, tt, "配置OpenAI")
+			// The enabled card must accept a header click as well as a reorder drag.
+			settingsClick(t, tt, "OpenAI")
 			settingsClick(t, tt, "编辑API Key")
 			tt.Type("draft-secret")
 			from, ok := tt.Find("拖动OpenAI")
@@ -1623,6 +1625,9 @@ func TestSettingsServiceSwitchKeepsFocusAcrossGroups(t *testing.T) {
 	v.mu.Unlock()
 	if !enabled || !tt.Focused("启用OpenAI") {
 		t.Fatal("focused switch could not move back to enabled group")
+	}
+	if _, ok := tt.Find("配置OpenAI"); !ok {
+		t.Fatal("enabling the service opened its configuration drawer")
 	}
 }
 

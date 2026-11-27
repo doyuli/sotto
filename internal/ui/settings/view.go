@@ -697,8 +697,24 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 
 	card.Children(func() {
 		head := ui.Row(c).FillWidth().MinHeight(44).Padding(9, 14).AlignItems(ui.Center).Gap(10)
-		if editable && isExpanded {
-			head.Background(p.cardHead)
+		toggleExpanded := func() {
+			v.mu.Lock()
+			nextExpanded := !v.expanded[svc]
+			v.expanded[svc] = nextExpanded
+			loadUsage := nextExpanded && svc == "deepl" && slices.Contains(v.credentials.Stored, keys.DeeplKey)
+			v.mu.Unlock()
+			if loadUsage {
+				v.loadDeeplUsageAsync()
+			}
+			if nextExpanded && svc == "magpie" {
+				v.RefreshMagpieAsync()
+			}
+		}
+		if editable {
+			head.Cursor(ui.CursorPointer).OnClick(toggleExpanded)
+			if isExpanded {
+				head.Background(p.cardHead)
+			}
 		}
 		if enabled && isExpanded {
 			head.Drag(svc)
@@ -743,19 +759,7 @@ func (v *View) renderServiceCard(c *ui.Context, p settingsPalette, svc string, e
 						cfgLabel = "收起"
 						accessLabel = "收起" + title
 					}
-					configure := v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, func() {
-						v.mu.Lock()
-						nextExpanded := !v.expanded[svc]
-						v.expanded[svc] = nextExpanded
-						loadUsage := nextExpanded && svc == "deepl" && slices.Contains(v.credentials.Stored, keys.DeeplKey)
-						v.mu.Unlock()
-						if loadUsage {
-							v.loadDeeplUsageAsync()
-						}
-						if nextExpanded && svc == "magpie" {
-							v.RefreshMagpieAsync()
-						}
-					})
+					configure := v.renderSecondaryButtonDisabled(c, p, cfgLabel, accessLabel, false, toggleExpanded)
 					// Keep the editor and save feedback in view if its focused row
 					// moves back to setup after a required credential is removed.
 					if !showSwitch && handles.ready.FocusWithin(c) {
