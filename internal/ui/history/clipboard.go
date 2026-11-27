@@ -34,15 +34,15 @@ func (v *View) copyCustom(id int64, provider, overrideText, toastMsg, feedbackKe
 		// Reject snapshots predating a removal, not unrelated incoming translations.
 		if v.store.RemovalRevision() != removals || errors.Is(err, history.ErrMissing) {
 			v.Refresh()
-			v.status = "历史记录已变更，请重新选择。"
+			v.status = "历史记录已变更，请重新选择"
 			return
 		}
 		if err != nil {
-			v.status = "无法读取译文，请重试。"
+			v.status = "无法读取译文，请重试"
 			return
 		}
 		if err := v.actions.Copy(text); err != nil {
-			v.status = "无法写入剪贴板，请重试。"
+			v.status = "无法写入剪贴板，请重试"
 			return
 		}
 		if closeAfter {

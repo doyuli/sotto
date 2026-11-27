@@ -43,14 +43,14 @@ func UserMessage(err error) string {
 		return ""
 	}
 	if errors.Is(err, ErrLimit) {
-		return "截图范围过大，请缩小框选范围后重试。"
+		return "截图范围过大，请缩小框选范围后重试"
 	}
-	return "截屏失败，请重新框选。"
+	return "截屏失败，请重新框选"
 }
 
 func SnapshotUserMessage(err error) string {
 	if errors.Is(err, ErrLimit) {
-		return "屏幕截图过大，请降低显示分辨率或减少启用的显示器后重试。"
+		return "屏幕截图过大，请降低显示分辨率或减少启用的显示器后重试"
 	}
-	return "截屏失败，请重试。"
+	return "截屏失败，请重试"
 }

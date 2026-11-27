@@ -1283,7 +1283,7 @@ func (v *bubbleView) renderCard(c *ui.Context, p bubblePalette, svc string, card
 			if card.Err != "" {
 				errMsg := card.Err
 				if card.Text != "" {
-					errMsg = "译文未完成。" + errMsg
+					errMsg = "译文未完成：" + errMsg
 				}
 				ui.Text(c, errMsg).FontSize(12).TextColor(p.error)
 				ui.Row(c).Gap(12).Wrap().Children(func() {

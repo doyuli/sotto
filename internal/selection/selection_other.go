@@ -24,4 +24,4 @@ func CapturePrimaryPress() PrimaryPress { return PrimaryPress{} }
 
 func WindowOwnsForeground(hwnd uintptr) bool { return false }
 
-func Prepare() func(context.Context) (Selection, error) { return grab }
+func Prepare(_ string) func(context.Context) (Selection, error) { return grab }

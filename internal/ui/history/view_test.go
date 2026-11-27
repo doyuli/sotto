@@ -604,7 +604,7 @@ func TestHistoryRetryKeepsUnsavedTranslationAfterFailure(t *testing.T) {
 	h.put("old original", "已有译文")
 	h.view.actions.Retry = func(_ history.Entry, provider string) (RetryResult, error) {
 		if provider == "google" {
-			return RetryResult{Text: "临时译文", Type: history.ResultTranslation, Notice: "本次译文未写入翻译历史。"}, nil
+			return RetryResult{Text: "临时译文", Type: history.ResultTranslation, Notice: "本次译文未写入翻译历史"}, nil
 		}
 		return RetryResult{}, errors.New("服务暂时不可用")
 	}

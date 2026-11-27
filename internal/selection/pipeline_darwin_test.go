@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"sotto/internal/hotkey"
 )
 
 func TestMacSelectionFallbackAndPermission(t *testing.T) {
@@ -64,13 +66,14 @@ func TestMacCopyWaitsForLastShortcutKey(t *testing.T) {
 				return time.Since(start) < 30*time.Millisecond
 			case 2: // D
 				return time.Since(start) < release
-			case 57: // Caps Lock remains latched throughout.
+			case 57, 12: // Caps Lock and an unrelated key stay latched.
 				return true
 			}
 			return false
 		}
 		buttonState = func(int32, uint32) bool { return false }
-		if err := waitCopyRelease(t.Context(), copyControlsHeld); err != nil || time.Since(start) < release {
+		mainKey := hotkey.MacMainKeyCode("Ctrl+Option+D")
+		if err := waitCopyRelease(t.Context(), func() bool { return copyControlsHeld(mainKey) }); err != nil || time.Since(start) < release {
 			t.Fatalf("wait ended at %v with %v", time.Since(start), err)
 		}
 	})

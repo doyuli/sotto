@@ -388,7 +388,7 @@ func orderTranslators(all []Translator, order []string) []Translator {
 func UserMessage(err error) string {
 	switch {
 	case errors.Is(err, ErrEmptySource):
-		return "清理后的原文为空，请修改原文或调整命名转换设置。"
+		return "清理后的原文为空，请修改原文或调整命名转换设置"
 	case errors.Is(err, ErrInputLimit):
 		return "原文过长，单次最多翻译 18000 个字符，请分次提交"
 	case errors.Is(err, ErrResultLimit):

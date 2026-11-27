@@ -165,7 +165,7 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 	}
 	if len(prepared.settings.Services.Enabled) == 0 {
 		record.Done()
-		return translate.Result{Err: "请在设置中启用一个翻译服务。"}
+		return translate.Result{Err: "请在设置中启用一个翻译服务"}
 	}
 	var final translate.Result
 	var partial string
@@ -187,7 +187,7 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 	if final.Text == "" {
 		final.Text = strings.TrimSpace(partial)
 		if final.Err == "" {
-			final.Err = "翻译服务未返回完整译文，请重试。"
+			final.Err = "翻译服务未返回完整译文，请重试"
 		}
 	}
 	if record != nil {

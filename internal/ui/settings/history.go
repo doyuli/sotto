@@ -94,9 +94,9 @@ func (v *View) renderHistoryConfirmation(c *ui.Context, p settingsPalette) {
 		}
 		v.mu.Unlock()
 	}
-	title, message, commit := "缩短保留期限？", fmt.Sprintf("将删除 %d 条原文记录及其译文，且无法恢复。", prompt.count), "确认更改"
+	title, message, commit := "缩短保留期限？", fmt.Sprintf("将删除 %d 条原文记录及其译文，且无法恢复", prompt.count), "确认更改"
 	if prompt.clear {
-		title, message, commit = "清空翻译历史？", "所有原文和译文都将删除，且无法恢复。", "确认清空"
+		title, message, commit = "清空翻译历史？", "所有原文和译文都将删除，且无法恢复", "确认清空"
 	}
 	shared.ConfirmDialog(c.Key("history-confirmation"), &open, shared.ConfirmDialogOptions{
 		Title:        title,

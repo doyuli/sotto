@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ErrAccessibility                = errors.New("请在系统设置的隐私与安全性中允许 Sotto 使用辅助功能，然后重试。")
-	ErrScreenRecording              = errors.New("请在系统设置的隐私与安全性中允许 Sotto 录制屏幕，然后重试。")
+	ErrAccessibility                = errors.New("请在系统设置的隐私与安全性中允许 Sotto 使用辅助功能，然后重试")
+	ErrScreenRecording              = errors.New("请在系统设置的隐私与安全性中允许 Sotto 录制屏幕，然后重试")
 	axTrusted                       func() bool
 	axPrompt                        func(objc.ID) bool
 	screenAllowed                   func() bool

@@ -17,7 +17,7 @@ export default defineConfig({
     minimumSystemVersion: "14.0",
     infoPlist: {
       LSUIElement: true,
-      NSScreenCaptureUsageDescription: "用于识别你主动框选的屏幕文字。",
+      NSScreenCaptureUsageDescription: "用于识别你主动框选的屏幕文字",
     },
   },
 });

@@ -42,10 +42,10 @@ func TestPixelBudget(t *testing.T) {
 }
 
 func TestCaptureUserMessage(t *testing.T) {
-	if UserMessage(fmt.Errorf("capture: allocation rejected: %w", ErrLimit)) != "截图范围过大，请缩小框选范围后重试。" {
+	if UserMessage(fmt.Errorf("capture: allocation rejected: %w", ErrLimit)) != "截图范围过大，请缩小框选范围后重试" {
 		t.Fatal("wrapped budget error lost its actionable message")
 	}
-	if UserMessage(errors.New("GDI failure")) != "截屏失败，请重新框选。" || UserMessage(nil) != "" {
+	if UserMessage(errors.New("GDI failure")) != "截屏失败，请重新框选" || UserMessage(nil) != "" {
 		t.Fatal("unexpected capture error message")
 	}
 }

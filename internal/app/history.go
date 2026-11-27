@@ -359,5 +359,5 @@ func (a *application) retranslateHistory(ctx context.Context, selected history.E
 	if ctx.Err() != nil {
 		return historyview.RetryResult{}, ctx.Err()
 	}
-	return historyview.RetryResult{Text: text, Type: resultType, Notice: "本次译文未写入翻译历史。"}, nil
+	return historyview.RetryResult{Text: text, Type: resultType, Notice: "本次译文未写入翻译历史"}, nil
 }

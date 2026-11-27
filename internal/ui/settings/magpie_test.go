@@ -78,7 +78,7 @@ func TestSettingsMagpieSelectsAndEnablesModel(t *testing.T) {
 	tt := ui.NewTester(v.Render, 660, 600)
 	tt.Frame()
 	// An unreadable keyring leaves the enabled OpenAI service unconfirmed.
-	if tt.HasText("还没有启用的服务，可在下方启用或配置。") {
+	if tt.HasText("还没有启用的服务，可在下方启用或配置") {
 		t.Fatal("reported no enabled services while credentials were unknown")
 	}
 	if _, ok := tt.Find("启用Magpie"); ok {

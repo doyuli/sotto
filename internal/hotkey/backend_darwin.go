@@ -210,6 +210,19 @@ func checkSystemShortcut(code, mods uint32) error {
 	return nil
 }
 
+// MacMainKeyCode returns the registered physical key, or -1 for entries without a shortcut.
+func MacMainKeyCode(value string) int {
+	s, err := Parse(value, "darwin")
+	if err != nil {
+		return -1
+	}
+	code, ok := macKeyCodes[s.Key]
+	if !ok {
+		return -1
+	}
+	return int(code)
+}
+
 // ANSI virtual positions from Events.h, matching PhysicalKey in MyGo's Mac input.
 var macKeyCodes = map[string]uint32{
 	"A": 0x00, "S": 0x01, "D": 0x02, "F": 0x03, "H": 0x04, "G": 0x05, "Z": 0x06, "X": 0x07,

@@ -20,7 +20,7 @@ import (
 // exception, where even its copy chord interrupts an empty selection, so
 // the copy is skipped there (see copyChordFor).
 // Prepare captures identity on the hotkey thread, before background work queues.
-func Prepare() func(context.Context) (Selection, error) {
+func Prepare(_ string) func(context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
 	self := pid != 0 && pid == windows.GetCurrentProcessId()
 	log.Printf("selection: source hwnd=%x pid=%d class=%q self=%t", hwnd, pid, class, self)
@@ -45,7 +45,7 @@ func Prepare() func(context.Context) (Selection, error) {
 		return grabClipboardFrom(ctx, hwnd, pid, class)
 	}
 }
-func grab(ctx context.Context) (Selection, error) { return Prepare()(ctx) }
+func grab(ctx context.Context) (Selection, error) { return Prepare("")(ctx) }
 func sameForeground(hwnd uintptr, pid uint32) bool {
 	current, process, _ := foregroundWindow()
 	return hwnd != 0 && current == hwnd && process == pid

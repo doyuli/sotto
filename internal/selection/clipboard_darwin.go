@@ -179,17 +179,21 @@ func restorePasteboard(board objc.ID, saved []pasteboardItem, expected int64, gu
 	})
 }
 
-func copyControlsHeld() bool {
-	// A shortcut's main key can come up after its modifiers. Its release
-	// would otherwise be mistaken for intervening input by the copy monitor.
-	// Caps Lock reports a latched state and does not modify the copy chord.
-	for key := uint16(0); key < 128; key++ {
-		if key != 57 && keyState(1, key) {
+func copyControlsHeld(mainKey int) bool {
+	// A latched, unrelated key must not prevent copying. Only the shortcut's
+	// main key can leave a pending shortcut release after its modifiers lift.
+	const hidState = 1
+	if mainKey >= 0 && keyState(hidState, uint16(mainKey)) {
+		return true
+	}
+	// Left/right Command, Shift, Option, Control, and Fn. Skip latched Caps Lock.
+	for _, key := range [...]uint16{54, 55, 56, 58, 59, 60, 61, 62, 63} {
+		if keyState(hidState, key) {
 			return true
 		}
 	}
 	for b := uint32(0); b < 5; b++ {
-		if buttonState(1, b) {
+		if buttonState(hidState, b) {
 			return true
 		}
 	}
@@ -232,7 +236,7 @@ func watchMacCopyInput() (*copyInputState, func(), error) {
 	return state, stop, nil
 }
 
-func copyMacSelection(ctx context.Context, source macSource) (Selection, error) {
+func copyMacSelection(ctx context.Context, source macSource, mainKey int) (Selection, error) {
 	if err := loadAX(); err != nil {
 		return Selection{}, err
 	}
@@ -251,7 +255,7 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 	case <-clipboardMu:
 	}
 	defer func() { clipboardMu <- struct{}{} }()
-	if err := waitCopyRelease(ctx, copyControlsHeld); err != nil {
+	if err := waitCopyRelease(ctx, func() bool { return copyControlsHeld(mainKey) }); err != nil {
 		return Selection{}, err
 	}
 	watch, stop, err := watchMacCopyInput()
@@ -274,7 +278,7 @@ func copyMacSelection(ctx context.Context, source macSource) (Selection, error) 
 	if err := source.check(ctx); err != nil {
 		return Selection{}, err
 	}
-	if pasteboardChange() != before || copyControlsHeld() || !watch.unchanged() || secureInput() {
+	if pasteboardChange() != before || copyControlsHeld(mainKey) || !watch.unchanged() || secureInput() {
 		return Selection{}, ErrSourceChanged
 	}
 	down, up := createKey(0, 8, true), createKey(0, 8, false)

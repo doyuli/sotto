@@ -265,7 +265,7 @@ func (a *application) startEntry(action string) {
 		a.bubbles.HideTransient()
 		go a.bubbles.ShowTask(a.settings(), "input", "", nil, "", "", task.Valid, nil)
 	case "selection":
-		grab := selection.Prepare()
+		grab := selection.Prepare(a.settings().Hotkeys.Selection)
 		a.snip.Hide()
 		a.bubbles.HideTransient()
 		go a.grabSelection(task, grab)
@@ -342,15 +342,15 @@ func selectionFeedback(err error) string {
 	}
 	switch {
 	case errors.Is(err, selection.ErrSelfWindow):
-		return "请先在其他应用中选中文字。"
+		return "请先在其他应用中选中文字"
 	case errors.Is(err, selection.ErrShortcutHeld):
-		return "请松开快捷键和鼠标按键后重试。"
+		return "请松开快捷键和鼠标按键后重试"
 	case errors.Is(err, selection.ErrNoSelection):
-		return "请重新选中文字后重试。"
+		return "请重新选中文字后重试"
 	case errors.Is(err, context.DeadlineExceeded):
-		return "读取选中文字超时，请重试。"
+		return "读取选中文字超时，请重试"
 	default:
-		return "这次没能读取选中的文字，可以试试截图翻译。"
+		return "这次没能读取选中的文字，可以试试截图翻译"
 	}
 }
 

@@ -198,7 +198,7 @@ func (b *bubble) stopPresentation() RunStoppedMsg {
 	b.fullRevision, b.fullReqID = b.revision, ""
 	b.canShow = func() bool { return false }
 	if b.phase == "recognizing" {
-		b.phase, b.message = "error", "已取消识别，可重新框选或直接输入。"
+		b.phase, b.message = "error", "已取消识别，可重新框选或直接输入"
 	}
 	return RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision}
 }

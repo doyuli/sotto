@@ -129,16 +129,16 @@ func finish(t Text) (Text, error) {
 func UserMessage(err error) string {
 	switch {
 	case errors.Is(err, context.Canceled):
-		return "文字识别已取消。"
+		return "文字识别已取消"
 	case errors.Is(err, context.DeadlineExceeded):
-		return "文字识别超时，请缩小框选范围后重试。"
+		return "文字识别超时，请缩小框选范围后重试"
 	case errors.Is(err, pipeline.ErrLimit):
-		return "截图内容过大或文字行过长，请缩小框选范围后重试。"
+		return "截图内容过大或文字行过长，请缩小框选范围后重试"
 	case errors.Is(err, errVisionLanguage):
-		return "当前 macOS OCR 不支持所选语言，请切换语言或使用自动识别。"
+		return "当前 macOS OCR 不支持所选语言，请切换语言或使用自动识别"
 	case err != nil && strings.Contains(err.Error(), "language pack"):
-		return "系统 OCR 语言包不可用，请在 Windows 设置中安装所需语言的文字识别功能。"
+		return "系统 OCR 语言包不可用，请在 Windows 设置中安装所需语言的文字识别功能"
 	default:
-		return "文字识别失败，请重新框选或直接输入。"
+		return "文字识别失败，请重新框选或直接输入"
 	}
 }

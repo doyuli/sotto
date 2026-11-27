@@ -49,7 +49,7 @@ func TestHistoryRetentionConfirmationInSettings(t *testing.T) {
 	}
 	click("选择历史保留期限")
 	click("7 天")
-	if !tt.HasText("将删除 1 条原文记录及其译文，且无法恢复。") {
+	if !tt.HasText("将删除 1 条原文记录及其译文，且无法恢复") {
 		t.Fatalf("confirmation did not count original records: %v", tt.Texts())
 	}
 	click("取消")
@@ -144,7 +144,7 @@ func TestHistoryClearConfirmationInSettings(t *testing.T) {
 		tt.Frame()
 	}
 	click("清空翻译历史")
-	if !tt.Focused("取消") || !tt.HasText("所有原文和译文都将删除，且无法恢复。") {
+	if !tt.Focused("取消") || !tt.HasText("所有原文和译文都将删除，且无法恢复") {
 		t.Fatalf("unexpected clear confirmation state: texts=%v", tt.Texts())
 	}
 	tt.Key(0, ui.KeyEscape)

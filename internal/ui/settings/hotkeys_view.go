@@ -27,7 +27,7 @@ func (v *View) renderHotkeys(c *ui.Context, p settingsPalette) {
 	}
 
 	ui.Text(c, "快捷键").FontSize(18).FontWeight(600).TextColor(p.fg)
-	ui.Text(c, "点击组合键开始录制，按 Esc 取消。设置成功后立即生效，失败时保留原快捷键。").FontSize(12).LineHeight(1.6).TextColor(p.muted)
+	ui.Text(c, "点击组合键开始录制，按 Esc 取消。设置成功后立即生效，失败时保留原快捷键").FontSize(12).LineHeight(1.6).TextColor(p.muted)
 	ui.Column(c).FillWidth().Radius(12).Background(p.card).Border(1, p.border).Children(func() {
 		for i, item := range settingsHotkeys {
 			current := hotkeyValue(cfg, item.id)
@@ -79,7 +79,7 @@ func (v *View) renderHotkeys(c *ui.Context, p settingsPalette) {
 					ui.Text(c, message).FillWidth().FontSize(12).LineHeight(1.6).TextColor(p.error)
 				}
 				if recording {
-					ui.Text(c, "按住修饰键，再按主键；没有反应时可改用手动设置。").FontSize(12).TextColor(p.muted)
+					ui.Text(c, "按住修饰键，再按主键；没有反应时可改用手动设置").FontSize(12).TextColor(p.muted)
 				}
 				if editor == item.id {
 					v.renderHotkeyPicker(c, p, item, draft, pending != "")
@@ -90,12 +90,12 @@ func (v *View) renderHotkeys(c *ui.Context, p settingsPalette) {
 			}
 		}
 	})
-	ui.Text(c, "组合键没有被识别？使用“手动设置”选择键位。系统或其他应用可能会优先处理某些组合键。").FontSize(12).LineHeight(1.6).TextColor(p.muted)
+	ui.Text(c, "组合键没有被识别？使用“手动设置”选择键位。系统或其他应用可能会优先处理某些组合键").FontSize(12).LineHeight(1.6).TextColor(p.muted)
 }
 
 func (v *View) renderHotkeyPicker(c *ui.Context, p settingsPalette, item hotkeyItem, draft hotkey.Shortcut, busy bool) {
 	ui.Column(c).FillWidth().Padding(12).Gap(10).Radius(8).Background(p.field).Children(func() {
-		ui.Text(c, "选择修饰键和主键，无需同时按下组合键。").FontSize(12).TextColor(p.muted)
+		ui.Text(c, "选择修饰键和主键，无需同时按下组合键").FontSize(12).TextColor(p.muted)
 		ui.Row(c).Gap(6).Children(func() {
 			modifiers := []struct {
 				bit   hotkey.Modifiers

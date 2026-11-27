@@ -15,6 +15,7 @@ import (
 	"github.com/ebitengine/purego/objc"
 	"github.com/egoist/mygo"
 
+	"sotto/internal/hotkey"
 	"sotto/internal/macnative"
 )
 
@@ -81,10 +82,11 @@ func (s macSource) check(ctx context.Context) error {
 	return nil
 }
 
-func Prepare() func(context.Context) (Selection, error) {
+func Prepare(shortcut string) func(context.Context) (Selection, error) {
 	s := prepareMacSource()
+	mainKey := hotkey.MacMainKeyCode(shortcut)
 	return func(ctx context.Context) (Selection, error) {
-		return readMacSelection(ctx, s.check, macnative.RequireAccessibility, func(ctx context.Context) (Selection, error) { return readAX(ctx, s) }, func(ctx context.Context) (Selection, error) { return copyMacSelection(ctx, s) })
+		return readMacSelection(ctx, s.check, macnative.RequireAccessibility, func(ctx context.Context) (Selection, error) { return readAX(ctx, s) }, func(ctx context.Context) (Selection, error) { return copyMacSelection(ctx, s, mainKey) })
 	}
 }
 
@@ -111,7 +113,7 @@ func readMacSelection(ctx context.Context, check func(context.Context) error, pe
 	return copy(ctx)
 }
 
-func grab(ctx context.Context) (Selection, error) { return Prepare()(ctx) }
+func grab(ctx context.Context) (Selection, error) { return Prepare("")(ctx) }
 func grabUIA(ctx context.Context) (Selection, error) {
 	s := prepareMacSource()
 	if err := macnative.RequireAccessibility(true); err != nil {
@@ -124,7 +126,7 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 	if err := macnative.RequireAccessibility(true); err != nil {
 		return Selection{}, err
 	}
-	return copyMacSelection(ctx, s)
+	return copyMacSelection(ctx, s, -1)
 }
 
 var axAdmission = make(chan struct{}, 1)

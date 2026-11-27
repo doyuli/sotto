@@ -214,7 +214,7 @@ func (v *View) Render(c *ui.Context) {
 		if v.clearOpen {
 			shared.ConfirmDialog(c.Key("confirm-clear"), &v.clearOpen, shared.ConfirmDialogOptions{
 				Title:        "清空翻译历史？",
-				Message:      "所有原文和译文都将删除，且无法恢复。",
+				Message:      "所有原文和译文都将删除，且无法恢复",
 				CancelLabel:  "取消",
 				ConfirmLabel: "确认清空",
 				Colors: shared.ConfirmDialogColors{
@@ -301,9 +301,9 @@ func (v *View) renderPlaceholder(c *ui.Context, p palette) {
 		case !v.ready:
 			ui.Text(c, "正在读取…").FontSize(13).TextColor(p.muted)
 		default:
-			title, hint := "还没有翻译记录", "开启记录后，翻译结果会保存在这里。"
+			title, hint := "还没有翻译记录", "开启记录后，翻译结果会保存在这里"
 			if v.query != "" {
-				title, hint = "没找到匹配的记录", "换个关键词，或试试更短的词。"
+				title, hint = "没找到匹配的记录", "换个关键词，或试试更短的词"
 			}
 			ui.Box(c).Size(56, 56).Radius(14).Background(p.field).Center().Children(func() {
 				ui.Icon(c, emptyIcon).Size(38, 38).TextColor(p.muted).AccessHidden(true)

@@ -481,7 +481,7 @@ func (v *View) delete(id int64) {
 				}
 				v.Refresh()
 			default:
-				v.status = "无法删除翻译历史，请重试。"
+				v.status = "无法删除翻译历史，请重试"
 			}
 		})
 	})

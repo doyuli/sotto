@@ -71,7 +71,7 @@ func recognizeScreenshot(ctx context.Context, img image.Image) (text, message st
 		return "", ocr.UserMessage(err)
 	}
 	if strings.TrimSpace(result.Text) == "" {
-		return "", "未识别到文字，请框选完整文字后重试。"
+		return "", "未识别到文字，请框选完整文字后重试"
 	}
 	if err := translate.ValidateInput(result.Text); err != nil {
 		return "", translate.UserMessage(err)

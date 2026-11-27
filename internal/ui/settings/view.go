@@ -560,7 +560,7 @@ func (v *View) renderEnabledServices(c *ui.Context, p settingsPalette, enabledNa
 	}
 	renderServiceGroup(c.Key("enabled"), p, title, len(displayEnabled), description, func() {
 		if len(displayEnabled) == 0 {
-			ui.Text(c, "还没有启用的服务，可在下方启用或配置。").Padding(14).FontSize(12).TextColor(p.muted)
+			ui.Text(c, "还没有启用的服务，可在下方启用或配置").Padding(14).FontSize(12).TextColor(p.muted)
 			return
 		}
 		anyDragging := false
@@ -1114,7 +1114,7 @@ func (v *View) renderNaming(c *ui.Context, p settingsPalette) {
 
 	ui.Column(c).Padding(8, 0, 0, 0).Gap(4).Children(func() {
 		ui.Text(c, "复制格式").FontSize(13).FontWeight(600).TextColor(p.fg)
-		ui.Text(c, "英语译文下方会显示已开启的复制格式。").FontSize(12).TextColor(p.muted)
+		ui.Text(c, "英语译文下方会显示已开启的复制格式").FontSize(12).TextColor(p.muted)
 	})
 
 	ui.Column(c).Radius(12).Background(p.card).Border(1, p.border).Clip().Children(func() {
