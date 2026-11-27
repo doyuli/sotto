@@ -54,9 +54,9 @@
 
 | 分类 | 支持服务 | 亮点说明 |
 | :--- | :--- | :--- |
-| **免密钥 · 即装即用** | **离线词典**、有道查词与翻译、Bilibili (Index)、Google 翻译、**Magpie** | 离线词典免网秒查音标释义；Magpie 可自动发现本地网关模型与路由 |
-| **AI 大模型** | **OpenAI 兼容接口**、硅基流动 (SiliconFlow)、智谱 AI (Zhipu) | 支持流式输出与自定义 Base URL / 模型名，轻松接入 DeepSeek、Qwen、GLM 等 |
-| **专业机翻 API** | **DeepL** (Free / Pro)、火山引擎、百度翻译、腾讯云 TMT、网易有道、微软 Azure | 按需填写自有密钥，稳定高速对照 |
+| **免密钥 · 即装即用** | 离线词典、有道查词与翻译、Bilibili (Index)、Google 翻译、Magpie | 离线词典免网秒查音标释义；Magpie 可自动发现本地网关模型与路由 |
+| **AI 大模型** | OpenAI 兼容接口、硅基流动 (SiliconFlow)、智谱 AI (Zhipu) | 支持流式输出与自定义 Base URL / 模型名，轻松接入 DeepSeek、Qwen、GLM 等 |
+| **专业机翻 API** | DeepL (Free / Pro)、火山引擎、百度翻译、腾讯云 TMT、网易有道、微软 Azure | 按需填写自有密钥，稳定高速对照 |
 
 > [!NOTE]
 > 离线词典与截图 OCR 均在本地完成；在线翻译文本仅发送至你主动启用的对应服务商。
@@ -93,8 +93,8 @@
 <details>
 <summary><strong>macOS 首次启动指引（权限与安全性放行）</strong></summary>
 
-1. **安全性放行**：当前 macOS 安装包采用 ad-hoc 签名。拖入 `Applications` 首次打开若被拦截，请前往 **系统设置 → 隐私与安全性** 点击 **“仍要打开”**（详见 [Apple 官方说明](https://support.apple.com/zh-cn/102445)）。
-2. **系统权限**：划词翻译需要 **辅助功能 (Accessibility)** 权限；截图 OCR 需要 **屏幕录制 (Screen Recording)** 权限。
+1. **安全性放行**：当前 macOS 安装包采用 ad-hoc 签名。拖入 `Applications` 首次打开若被拦截，请前往「系统设置 → 隐私与安全性」点击“仍要打开”（详见 [Apple 官方说明](https://support.apple.com/zh-cn/102445)）。
+2. **系统权限**：划词翻译需要「辅助功能 (Accessibility)」权限；截图 OCR 需要「屏幕录制 (Screen Recording)」权限。
 
 </details>
 

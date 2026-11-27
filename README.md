@@ -50,13 +50,13 @@
 
 ## Translation Engines
 
-Toggle engines, drag to reorder cards, or configure custom LLM endpoints right inside **Settings**:
+Toggle engines, drag to reorder cards, or configure custom LLM endpoints right inside Settings:
 
 | Category | Supported Services | Details |
 | :--- | :--- | :--- |
-| **Keyless · Ready Out of the Box** | **Offline Dictionary**, Youdao Dictionary & Translation, Bilibili (Index), Google Translate, **Magpie** | Offline dictionary works without network; Magpie auto-discovers local gateway models and routes |
-| **AI LLMs** | **OpenAI-Compatible**, SiliconFlow, Zhipu AI | Streaming responses with custom Base URLs and models (DeepSeek, Qwen, GLM, etc.) |
-| **Machine Translation APIs** | **DeepL** (Free / Pro), Volcengine (ByteDance), Baidu Translate, Tencent Cloud (TMT), Youdao, Microsoft Azure | Bring your own API keys for fast, reliable side-by-side comparison |
+| **Keyless · Ready Out of the Box** | Offline Dictionary, Youdao Dictionary & Translation, Bilibili (Index), Google Translate, Magpie | Offline dictionary works without network; Magpie auto-discovers local gateway models and routes |
+| **AI LLMs** | OpenAI-Compatible, SiliconFlow, Zhipu AI | Streaming responses with custom Base URLs and models (DeepSeek, Qwen, GLM, etc.) |
+| **Machine Translation APIs** | DeepL (Free / Pro), Volcengine (ByteDance), Baidu Translate, Tencent Cloud (TMT), Youdao, Microsoft Azure | Bring your own API keys for fast, reliable side-by-side comparison |
 
 > [!NOTE]
 > Dictionary lookups and screen OCR run entirely locally. Online translation text is sent only to the providers you explicitly enable.
@@ -65,7 +65,7 @@ Toggle engines, drag to reorder cards, or configure custom LLM endpoints right i
 
 ## Shortcuts & Usage
 
-All global shortcuts can be customized in **Settings → Shortcuts**:
+All global shortcuts can be customized in Settings → Shortcuts:
 
 | Action | Windows Default | macOS Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -73,7 +73,7 @@ All global shortcuts can be customized in **Settings → Shortcuts**:
 | **Screen Snip Translation** | `Ctrl + Alt + S` | `⌥ Option + S` | Capture any screen region for local OCR and instant translation |
 | **Selection Translation** | `Ctrl + Alt + D` | `⌥ Option + D` | Read highlighted text in the active app and pop up results beside it |
 | **Toggle Minimal Mode** | `Ctrl + Alt + F` | `⌥ Option + F` | Switch future selection/snip results between full Bubble and text-only Overlay |
-| **Open Translation History** | `Ctrl + Alt + H` | `⌥ Option + H` | Toggle **翻译历史** to search, copy, or re-translate past entries |
+| **Open Translation History** | `Ctrl + Alt + H` | `⌥ Option + H` | Toggle Translation History to search, copy, or re-translate past entries |
 
 - **Bubble Window**: Automatically hides on blur, or click the pin icon to keep it visible; press `Esc` to close.
 - **Minimal Overlay**: Drag anywhere to move, scroll smoothly through long results, and press `Esc` or right-click to dismiss.
@@ -93,8 +93,8 @@ Download the package for your platform from [GitHub Releases](https://github.com
 <details>
 <summary><strong>macOS First-Launch Guide (Gatekeeper & Permissions)</strong></summary>
 
-1. **Gatekeeper Approval**: The macOS build uses ad-hoc signing. After dragging Sotto to `Applications`, if Gatekeeper blocks the first launch, open **System Settings → Privacy & Security** and click **"Open Anyway"** ([Apple Support](https://support.apple.com/en-us/102445)).
-2. **Permissions**: Selection translation requires **Accessibility** permission; screen snip OCR requires **Screen Recording** permission.
+1. **Gatekeeper Approval**: The macOS build uses ad-hoc signing. After dragging Sotto to `Applications`, if Gatekeeper blocks the first launch, open System Settings → Privacy & Security and click "Open Anyway" ([Apple Support](https://support.apple.com/en-us/102445)).
+2. **Permissions**: Selection translation requires Accessibility permission; screen snip OCR requires Screen Recording permission.
 
 </details>
 
