@@ -309,6 +309,7 @@ func prepareHistoryRequest(entry history.Entry, provider string, cfg config.Sett
 }
 
 func (a *application) retranslateHistory(ctx context.Context, selected history.Entry, provider string) (historyview.RetryResult, error) {
+	defer a.idleMemory.begin(true)()
 	cfg := a.settings()
 	if !slices.Contains(enabledHistoryProviders(cfg.Services), provider) {
 		return historyview.RetryResult{}, errors.New("请在设置里启用此翻译源后重试")

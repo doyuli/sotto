@@ -270,10 +270,25 @@ func TestHistoryProviderMenuFollowsEnabledServiceOrder(t *testing.T) {
 }
 
 func TestHistoryRetranslatesOnlyChosenProvider(t *testing.T) {
+	// History retries outlive their window and must keep idle reclamation suspended.
+	idle := &idleMemory{reclaim: func() {}}
+	t.Cleanup(func() {
+		idle.mu.Lock()
+		defer idle.mu.Unlock()
+		if idle.timer != nil {
+			idle.timer.Stop()
+		}
+	})
 	var offline atomic.Bool
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		idle.mu.Lock()
+		active := idle.active
+		idle.mu.Unlock()
+		if active == 0 {
+			t.Error("history retry counted as idle during the request")
+		}
 		var payload struct {
 			Messages []map[string]string
 		}
@@ -300,7 +315,7 @@ func TestHistoryRetranslatesOnlyChosenProvider(t *testing.T) {
 	cfg := config.Default()
 	cfg.Services.Enabled = []string{"dictionary"}
 	cfg.Services.OpenAI.BaseURL = server.URL
-	a := &application{cfg: cfg, history: store, keys: &serviceTestKeyring{values: map[string]string{keys.OpenAIKey: "fixture"}}}
+	a := &application{idleMemory: idle, cfg: cfg, history: store, keys: &serviceTestKeyring{values: map[string]string{keys.OpenAIKey: "fixture"}}}
 	// Cyrillic script alone must not turn automatic detection into a Russian source on retry.
 	r := a.beginHistory("Привіт", translate.Request{Text: "Привіт", SourceLang: "auto", TargetLang: "ja"}, cfg.Services.Order)
 	if ok, err := store.Record(ctx, r, "deepl", "以前の訳", history.ResultTranslation); err != nil || !ok {

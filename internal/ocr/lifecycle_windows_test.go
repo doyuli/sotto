@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"sotto/internal/ocr/pipeline"
+
+	"golang.org/x/sys/windows"
 )
 
 type lifecycleRunner struct {
@@ -51,5 +53,27 @@ func TestCanceledEngineEntryDoesNotRenewResource(t *testing.T) {
 		if _, err := run(ctx, nil, "", request); !errors.Is(err, context.Canceled) || request.used != (engineResources{}) {
 			t.Fatalf("canceled entry renewed an unused engine: %v, %v", err, request.used)
 		}
+	}
+}
+
+func TestFailedRuntimeUnloadRetainsDLLForRetry(t *testing.T) {
+	admission <- struct{}{}
+	defer func() { <-admission }()
+	previous := ortRT
+	defer func() { ortRT = previous }()
+	// Native objects have been released; only the loader reference needs retrying.
+	const handle windows.Handle = 123
+	ortRT = &ortRuntime{lib: handle}
+	failure := errors.New("unload failed")
+	if err := unloadORT(func(windows.Handle) error { return failure }); !errors.Is(err, failure) || !cachedOCRResources()[localOCR] {
+		t.Fatalf("failed unload lost its retry: %v", err)
+	}
+	if err := unloadORT(func(h windows.Handle) error {
+		if h != handle {
+			t.Fatalf("retried wrong library: %v", h)
+		}
+		return nil
+	}); err != nil || cachedOCRResources()[localOCR] {
+		t.Fatalf("retry retained the cache: %v", err)
 	}
 }

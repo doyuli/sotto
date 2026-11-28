@@ -35,6 +35,7 @@ func (a *application) startMinimalJob(task *entryTask, bounds mygo.Rectangle, ru
 	id := task.id
 	source := task.overlaySource(bounds)
 	job := a.minimalJobs[id]
+	done := a.idleMemory.begin(true)
 	go runMinimalJob(ctx, run, func(text string) {
 		mygo.RunOnMain(func() {
 			if a.minimalJobs[id] != job || !a.canPresentMinimalJob(job) {
@@ -47,6 +48,7 @@ func (a *application) startMinimalJob(task *entryTask, bounds mygo.Rectangle, ru
 			}
 		})
 	}, func(result translate.Result) {
+		defer done()
 		mygo.RunOnMain(func() {
 			switch {
 			case !a.finishMinimalJob(id) || result.Text == "" && result.Err == "":
@@ -193,7 +195,9 @@ func (a *application) minimalTranslation(ctx context.Context, text string, progr
 	if record != nil {
 		// Completing the visual job cancels its context after accepting the result.
 		// That must not cancel the independent write of an already complete result.
+		done := a.idleMemory.begin(true)
 		go func() {
+			defer done()
 			defer record.Done()
 			a.recordTranslation(context.WithoutCancel(ctx), record, final)
 		}()

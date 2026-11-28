@@ -33,6 +33,7 @@ type Manager struct {
 	IsQuitting     func() bool
 	Done           func(*Capture)
 	Failed         func(Task, error)
+	BeginCapture   func() func()
 	RegisterEscape func(func()) (func(), error)
 	SuspendResults func() func()
 	resumeResults  func()
@@ -64,6 +65,9 @@ func (s *Manager) Show(task Task) {
 		ids[0] = cursorDisplay.ID
 	}
 	go func() {
+		if s.BeginCapture != nil {
+			defer s.BeginCapture()()
+		}
 		ctx := task.Context()
 		select {
 		case snapshotAdmission <- struct{}{}:

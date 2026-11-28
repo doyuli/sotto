@@ -2,22 +2,30 @@
 
 package ocr
 
+import (
+	"errors"
+
+	"golang.org/x/sys/windows"
+)
+
 // Both operations require admission. The worker lock is nested inside it,
 // never the other way around; metadata locks are not held here.
 func cachedOCRResources() engineResources {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	return engineResources{ppEngine != nil, engine.cmd != nil}
+	return engineResources{ppEngine != nil || ortRT != nil, engine.cmd != nil}
 }
 
 func releaseIdleResource(id int) (bool, error) {
 	if id == localOCR {
 		r := ppEngine
 		ppEngine = nil
+		var err error
 		if r != nil {
-			return true, r.Close()
+			err = r.Close()
 		}
-		return true, nil
+		unloadErr := unloadORT(windows.FreeLibrary)
+		return unloadErr == nil, errors.Join(err, unloadErr)
 	}
 	return engine.releaseIdle(), nil
 }

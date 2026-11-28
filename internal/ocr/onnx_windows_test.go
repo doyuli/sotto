@@ -12,6 +12,8 @@ import (
 	"testing"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
+
 	"sotto/internal/ocr/pipeline"
 )
 
@@ -140,15 +142,17 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			checkORTConsumerExits(t, session, pipeline.Tensor{Data: make([]float32, n), Shape: inputShape})
 		})
 	}
-	t.Run("idle release and rebuild retains runtime", func(t *testing.T) {
-		rt := ortRT
-		env, mem, lib := rt.env, rt.memInfo, rt.lib
+	t.Run("idle release and rebuild including runtime", func(t *testing.T) {
 		dictionary, err := os.ReadFile(filepath.Join(modelDir, m.Dictionary.File))
 		if err != nil {
 			t.Fatal(err)
 		}
 		admission <- struct{}{}
 		defer func() { <-admission }()
+		dllName, err := windows.UTF16PtrFromString(filepath.Join(runtimeDir, "onnxruntime.dll"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		for cycle := range 20 {
 			det, err := newORTSession(filepath.Join(modelDir, m.Models[0].File), m.Models[0].InputName, m.Models[0].OutputName)
 			if err != nil {
@@ -166,9 +170,13 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 				t.Fatal(err)
 			}
 			ppEngine = r
+			var module windows.Handle
+			if err := windows.GetModuleHandleEx(windows.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, dllName, &module); err != nil || module != det.rt.lib {
+				t.Fatalf("cycle %d: could not identify loaded runtime: handle=%v err=%v", cycle, module, err)
+			}
 			if cycle == 19 {
 				// Run again after repeated release, not just CreateSession, so
-				// the retained shared memory-info object is actually exercised.
+				// the rebuilt shared memory-info object is actually exercised.
 				for i, session := range []*ortSession{det, rec} {
 					if err := session.Run(context.Background(), pipeline.Tensor{Data: make([]float32, preflightElements(t, inputs[i])), Shape: inputs[i]}, func(pipeline.Tensor) error { return nil }); err != nil {
 						_, _ = releaseIdleResource(localOCR)
@@ -183,8 +191,12 @@ func TestV6SmallRuntimePreflight(t *testing.T) {
 			if err := r.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if cached, err := sharedORT(); err != nil || cached != rt || det.rt != rt || rec.rt != rt || rt.env != env || rt.memInfo != mem || rt.lib != lib {
-				t.Fatalf("cycle %d changed shared runtime ownership: %v", cycle, err)
+			if ortRT != nil || cachedOCRResources()[localOCR] {
+				t.Fatalf("cycle %d retained runtime", cycle)
+			}
+			// A cleared Go pointer alone cannot detect a leaked loader reference.
+			if err := windows.GetModuleHandleEx(windows.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, dllName, &module); !errors.Is(err, windows.ERROR_MOD_NOT_FOUND) {
+				t.Fatalf("cycle %d: module still loaded or lookup failed: handle=%v err=%v", cycle, module, err)
 			}
 		}
 	})

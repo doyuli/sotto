@@ -43,6 +43,7 @@ const (
 	ortSlotCreateCpuMemoryInfo            = 69
 	ortSlotReleaseEnv                     = 92
 	ortSlotReleaseStatus                  = 93
+	ortSlotReleaseMemoryInfo              = 94
 	ortSlotReleaseSession                 = 95
 	ortSlotReleaseValue                   = 96
 	ortSlotReleaseRunOptions              = 97
@@ -64,18 +65,18 @@ type ortRuntime struct {
 	memInfo uintptr
 }
 
-var (
-	ortMu sync.Mutex
-	ortRT *ortRuntime
-)
+// Like ppEngine, this cache is owned by the OCR admission gate.
+var ortRT *ortRuntime
 
-// Cache only successful initialization so repairing runtime files can recover
-// on the next request, just like repairing model assets.
 func sharedORT() (*ortRuntime, error) {
-	ortMu.Lock()
-	defer ortMu.Unlock()
 	if ortRT != nil {
-		return ortRT, nil
+		if ortRT.env != 0 {
+			return ortRT, nil
+		}
+		// Only the DLL reference survived a previous failed unload.
+		if err := unloadORT(windows.FreeLibrary); err != nil {
+			return nil, err
+		}
 	}
 	rt, err := loadORT()
 	if err != nil {
@@ -83,6 +84,24 @@ func sharedORT() (*ortRuntime, error) {
 	}
 	ortRT = rt
 	return rt, nil
+}
+
+// Called under OCR admission after both sessions and their native calls finish.
+func unloadORT(freeLibrary func(windows.Handle) error) error {
+	rt := ortRT
+	if rt == nil {
+		return nil
+	}
+	if rt.env != 0 {
+		rt.call(ortSlotReleaseMemoryInfo, rt.memInfo)
+		rt.call(ortSlotReleaseEnv, rt.env)
+		rt.memInfo, rt.env = 0, 0
+	}
+	if err := freeLibrary(rt.lib); err != nil {
+		return fmt.Errorf("ocr: unload onnxruntime: %w", err)
+	}
+	ortRT = nil
+	return nil
 }
 
 func loadORT() (*ortRuntime, error) {
