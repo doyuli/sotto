@@ -428,3 +428,26 @@ func TestCommitTransientBubbleHideOnlyNotifiesInputAutoHide(t *testing.T) {
 		})
 	}
 }
+
+func TestHiddenBubbleExpiryAfterReuse(t *testing.T) {
+	m, b := newDismissTestBubble(t, "selection", "")
+	m.transient = b
+	b.dismiss()
+	old := b.showID
+	if !m.canExpire(b, old) {
+		t.Fatal("dismissed transient should expire")
+	}
+	// A queued timeout must not destroy a reused window even after it hides again.
+	b.present()
+	if m.canExpire(b, old) || m.canExpire(b, b.showID) {
+		t.Fatal("presented bubble could expire")
+	}
+	b.dismiss()
+	if m.canExpire(b, old) || !m.canExpire(b, b.showID) {
+		t.Fatal("expiry ignored presentation identity")
+	}
+	b.pinned = true
+	if m.canExpire(b, b.showID) {
+		t.Fatal("pinned window could expire")
+	}
+}

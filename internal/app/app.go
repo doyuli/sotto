@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 // the bubble windows and the settings window. Its mutex guards the
 // fields and is never held across a call that waits for the main thread.
 type application struct {
+	idleMemory       *idleMemory
 	cfgPath          string
 	fallbackSettings bool // fixed at startup; the session cannot persist history preferences
 	configWriteMu    sync.Mutex
@@ -91,6 +93,11 @@ func (a *application) isQuitting() bool {
 // ready assembles the app once mygo is up: settings, bubbles, hotkeys
 // and the tray. It runs on the main thread.
 func (a *application) ready() {
+	if runtime.GOOS == "windows" {
+		a.idleMemory = &idleMemory{reclaim: debug.FreeOSMemory}
+		mygo.App.OnWindowCreated(a.idleMemory.watchWindow)
+		a.snip.BeginCapture = func() func() { return a.idleMemory.begin(true) }
+	}
 	dir, pathErr := mygo.App.Path(mygo.PathUserData)
 	if pathErr != nil {
 		log.Printf("user data path: %v", pathErr)
@@ -248,6 +255,7 @@ func (a *application) startEntry(action string) {
 	if a.isQuitting() {
 		return
 	}
+	defer a.idleMemory.begin(true)()
 	a.clearTrayAutoDismiss()
 	// Preserve the active input page before begin revokes its entry ownership.
 	if action == "panel" && a.bubbles.FocusVisibleInput() {
@@ -285,6 +293,7 @@ func (a *application) beginEntry(action string) *entryTask {
 }
 
 func (a *application) grabSelection(task *entryTask, grab func(context.Context) (selection.Selection, error)) {
+	defer a.idleMemory.begin(true)()
 	ctx, cancel := context.WithTimeout(task.Context(), 5*time.Second)
 	defer cancel()
 	started := time.Now()
@@ -448,6 +457,7 @@ func (a *application) popUpTrayMenu() {
 }
 
 func (a *application) trackTrayMenu() {
+	defer a.idleMemory.begin(false)()
 	if trayMenuOnDemand {
 		// MyGo's popup reads the installed menu. Keep it installed only for
 		// the explicit popup so the platform cannot open another automatically.
@@ -721,6 +731,7 @@ func (a *application) createSettingsView(tab settings.Tab) *settings.View {
 // runTranslation resolves the languages, fans the request out to the
 // services and pushes every result to win.
 func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
+	defer a.idleMemory.begin(true)()
 	if req.ReqID == "" {
 		req.ReqID = bubble.NewRequestID()
 	}
@@ -772,16 +783,14 @@ func (a *application) runTranslation(win *mygo.Window, req bubble.RunReq) {
 		a.bubbles.FinishRun(win, req.ReqID)
 		return
 	}
-	go func() {
-		var writes sync.WaitGroup
-		defer record.Done()
-		defer writes.Wait() // release the request only after its accepted writes finish
-		defer a.bubbles.FinishRun(win, req.ReqID)
-		emit := a.bubbleResultHandler(ctx, record, &writes, req.ReqID, func(msg bubble.TranslationUpdateMsg) bool {
-			return a.bubbles.PushResult(win, msg)
-		})
-		translate.Run(ctx, cfg, credentials, request, emit)
-	}()
+	var writes sync.WaitGroup
+	defer record.Done()
+	defer writes.Wait() // release the request only after its accepted writes finish
+	defer a.bubbles.FinishRun(win, req.ReqID)
+	emit := a.bubbleResultHandler(ctx, record, &writes, req.ReqID, func(msg bubble.TranslationUpdateMsg) bool {
+		return a.bubbles.PushResult(win, msg)
+	})
+	translate.Run(ctx, cfg, credentials, request, emit)
 }
 
 func (a *application) bubbleResultHandler(ctx context.Context, record *history.Request, writes *sync.WaitGroup, reqID string, push func(bubble.TranslationUpdateMsg) bool) func(translate.Result) {

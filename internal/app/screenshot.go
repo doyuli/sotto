@@ -33,7 +33,9 @@ func (a *application) snipDone(shot *snip.Capture) {
 		return
 	}
 	anchor := &bubble.Anchor{X: shot.Region.X, Y: shot.Region.Y + shot.Region.Height}
+	done := a.idleMemory.begin(true)
 	go func() {
+		defer done()
 		img, err := shot.Grab()
 		if !task.Valid() {
 			return

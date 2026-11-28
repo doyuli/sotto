@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
@@ -76,6 +77,7 @@ type bubble struct {
 	offBlur           func() // unregisters focus hiding; Pin calls it
 	// offWindowLeave belongs to the main thread, like the window it watches.
 	offWindowLeave func()
+	idleTimer      *time.Timer // UI thread only
 
 	// Placement, observed geometry and its reentrancy guard belong to the main thread.
 	placement       *bubblePlacement
@@ -144,7 +146,7 @@ func (m *Manager) HideVisibleInput() bool {
 	if !dismissed {
 		return false
 	}
-	b.hideStopped(view, stopped)
+	m.hideStopped(b, view, stopped)
 	log.Printf("bubble: toggle hide input id=%d show=%d", b.id, stopped.ShowID)
 	return true
 }
@@ -206,6 +208,7 @@ func (m *Manager) ShowTask(cfg config.Settings, trigger, text string, anchor *An
 			}
 		}
 		m.mu.Lock()
+		b.stopIdleTimer()
 		b.replaceContent(cfg, trigger, text, phase, message, cancel)
 		b.present()
 		b.canShow = valid
@@ -599,9 +602,10 @@ func (m *Manager) createTransient(cfg config.Settings) *bubble {
 			return // close it for real
 		}
 		e.PreventDefault()
-		b.win.Hide()
+		m.hideDismissed(b)
 	})
 	b.win.OnClosed(func() {
+		b.stopIdleTimer()
 		b.stopHeightAnimation()
 		b.stopWindowLeave()
 		m.mu.Lock()
@@ -657,7 +661,7 @@ func (m *Manager) HideTransient() {
 // before native events can deliver late requests or results for this session.
 func (m *Manager) hideTransientBubble(b *bubble, press selection.PrimaryPress) {
 	mygo.RunOnMain(func() {
-		m.commitTransientBubbleHide(b, press, b.hideStopped)
+		m.commitTransientBubbleHide(b, press, func(view *bubbleView, msg RunStoppedMsg) { m.hideStopped(b, view, msg) })
 	})
 }
 
@@ -678,12 +682,47 @@ func (m *Manager) commitTransientBubbleHide(b *bubble, press selection.PrimaryPr
 }
 
 // Called after releasing the manager lock, on the UI thread.
-func (b *bubble) hideStopped(view *bubbleView, stopped RunStoppedMsg) {
+func (m *Manager) hideStopped(b *bubble, view *bubbleView, stopped RunStoppedMsg) {
 	if view != nil {
 		view.onStopped(stopped)
 		b.win.Invalidate()
 	}
+	m.hideDismissed(b)
+}
+
+func (b *bubble) stopIdleTimer() {
+	if b.idleTimer != nil {
+		b.idleTimer.Stop()
+		b.idleTimer = nil
+	}
+}
+
+func (m *Manager) hideDismissed(b *bubble) {
 	b.win.Hide()
+	if runtime.GOOS != "windows" || b.idleTimer != nil {
+		return
+	}
+	m.mu.Lock()
+	showID := b.showID
+	eligible := m.canExpire(b, showID)
+	m.mu.Unlock()
+	if eligible {
+		b.idleTimer = time.AfterFunc(5*time.Minute, func() {
+			mygo.RunOnMain(func() {
+				m.mu.Lock()
+				expire := m.canExpire(b, showID)
+				m.mu.Unlock()
+				if expire && !b.win.IsVisible() {
+					b.win.Destroy()
+				}
+			})
+		})
+	}
+}
+
+// The manager lock protects the presentation identity across reuse and pinning.
+func (m *Manager) canExpire(b *bubble, showID int64) bool {
+	return m.transient == b && !b.pinned && b.closeClaimed && b.showID == showID
 }
 
 // HideStale hides presentations revoked by the current workspace generation.
@@ -703,7 +742,7 @@ func (m *Manager) HideStale() {
 			b.view.onStopped(RunStoppedMsg{SessionID: b.sessionID, ShowID: b.showID, Revision: b.revision})
 			b.win.Invalidate()
 		}
-		b.win.Hide()
+		m.hideDismissed(b)
 	}
 }
 
