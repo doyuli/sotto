@@ -22,6 +22,22 @@ type PrimaryPress struct {
 	Point mygo.Point
 }
 
+type SelectionPointerKind uint8
+
+const (
+	SelectionPointerCancel SelectionPointerKind = iota
+	SelectionPointerDown
+	SelectionPointerUp
+)
+
+// SelectionPointer reports an input edge without consuming the original event.
+// Point uses the same platform coordinates as PrimaryPress.
+type SelectionPointer struct {
+	Kind  SelectionPointerKind
+	At    time.Time
+	Point mygo.Point
+}
+
 // WindowHasFocus includes owned popups that can hold focus after the window
 // itself blurs. Call on the UI thread when handling a queued dismissal.
 func WindowHasFocus(w *mygo.Window) bool {

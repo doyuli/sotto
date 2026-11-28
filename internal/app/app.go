@@ -57,11 +57,12 @@ type application struct {
 	dismissHistory  func()               // main thread only
 	quitting        bool
 
-	bubbles     *bubble.Manager
-	speaker     *speech.Speaker
-	overlays    overlay.Manager
-	minimalJobs map[int64]*minimalJob // main thread only
-	snip        *snip.Manager
+	bubbles         *bubble.Manager
+	speaker         *speech.Speaker
+	overlays        overlay.Manager
+	minimalJobs     map[int64]*minimalJob // main thread only
+	snip            *snip.Manager
+	selectionButton selectionButton
 
 	tray            *mygo.Tray      // main thread only
 	trayMenuOpen    bool            // main thread only, while Windows tracks a left-click popup
@@ -123,6 +124,7 @@ func (a *application) ready() {
 		a.quitting = true
 		a.mu.Unlock()
 		a.entry.cancel()
+		a.selectionButton.dismiss()
 		a.stopMinimalJobs()
 		a.snip.HideStale()
 		a.mu.Lock()
@@ -158,6 +160,9 @@ func (a *application) ready() {
 		a.notify("Sotto", err.Error())
 	}
 	a.setUpTray()
+	a.updateSelectionButton()
+	mygo.App.OnQuit(a.selectionButton.shutdown)
+	mygo.Screen.OnDisplaysChanged(a.selectionButton.dismiss)
 	a.mu.Lock()
 	log.Printf("ready: hotkeys in force: %v", a.hotkeys)
 	a.mu.Unlock()
@@ -228,6 +233,9 @@ func (a *application) applySettings(s config.Settings) {
 	if s.MinimalTranslation != old.MinimalTranslation && mygo.App.IsReady() {
 		mygo.RunOnMain(a.refreshTrayMode)
 	}
+	if s.SelectionButton != old.SelectionButton && mygo.App.IsReady() {
+		mygo.RunOnMain(a.updateSelectionButton)
+	}
 	// Publish only after registration and persistence have succeeded.
 	a.broadcastSettings(a.settings())
 }
@@ -243,11 +251,17 @@ func (a *application) broadcastSettings(s config.Settings) {
 	}
 }
 
-// startEntry runs on the UI thread: capture the source before dispatching.
 func (a *application) startEntry(action string) {
+	a.startEntryWithSelection(action, nil)
+}
+
+// startEntryWithSelection runs on the UI thread. A mouse entry supplies its
+// confirmed selection through the same entry task as the hotkey.
+func (a *application) startEntryWithSelection(action string, grab func(context.Context) (selection.Selection, error)) {
 	if a.isQuitting() {
 		return
 	}
+	a.selectionButton.dismiss()
 	a.clearTrayAutoDismiss()
 	// Preserve the active input page before begin revokes its entry ownership.
 	if action == "panel" && a.bubbles.FocusVisibleInput() {
@@ -265,7 +279,14 @@ func (a *application) startEntry(action string) {
 		a.bubbles.HideTransient()
 		go a.bubbles.ShowTask(a.settings(), "input", "", nil, "", "", task.Valid, nil)
 	case "selection":
-		grab := selection.Prepare(a.settings().Hotkeys.Selection)
+		if grab == nil {
+			cfg := a.settings()
+			var point *mygo.Point
+			if cfg.SelectionButton {
+				point = &task.cursor
+			}
+			grab = selection.Prepare(cfg.Hotkeys.Selection, point)
+		}
 		a.snip.Hide()
 		a.bubbles.HideTransient()
 		go a.grabSelection(task, grab)

@@ -35,6 +35,7 @@ func (a *application) platformMenuItems() []*mygo.MenuItem {
 
 func (a *application) readyPlatform() {
 	stop, err := macnative.WatchWorkspace(func() {
+		a.selectionButton.dismiss()
 		a.entry.cancelStaleWorkspace()
 		a.cancelStaleMinimalJobs()
 		a.snip.HideStale()

@@ -68,10 +68,21 @@ func FrontmostPID() int32 {
 // WatchActivation belongs to one presentation. Ignore notifications from an
 // older switch if a new presentation already belongs to the active app.
 func WatchActivation(changed func()) (func(), error) {
+	source := FrontmostPID()
+	return watchActivation(func(target int32) bool {
+		return activationChanged(source, target, FrontmostPID(), int32(os.Getpid()))
+	}, changed)
+}
+
+// WatchForegroundChanges follows activation across successive presentations.
+func WatchForegroundChanges(changed func()) (func(), error) {
+	return watchActivation(func(int32) bool { return true }, changed)
+}
+
+func watchActivation(shouldNotify func(int32) bool, changed func()) (func(), error) {
 	if _, err := Framework("AppKit"); err != nil {
 		return nil, err
 	}
-	source := FrontmostPID()
 	var center, token objc.ID
 	var block objc.Block
 	var active atomic.Bool
@@ -81,7 +92,7 @@ func WatchActivation(changed func()) (func(), error) {
 		block = objc.NewBlock(func(_ objc.Block, notification objc.ID) {
 			app := notification.Send(Sel("userInfo")).Send(Sel("objectForKey:"), String("NSWorkspaceApplicationKey"))
 			target := objc.Send[int32](app, Sel("processIdentifier"))
-			if active.Load() && activationChanged(source, target, FrontmostPID(), int32(os.Getpid())) {
+			if active.Load() && shouldNotify(target) {
 				changed()
 			}
 		})

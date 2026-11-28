@@ -16,8 +16,6 @@ import (
 )
 
 var (
-	brandBubbleSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><rect x="2.5" y="2.8" width="19" height="16.8" rx="5.2" fill="currentColor"/><path d="M7 19.2 5.8 22.4 9 20.6" fill="currentColor"/></svg>`))
-	brandLetterSVG = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M15 8.2C14.3 7 12.4 6.8 11.25 7.5C9.84 8.34 9.6 9.73 10.9 10.6C12.07 11.39 13.6 11.39 14.3 12.2C15.23 13.24 14.65 15.23 13 15.8C11.72 16.3 10.31 15.8 9.49 14.88" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	pinOutlineSVG  = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	pinFilledSVG   = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
 	swapSVG        = ui.MustParseSVG([]byte(`<svg viewBox="0 0 24 24"><path d="m16 3 4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`))
@@ -862,12 +860,7 @@ func (v *bubbleView) render(c *ui.Context) {
 
 func (v *bubbleView) renderHeader(c *ui.Context, p bubblePalette) {
 	ui.Row(c).Height(30).Padding(6, 8, 2, 12).AlignItems(ui.Center).DragWindow().Bind(&v.headerHandle).Children(func() {
-		ui.Box(c).Size(20, 20).Children(func() {
-			ui.Icon(c, brandBubbleSVG).Size(20, 20).TextColor(p.accent)
-			ui.Box(c).Absolute().Top(0).Left(0).Size(20, 20).Children(func() {
-				ui.Icon(c, brandLetterSVG).Size(20, 20).TextColor(p.panel)
-			})
-		})
+		shared.BrandMark(c, p.accent, p.panel)
 		ui.Spacer(c)
 
 		ui.Row(c).AlignItems(ui.Center).Gap(2).Children(func() {

@@ -339,6 +339,17 @@ func (v *View) renderGeneral(c *ui.Context, p settingsPalette) {
 			})
 		})
 
+		selectionButton := cfg.SelectionButton
+		v.renderSettingRow(c, p, "划词后显示翻译按钮", "用鼠标选中文字后，点击选区旁的按钮翻译", true, func() {
+			ui.Switch(c.Key("selection-button"), &selectionButton).Label("切换划词翻译按钮").OnClick(func() {
+				v.mu.Lock()
+				defer v.mu.Unlock()
+				next := v.settings
+				next.SelectionButton = selectionButton
+				v.enqueueSaveLocked(next)
+			})
+		})
+
 		minimalTranslation := cfg.MinimalTranslation
 		v.renderSettingRow(c, p, "简约翻译模式", "划词和截图时仅显示译文，使用排在首位的已启用服务", true, func() {
 			ui.Switch(c, &minimalTranslation).Label("切换简约翻译模式").OnClick(func() {

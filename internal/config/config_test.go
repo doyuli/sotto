@@ -287,6 +287,9 @@ func TestNormalizePartialFile(t *testing.T) {
 	if got.MinimalTranslation {
 		t.Error("legacy settings should use the full translation bubble")
 	}
+	if got.SelectionButton {
+		t.Error("legacy settings should keep the selection button off")
+	}
 	if got.Services.SiliconFlow.Model != DefaultSiliconFlowModel || got.Services.Zhipu.Model != DefaultZhipuModel {
 		t.Errorf("legacy settings lost model defaults: %+v", got.Services)
 	}

@@ -21,6 +21,7 @@ import (
 
 var (
 	axApplication          func(int32) uintptr
+	axElementAtPosition    func(uintptr, float32, float32, *uintptr) int32
 	axAttribute            func(uintptr, objc.ID, *uintptr) int32
 	axParameter            func(uintptr, objc.ID, uintptr, *uintptr) int32
 	axTimeout              func(uintptr, float32) int32
@@ -42,6 +43,7 @@ var loadAX = sync.OnceValue(func() error {
 	return macnative.Bind("ApplicationServices",
 		macnative.Symbol{Target: &axElementID, Name: "AXUIElementGetTypeID"}, macnative.Symbol{Target: &axValueID, Name: "AXValueGetTypeID"},
 		macnative.Symbol{Target: &axApplication, Name: "AXUIElementCreateApplication"},
+		macnative.Symbol{Target: &axElementAtPosition, Name: "AXUIElementCopyElementAtPosition"},
 		macnative.Symbol{Target: &axAttribute, Name: "AXUIElementCopyAttributeValue"},
 		macnative.Symbol{Target: &axParameter, Name: "AXUIElementCopyParameterizedAttributeValue"},
 		macnative.Symbol{Target: &axTimeout, Name: "AXUIElementSetMessagingTimeout"},
@@ -82,11 +84,15 @@ func (s macSource) check(ctx context.Context) error {
 	return nil
 }
 
-func Prepare(shortcut string) func(context.Context) (Selection, error) {
+func Prepare(shortcut string, point *mygo.Point) func(context.Context) (Selection, error) {
 	s := prepareMacSource()
 	mainKey := hotkey.MacMainKeyCode(shortcut)
 	return func(ctx context.Context) (Selection, error) {
-		return readMacSelection(ctx, s.check, macnative.RequireAccessibility, func(ctx context.Context) (Selection, error) { return readAX(ctx, s) }, func(ctx context.Context) (Selection, error) { return copyMacSelection(ctx, s, mainKey) })
+		return readMacSelection(ctx, s.check, macnative.RequireAccessibility, func(ctx context.Context) (Selection, error) {
+			return readAXAt(ctx, s, point)
+		}, func(ctx context.Context) (Selection, error) {
+			return copyMacSelection(ctx, s, mainKey)
+		})
 	}
 }
 
@@ -113,13 +119,53 @@ func readMacSelection(ctx context.Context, check func(context.Context) error, pe
 	return copy(ctx)
 }
 
-func grab(ctx context.Context) (Selection, error) { return Prepare("")(ctx) }
+func grab(ctx context.Context) (Selection, error) { return Prepare("", nil)(ctx) }
 func grabUIA(ctx context.Context) (Selection, error) {
 	s := prepareMacSource()
 	if err := macnative.RequireAccessibility(true); err != nil {
 		return Selection{}, err
 	}
 	return readAX(ctx, s)
+}
+
+// PreparePointerSelection binds the AX probe and the later source check to
+// the source at mouse-up.
+func PreparePointerSelection(point mygo.Point) (func(context.Context) (Selection, error), func(context.Context) error) {
+	s := prepareMacSource()
+	probe := func(ctx context.Context) (Selection, error) {
+		if err := macnative.RequireAccessibility(false); err != nil {
+			return Selection{}, err
+		}
+		return readAXWith(ctx, s, func(ctx context.Context, app uintptr) (Selection, error) {
+			focus := copyAXElement(app, "AXFocusedUIElement")
+			if focus != 0 {
+				defer cfRelease(focus)
+				if readAXString(focus, "AXSubrole") == "AXSecureTextField" {
+					return Selection{}, errAXSecureText
+				}
+			}
+			sel, err := readAXPointSelection(ctx, app, point)
+			if focus == 0 || !errors.Is(err, ErrNoSelection) {
+				return sel, err
+			}
+			// Some apps only expose text on the focused control. Its selection
+			// bounds must agree with the gesture before using that fallback.
+			if err := ctx.Err(); err != nil {
+				return Selection{}, err
+			}
+			rect, ok := readAXSelectionBounds(focus)
+			if !ok || !selectionBoundsContainRelease(rect, point) {
+				return Selection{}, ErrNoSelection
+			}
+			sel, err = readAXElementSelection(ctx, focus)
+			if err != nil {
+				return Selection{}, err
+			}
+			sel.Rect, sel.HasRect = rect, true
+			return sel, nil
+		})
+	}
+	return probe, s.check
 }
 func grabClipboard(ctx context.Context) (Selection, error) {
 	s := prepareMacSource()
@@ -131,7 +177,21 @@ func grabClipboard(ctx context.Context) (Selection, error) {
 
 var axAdmission = make(chan struct{}, 1)
 
-func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
+func readAX(ctx context.Context, s macSource) (Selection, error) {
+	return readAXWith(ctx, s, readAXFocusedSelection)
+}
+
+func readAXAt(ctx context.Context, s macSource, point *mygo.Point) (Selection, error) {
+	return readAXWith(ctx, s, func(ctx context.Context, app uintptr) (Selection, error) {
+		sel, err := readAXFocusedSelection(ctx, app)
+		if point == nil || !errors.Is(err, ErrNoSelection) {
+			return sel, err
+		}
+		return readAXPointSelection(ctx, app, *point)
+	})
+}
+
+func readAXWith(ctx context.Context, s macSource, read func(context.Context, uintptr) (Selection, error)) (sel Selection, err error) {
 	if err := loadAX(); err != nil {
 		return sel, err
 	}
@@ -166,69 +226,105 @@ func readAX(ctx context.Context, s macSource) (sel Selection, err error) {
 			err = fmt.Errorf("AX messaging timeout: %d", code)
 			return
 		}
-		var focus uintptr
-		if axAttribute(app, macnative.String("AXFocusedUIElement"), &focus) != 0 || focus == 0 {
-			err = ErrNoSelection
-			return
-		}
-		defer cfRelease(focus)
-		if cfTypeID(focus) != axElementID() {
-			err = ErrNoSelection
-			return
-		}
-		if err = ctx.Err(); err != nil {
-			return
-		}
-		var subrole uintptr
-		if axAttribute(focus, macnative.String("AXSubrole"), &subrole) == 0 && subrole != 0 {
-			defer cfRelease(subrole)
-			if cfTypeID(subrole) == cfStringID() && macnative.GoString(objc.ID(subrole)) == "AXSecureTextField" {
-				err = errors.New("无法读取安全输入框中的内容")
-				return
-			}
-		}
-		if err = ctx.Err(); err != nil {
-			return
-		}
-		var text uintptr
-		if axAttribute(focus, macnative.String("AXSelectedText"), &text) != 0 || text == 0 {
-			err = ErrNoSelection
-			return
-		}
-		defer cfRelease(text)
-		if cfTypeID(text) != cfStringID() {
-			err = ErrNoSelection
-			return
-		}
-		sel = Selection{Text: macnative.GoString(objc.ID(text)), Via: "ax"}
-		if err = ctx.Err(); err != nil {
-			return
-		}
-		if sel.Text == "" {
-			err = ErrNoSelection
-			return
-		}
-		var span uintptr
-		if axAttribute(focus, macnative.String("AXSelectedTextRange"), &span) == 0 && span != 0 {
-			defer cfRelease(span)
-			if cfTypeID(span) != axValueID() || axValueType(span) != 4 {
-				return
-			}
-			var bounds uintptr
-			if axParameter(focus, macnative.String("AXBoundsForRange"), span, &bounds) == 0 && bounds != 0 {
-				defer cfRelease(bounds)
-				var r macnative.Rect
-				if cfTypeID(bounds) == axValueID() && axValueType(bounds) == 3 && axValue(bounds, 3, unsafe.Pointer(&r)) && r.Size.Width > 0 && r.Size.Height > 0 && math.Abs(r.Origin.X) <= 1<<30 && math.Abs(r.Origin.Y) <= 1<<30 && r.Size.Width <= 1<<30 && r.Size.Height <= 1<<30 {
-					sel.Rect = Rect{int(math.Round(r.Origin.X)), int(math.Round(r.Origin.Y)), int(math.Round(r.Size.Width)), int(math.Round(r.Size.Height))}
-					sel.HasRect = true
-				}
-			}
-		}
+		sel, err = read(ctx, app)
 	})
 	if sourceErr := s.check(ctx); sourceErr != nil {
 		return Selection{}, sourceErr
 	}
 	return sel, err
+}
+
+func readAXFocusedSelection(ctx context.Context, app uintptr) (Selection, error) {
+	focus := copyAXElement(app, "AXFocusedUIElement")
+	if focus == 0 {
+		return Selection{}, ErrNoSelection
+	}
+	defer cfRelease(focus)
+
+	sel, err := readAXElementSelection(ctx, focus)
+	if err != nil {
+		return Selection{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
+	sel.Rect, sel.HasRect = readAXSelectionBounds(focus)
+	return sel, nil
+}
+
+func readAXElementSelection(ctx context.Context, element uintptr) (Selection, error) {
+	if readAXString(element, "AXSubrole") == "AXSecureTextField" {
+		return Selection{}, errAXSecureText
+	}
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
+	text := readAXString(element, "AXSelectedText")
+	if text == "" {
+		return Selection{}, ErrNoSelection
+	}
+	return Selection{Text: text, Via: "ax"}, nil
+}
+
+func readAXSelectionBounds(element uintptr) (Rect, bool) {
+	span := copyAXAttribute(element, "AXSelectedTextRange")
+	if span == 0 {
+		return Rect{}, false
+	}
+	defer cfRelease(span)
+	if cfTypeID(span) != axValueID() || axValueType(span) != 4 {
+		return Rect{}, false
+	}
+	var bounds uintptr
+	if axParameter(element, macnative.String("AXBoundsForRange"), span, &bounds) != 0 || bounds == 0 {
+		return Rect{}, false
+	}
+	defer cfRelease(bounds)
+	var rect macnative.Rect
+	if cfTypeID(bounds) != axValueID() || axValueType(bounds) != 3 || !axValue(bounds, 3, unsafe.Pointer(&rect)) {
+		return Rect{}, false
+	}
+	x, y, w, h := rect.Origin.X, rect.Origin.Y, rect.Size.Width, rect.Size.Height
+	const limit = 1 << 30
+	if math.Abs(x) <= limit && math.Abs(y) <= limit && w > 0 && w <= limit && h > 0 && h <= limit {
+		return Rect{int(math.Round(x)), int(math.Round(y)), int(math.Round(w)), int(math.Round(h))}, true
+	}
+	return Rect{}, false
+}
+
+var errAXSecureText = errors.New("无法读取安全输入框中的内容")
+
+func copyAXElement(element uintptr, name string) uintptr {
+	value := copyAXAttribute(element, name)
+	if value != 0 && cfTypeID(value) != axElementID() {
+		cfRelease(value)
+		return 0
+	}
+	return value
+}
+
+func copyAXAttribute(element uintptr, name string) uintptr {
+	var value uintptr
+	if axAttribute(element, macnative.String(name), &value) != 0 {
+		return 0
+	}
+	return value
+}
+
+func readAXString(element uintptr, name string) string {
+	value := copyAXAttribute(element, name)
+	if value == 0 {
+		return ""
+	}
+	defer cfRelease(value)
+	return axString(value)
+}
+
+func axString(value uintptr) string {
+	if cfTypeID(value) == cfStringID() {
+		return macnative.GoString(objc.ID(value))
+	}
+	return ""
 }
 
 const macControlModifier = 1 << 18

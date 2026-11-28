@@ -4,9 +4,11 @@ package selection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
+	"github.com/egoist/mygo"
 	"golang.org/x/sys/windows"
 )
 
@@ -20,32 +22,61 @@ import (
 // exception, where even its copy chord interrupts an empty selection, so
 // the copy is skipped there (see copyChordFor).
 // Prepare captures identity on the hotkey thread, before background work queues.
-func Prepare(_ string) func(context.Context) (Selection, error) {
+func Prepare(_ string, _ *mygo.Point) func(context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
-	self := pid != 0 && pid == windows.GetCurrentProcessId()
-	log.Printf("selection: source hwnd=%x pid=%d class=%q self=%t", hwnd, pid, class, self)
+	read, check := prepareWindowsNativeRead(hwnd, pid)
 	return func(ctx context.Context) (Selection, error) {
-		if self {
-			return Selection{}, ErrSelfWindow
-		}
-		if !sameForeground(hwnd, pid) {
-			return Selection{}, fmt.Errorf("foreground before UIA: %w", ErrSourceChanged)
-		}
-		sel, err := grabUIA(ctx)
-		if ctx.Err() != nil {
-			return Selection{}, ctx.Err()
-		}
-		if !sameForeground(hwnd, pid) {
-			return Selection{}, fmt.Errorf("foreground after UIA: %w", ErrSourceChanged)
-		}
+		sel, err := read(ctx)
 		if err == nil && sel.Text != "" {
 			return sel, nil
+		}
+		if checkErr := check(ctx); checkErr != nil {
+			return Selection{}, checkErr
+		}
+		if errors.Is(err, ErrSourceChanged) {
+			return Selection{}, err
 		}
 		log.Printf("selection: clipboard fallback hwnd=%x pid=%d class=%q uia_error=%v", hwnd, pid, class, err)
 		return grabClipboardFrom(ctx, hwnd, pid, class)
 	}
 }
-func grab(ctx context.Context) (Selection, error) { return Prepare("")(ctx) }
+
+func prepareWindowsNativeRead(hwnd uintptr, pid uint32) (func(context.Context) (Selection, error), func(context.Context) error) {
+	check := func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if pid == windows.GetCurrentProcessId() {
+			return ErrSelfWindow
+		}
+		if !sameForeground(hwnd, pid) {
+			return ErrSourceChanged
+		}
+		return nil
+	}
+	read := func(ctx context.Context) (Selection, error) {
+		if err := check(ctx); err != nil {
+			return Selection{}, fmt.Errorf("foreground before UIA: %w", err)
+		}
+		sel, err := grabUIA(ctx)
+		if checkErr := check(ctx); checkErr != nil {
+			return Selection{}, fmt.Errorf("foreground after UIA: %w", checkErr)
+		}
+		if errors.Is(err, errUIAMiss) {
+			return Selection{}, ErrNoSelection
+		}
+		return sel, err
+	}
+	return read, check
+}
+func grab(ctx context.Context) (Selection, error) { return Prepare("", nil)(ctx) }
+
+// PreparePointerSelection binds automatic capture and later validation to
+// the source at mouse-up.
+func PreparePointerSelection(_ mygo.Point) (func(context.Context) (Selection, error), func(context.Context) error) {
+	hwnd, pid, _ := foregroundWindow()
+	return prepareWindowsNativeRead(hwnd, pid)
+}
 func sameForeground(hwnd uintptr, pid uint32) bool {
 	current, process, _ := foregroundWindow()
 	return hwnd != 0 && current == hwnd && process == pid

@@ -27,9 +27,12 @@ const eventSystemForeground = 0x0003
 
 const (
 	wmLButtonDown = 0x0201
+	wmLButtonUp   = 0x0202
 	wmRButtonDown = 0x0204
 	wmMButtonDown = 0x0207
+	wmMouseWheel  = 0x020A
 	wmXButtonDown = 0x020B
+	wmMouseHWheel = 0x020E
 	wmQuit        = 0x0012
 )
 
@@ -85,11 +88,14 @@ type windowHooks struct {
 type windowLeaveWatch struct {
 	hwnd    uintptr
 	changed func(PrimaryPress)
+	pointer func(SelectionPointer)
 }
 
 var watch windowHooks
 
 var lastPrimaryMousePress atomic.Pointer[PrimaryPress]
+
+var selectionKeyboardCallback = syscall.NewCallback(selectionKeyboardHookProc)
 
 // WatchPrimaryMousePresses keeps the shared hook installed while the native
 // tray menu is open, when there may be no window to watch for focus changes.
@@ -127,12 +133,47 @@ var startMu sync.Mutex
 // foreground changes. The caller rechecks current focus, including owned popups,
 // and guards any in-flight callback after unregistering.
 func WatchWindowLeave(hwnd uintptr, changed func(PrimaryPress)) (stop func(), err error) {
+	return watchWindowEvents(&windowLeaveWatch{hwnd: hwnd, changed: changed})
+}
+
+func WatchSelectionPointer(pointer func(SelectionPointer)) (func(), error) {
+	stop, err := watchWindowEvents(&windowLeaveWatch{pointer: pointer})
+	if err != nil {
+		return nil, err
+	}
+	// Install on the UI thread, which pumps messages for this optional hook.
+	// Use only the fact that a key was pressed to dismiss the saved selection.
+	keyboard, _, err := procSetWindowsHookExW.Call(whKeyboardLL, selectionKeyboardCallback, 0, 0)
+	if keyboard == 0 {
+		stop()
+		return nil, fmt.Errorf("watch selection button keyboard: %w", err)
+	}
+	return func() {
+		procUnhookWindowsHookEx.Call(keyboard)
+		stop()
+	}, nil
+}
+
+func selectionKeyboardHookProc(code int, message, input uintptr) uintptr {
+	const wmKeyDown, wmSysKeyDown = 0x0100, 0x0104
+	if code == 0 && (message == wmKeyDown || message == wmSysKeyDown) {
+		watches, _ := watch.outside.Load().([]*windowLeaveWatch)
+		for _, w := range watches {
+			if w.pointer != nil {
+				w.pointer(SelectionPointer{})
+			}
+		}
+	}
+	result, _, _ := procCallNextHookEx.Call(0, uintptr(code), message, input)
+	return result
+}
+
+func watchWindowEvents(w *windowLeaveWatch) (func(), error) {
 	startMu.Lock()
 	defer startMu.Unlock()
 	if err := ensureWindowHooks(); err != nil {
 		return nil, err
 	}
-	w := &windowLeaveWatch{hwnd: hwnd, changed: changed}
 	current, _ := watch.outside.Load().([]*windowLeaveWatch)
 	watch.outside.Store(append(slices.Clone(current), w))
 	return func() {
@@ -236,6 +277,9 @@ func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uint
 	outside, _ := watch.outside.Load().([]*windowLeaveWatch)
 	press := CapturePrimaryPress()
 	for _, w := range outside {
+		if w.pointer != nil {
+			w.pointer(SelectionPointer{Kind: SelectionPointerCancel})
+		}
 		// Avoid dispatching internal activation changes. The caller still
 		// rechecks live focus because this event may already be stale.
 		if w.changed != nil && !windowContains(w.hwnd, hwnd) {
@@ -249,6 +293,10 @@ func foregroundHookProc(hook, event, hwnd, object, child, thread, timestamp uint
 // passes every event on untouched.
 func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 	if code >= 0 {
+		switch wparam {
+		case wmLButtonDown, wmLButtonUp, wmRButtonDown, wmMButtonDown, wmXButtonDown, wmMouseWheel, wmMouseHWheel:
+			dispatchSelectionPointer(wparam, (*msllHookStruct)(native(lparam)))
+		}
 		switch wparam {
 		case wmLButtonDown, wmRButtonDown, wmMButtonDown, wmXButtonDown:
 			h := (*msllHookStruct)(native(lparam))
@@ -270,6 +318,32 @@ func mouseHookProc(code int, wparam uintptr, lparam uintptr) uintptr {
 	}
 	r, _, _ := procCallNextHookEx.Call(0, uintptr(code), wparam, lparam)
 	return r
+}
+
+func dispatchSelectionPointer(message uintptr, mouse *msllHookStruct) {
+	const injected = 1
+	if mouse.Flags&injected != 0 {
+		return
+	}
+	watches, _ := watch.outside.Load().([]*windowLeaveWatch)
+	for _, w := range watches {
+		if w.pointer == nil {
+			continue
+		}
+		event := SelectionPointer{At: time.Now(), Point: mygo.Point{X: int(mouse.X), Y: int(mouse.Y)}}
+		switch message {
+		case wmLButtonDown:
+			event.Kind = SelectionPointerDown
+		case wmLButtonUp:
+			event.Kind = SelectionPointerUp
+		}
+		w.pointer(event)
+	}
+}
+
+func SelectionPointerScreenPoint(point mygo.Point) mygo.Point {
+	r, _ := physRectToDIP(float64(point.X), float64(point.Y), 1, 1)
+	return mygo.Point{X: r.X, Y: r.Y}
 }
 
 func notifyOutside(watches []*windowLeaveWatch, x, y int32, press PrimaryPress) {
