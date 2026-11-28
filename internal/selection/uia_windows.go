@@ -15,6 +15,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/egoist/mygo"
 	"github.com/go-ole/go-ole"
 )
 
@@ -45,16 +46,22 @@ const (
 
 // The internal outcomes grabUIA reports to Grab.
 var (
-	errUIAMiss    = errors.New("uia: no text pattern or selection")
-	errUIASkipped = errors.New("uia: skipped (breaker open or a call in flight)")
-	errUIATimeout = errors.New("uia: timeout")
+	errUIAMiss      = errors.New("uia: no text pattern or selection")
+	errUIASkipped   = errors.New("uia: skipped (breaker open or a call in flight)")
+	errUIAProtected = errors.New("uia: protected or unreadable element")
+	errUIATimeout   = errors.New("uia: timeout")
 )
 
 // Vtable slots, counted from UIAutomationClient.h's interface orders
 // (IUnknown's three first).
 const (
 	vtblRelease                    = 2
+	vtblUiaElementFromPoint        = 7
 	vtblUiaGetFocusedElement       = 8
+	vtblUiaRawViewWalker           = 16
+	vtblWalkerGetParent            = 3
+	vtblElementProcessID           = 20
+	vtblElementIsPassword          = 35
 	vtblElementGetCurrentPatternAs = 14
 	vtblTextPatternGetSelection    = 5
 	vtblRangeArrayGetLength        = 3
@@ -120,7 +127,15 @@ func (b *uiaBreaker) noteAnswer() {
 // grabUIA asks the focused element for its selection, through the
 // single-slot, timeout-and-breaker wrapper.
 func grabUIA(ctx context.Context) (Selection, error) {
-	return grabUIAWith(ctx, uiaGrabThread)
+	return grabUIAAt(ctx, nil, 0)
+}
+
+func grabUIAAt(ctx context.Context, point *mygo.Point, pid uint32) (Selection, error) {
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	return grabUIAWith(ctx, func(selected func(string)) (Selection, error) {
+		return uiaGrabThread(workerCtx, point, pid, selected)
+	})
 }
 
 func grabUIAWith(ctx context.Context, read func(func(string)) (Selection, error)) (sel Selection, err error) {
@@ -201,7 +216,7 @@ func grabUIAWith(ctx context.Context, read func(func(string)) (Selection, error)
 
 // uiaGrabThread runs on its own thread: a UIA client must join the MTA,
 // and a fresh thread per grab keeps a hung call from blocking the next.
-func uiaGrabThread(selected func(string)) (Selection, error) {
+func uiaGrabThread(ctx context.Context, point *mygo.Point, pid uint32, selected func(string)) (Selection, error) {
 	// COINIT_MULTITHREADED = 0: the apartment UIA clients want, which
 	// needs no message pump.
 	if err := ole.CoInitializeEx(0, 0); err != nil {
@@ -216,6 +231,16 @@ func uiaGrabThread(selected func(string)) (Selection, error) {
 	auto := unsafe.Pointer(unk)
 	defer comCall(auto, vtblRelease)
 
+	if point != nil {
+		sel, err := uiaPointerSelection(ctx, auto, *point, pid, selected)
+		log.Printf("selection: uia pointer selected=%t err=%v", sel.Text != "", err)
+		if !errors.Is(err, errUIAMiss) {
+			return sel, err
+		}
+		if err := ctx.Err(); err != nil {
+			return Selection{}, err
+		}
+	}
 	var elem unsafe.Pointer
 	if err := comCall(auto, vtblUiaGetFocusedElement, uintptr(unsafe.Pointer(&elem))); err != nil {
 		return Selection{}, fmt.Errorf("uia: GetFocusedElement: %w", err)
@@ -225,6 +250,54 @@ func uiaGrabThread(selected func(string)) (Selection, error) {
 	}
 	defer comCall(elem, vtblRelease)
 
+	return uiaElementSelection(elem, selected)
+}
+
+// A browser text leaf may expose its selection only on the document ancestor.
+// ElementFromPoint takes the physical POINT captured by the mouse hook.
+func uiaPointerSelection(ctx context.Context, auto unsafe.Pointer, point mygo.Point, pid uint32, selected func(string)) (Selection, error) {
+	packed := uintptr(uint32(point.X)) | uintptr(uint32(point.Y))<<32
+	var elem, walker unsafe.Pointer
+	if err := comCall(auto, vtblUiaElementFromPoint, packed, uintptr(unsafe.Pointer(&elem))); err != nil || elem == nil {
+		return Selection{}, errUIAMiss
+	}
+	defer func() {
+		if walker != nil {
+			comCall(walker, vtblRelease)
+		}
+	}()
+	sel, err := readSelectionAncestors(ctx, elem, func(ctx context.Context, elem unsafe.Pointer) (Selection, error) {
+		var owner, password int32
+		if err := comCall(elem, vtblElementProcessID, uintptr(unsafe.Pointer(&owner))); err != nil || uint32(owner) != pid {
+			return Selection{}, errUIAMiss
+		}
+		if err := comCall(elem, vtblElementIsPassword, uintptr(unsafe.Pointer(&password))); err != nil || password != 0 {
+			return Selection{}, errUIAProtected
+		}
+		sel, err := uiaElementSelection(elem, selected)
+		if errors.Is(err, errUIAMiss) || (err == nil && sel.Text == "") {
+			return Selection{}, ErrNoSelection
+		}
+		return sel, err
+	}, func(elem unsafe.Pointer) unsafe.Pointer {
+		if walker == nil {
+			if err := comCall(auto, vtblUiaRawViewWalker, uintptr(unsafe.Pointer(&walker))); err != nil || walker == nil {
+				return nil
+			}
+		}
+		var parent unsafe.Pointer
+		if err := comCall(walker, vtblWalkerGetParent, uintptr(elem), uintptr(unsafe.Pointer(&parent))); err != nil {
+			return nil
+		}
+		return parent
+	}, func(elem unsafe.Pointer) { comCall(elem, vtblRelease) })
+	if errors.Is(err, ErrNoSelection) {
+		return Selection{}, errUIAMiss
+	}
+	return sel, err
+}
+
+func uiaElementSelection(elem unsafe.Pointer, selected func(string)) (Selection, error) {
 	var pattern unsafe.Pointer
 	if err := comCall(elem, vtblElementGetCurrentPatternAs,
 		uintptr(uiaTextPatternID), uintptr(unsafe.Pointer(iidITextPattern)),
@@ -325,6 +398,8 @@ func native(addr uintptr) unsafe.Pointer {
 
 // comCall calls slot slot of the COM interface at obj, obj being the
 // interface pointer itself. Errors carry the HRESULT.
+//
+//go:uintptrescapes
 func comCall(obj unsafe.Pointer, slot int, args ...uintptr) error {
 	vtbl := *(*unsafe.Pointer)(obj)
 	fn := *(*uintptr)(unsafe.Add(vtbl, slot*8))

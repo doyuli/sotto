@@ -24,7 +24,7 @@ import (
 // Prepare captures identity on the hotkey thread, before background work queues.
 func Prepare(_ string, _ *mygo.Point) func(context.Context) (Selection, error) {
 	hwnd, pid, class := foregroundWindow()
-	read, check := prepareWindowsNativeRead(hwnd, pid)
+	read, check := prepareWindowsNativeRead(hwnd, pid, nil)
 	return func(ctx context.Context) (Selection, error) {
 		sel, err := read(ctx)
 		if err == nil && sel.Text != "" {
@@ -41,7 +41,7 @@ func Prepare(_ string, _ *mygo.Point) func(context.Context) (Selection, error) {
 	}
 }
 
-func prepareWindowsNativeRead(hwnd uintptr, pid uint32) (func(context.Context) (Selection, error), func(context.Context) error) {
+func prepareWindowsNativeRead(hwnd uintptr, pid uint32, point *mygo.Point) (func(context.Context) (Selection, error), func(context.Context) error) {
 	check := func(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -58,7 +58,7 @@ func prepareWindowsNativeRead(hwnd uintptr, pid uint32) (func(context.Context) (
 		if err := check(ctx); err != nil {
 			return Selection{}, fmt.Errorf("foreground before UIA: %w", err)
 		}
-		sel, err := grabUIA(ctx)
+		sel, err := grabUIAAt(ctx, point, pid)
 		if checkErr := check(ctx); checkErr != nil {
 			return Selection{}, fmt.Errorf("foreground after UIA: %w", checkErr)
 		}
@@ -73,9 +73,9 @@ func grab(ctx context.Context) (Selection, error) { return Prepare("", nil)(ctx)
 
 // PreparePointerSelection binds automatic capture and later validation to
 // the source at mouse-up.
-func PreparePointerSelection(_ mygo.Point) (func(context.Context) (Selection, error), func(context.Context) error) {
+func PreparePointerSelection(point mygo.Point) (func(context.Context) (Selection, error), func(context.Context) error) {
 	hwnd, pid, _ := foregroundWindow()
-	return prepareWindowsNativeRead(hwnd, pid)
+	return prepareWindowsNativeRead(hwnd, pid, &point)
 }
 func sameForeground(hwnd uintptr, pid uint32) bool {
 	current, process, _ := foregroundWindow()

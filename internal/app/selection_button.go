@@ -146,7 +146,8 @@ func (a *application) handleSelectionPointer(watch *selectionButtonWatch, event 
 	if b.watch != watch || a.isQuitting() || !b.acceptPointerInput(event.version) {
 		return
 	}
-	event.Point = selection.SelectionPointerScreenPoint(event.Point)
+	nativePoint := event.Point
+	event.Point = selection.SelectionPointerScreenPoint(nativePoint)
 	if b.win != nil && b.win.IsVisible() && selectionButtonContains(b.win.Bounds(), event.Point) {
 		return
 	}
@@ -161,7 +162,7 @@ func (a *application) handleSelectionPointer(watch *selectionButtonWatch, event 
 	// Cancellation covers a new gesture, a hotkey entry, and shutdown.
 	ctx, cancel := context.WithDeadline(context.Background(), event.At.Add(selectionButtonWait))
 	b.cancel = cancel
-	probe, checkSource := selection.PreparePointerSelection(event.Point)
+	probe, checkSource := selection.PreparePointerSelection(nativePoint)
 	go func() {
 		defer cancel()
 		sel, ok := probeSelectionButton(ctx, probe)

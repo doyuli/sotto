@@ -30,36 +30,9 @@ func readAXPointSelection(ctx context.Context, app uintptr, point mygo.Point) (S
 	if axElementAtPosition(app, float32(point.X), float32(point.Y), &hit) != 0 || hit == 0 {
 		return Selection{}, ErrNoSelection
 	}
-	return readAXSelectionAncestors(ctx, hit, readAXDocumentSelection, func(element uintptr) uintptr {
+	return readSelectionAncestors(ctx, hit, readAXDocumentSelection, func(element uintptr) uintptr {
 		return copyAXElement(element, "AXParent")
 	}, cfRelease)
-}
-
-// The mouse can select text in web content while keyboard focus stays in
-// another control. A leaf hit by the pointer may delegate selection to its document.
-func readAXSelectionAncestors(ctx context.Context, element uintptr, read func(context.Context, uintptr) (Selection, error), parent func(uintptr) uintptr, release func(uintptr)) (Selection, error) {
-	const maxAncestors = 24
-	for depth := 0; element != 0 && depth < maxAncestors; depth++ {
-		if err := ctx.Err(); err != nil {
-			release(element)
-			return Selection{}, err
-		}
-		sel, err := read(ctx, element)
-		if !errors.Is(err, ErrNoSelection) {
-			release(element)
-			return sel, err
-		}
-		next := uintptr(0)
-		if depth+1 < maxAncestors && ctx.Err() == nil {
-			next = parent(element)
-		}
-		release(element)
-		element = next
-	}
-	if err := ctx.Err(); err != nil {
-		return Selection{}, err
-	}
-	return Selection{}, ErrNoSelection
 }
 
 func readAXDocumentSelection(ctx context.Context, element uintptr) (Selection, error) {

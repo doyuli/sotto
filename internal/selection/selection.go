@@ -87,3 +87,31 @@ func GrabUIA(ctx context.Context) (Selection, error) {
 func GrabClipboard(ctx context.Context) (Selection, error) {
 	return grabClipboard(ctx)
 }
+
+// The mouse can select text in web content while keyboard focus stays in
+// another control. A leaf hit by the pointer may delegate selection to its document.
+func readSelectionAncestors[T comparable](ctx context.Context, element T, read func(context.Context, T) (Selection, error), parent func(T) T, release func(T)) (Selection, error) {
+	var zero T
+	const maxAncestors = 24
+	for depth := 0; element != zero && depth < maxAncestors; depth++ {
+		if err := ctx.Err(); err != nil {
+			release(element)
+			return Selection{}, err
+		}
+		sel, err := read(ctx, element)
+		if !errors.Is(err, ErrNoSelection) {
+			release(element)
+			return sel, err
+		}
+		var next T
+		if depth+1 < maxAncestors && ctx.Err() == nil {
+			next = parent(element)
+		}
+		release(element)
+		element = next
+	}
+	if err := ctx.Err(); err != nil {
+		return Selection{}, err
+	}
+	return Selection{}, ErrNoSelection
+}
